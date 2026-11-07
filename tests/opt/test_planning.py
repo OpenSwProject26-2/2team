@@ -142,6 +142,60 @@ class PlanningTests(unittest.TestCase):
         with self.assertRaises(InputError):
             rerank(self.x, top, lambda p, x: replace(self.assessment(p, x), total=999))
 
+    def test_b_reranking_uses_served_then_p90(self):
+        top = search(self.x).top
+        preferred = top[-1].plan.plan_id
+
+        def port(plan, inputs):
+            return replace(self.assessment(plan, inputs),
+                           served=2 if plan.plan_id == preferred else 1,
+                           p90_wait_s=100 if plan.plan_id == preferred else 0)
+
+        self.assertEqual(rerank(self.x, top, port).recommended.plan_id, preferred)
+
+        def tie_port(plan, inputs):
+            return replace(self.assessment(plan, inputs),
+                           p90_wait_s=0 if plan.plan_id == preferred else 100)
+
+        self.assertEqual(rerank(self.x, top, tie_port).recommended.plan_id, preferred)
+
+    def test_b_unverified_and_violation_results_are_not_selected(self):
+        top = search(self.x).top
+        for change in ({'independently_verified': False}, {'violations': ('capacity',)}):
+            result = rerank(self.x, top, lambda p, x: replace(self.assessment(p, x), **change))
+            self.assertIsNone(result.recommended)
+
+    def test_b_rejects_invalid_numeric_metrics(self):
+        for change in ({'served': 100}, {'p90_wait_s': float('nan')},
+                       {'distance_m': -1}, {'p90_wait_s': None}):
+            with self.assertRaises(InputError):
+                rerank(self.x, search(self.x).top,
+                       lambda p, x: replace(self.assessment(p, x), **change))
+
+    def test_all_small_allocations_preserve_demand_and_capacity(self):
+        for first in range(3):
+            for second in range(3 - first):
+                for third in range(3 - first - second):
+                    plan = self.plan(r1=first, r2=second, r3=third)
+                    metric = evaluate(self.x, plan)
+                    self.assertLessEqual(metric.served, metric.total)
+                    self.assertGreaterEqual(metric.served, 0)
+                    self.assertEqual(metric, evaluate(self.x, plan))
+
+    def test_travel_deadline_and_vehicle_availability(self):
+        x = replace(self.x, demands=(Demand('one', 'A', 'C', 0, 1, 'r1'),),
+                    policy=replace(self.x.policy, max_travel_s=120))
+        self.assertEqual(evaluate(x, make_plan(x, {'r1': 1}, 'test')).served, 1)
+        x = replace(x, policy=replace(x.policy, max_travel_s=119))
+        self.assertEqual(evaluate(x, make_plan(x, {'r1': 1}, 'test')).served, 0)
+        x = replace(self.x, fleet=tuple(replace(v, available_start_s=400) for v in self.x.fleet))
+        self.assertEqual(evaluate(x, make_plan(x, {'r1': 1}, 'test')).served, 0)
+
+    def test_full_journey_input_is_explicitly_out_of_scope(self):
+        with self.assertRaises(InputError) as caught:
+            replace(self.x, scope_mode='full_journey')
+        self.assertEqual(caught.exception.code, 'OUT_OF_SCOPE')
+
     def test_holdout_cannot_search_or_select(self):
         x = replace(self.x, split='evaluation', input_bundle_id='holdout', demand_version='holdout')
         with self.assertRaises(InputError):
