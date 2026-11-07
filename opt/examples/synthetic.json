@@ -1,0 +1,205 @@
+{
+  "input_bundle_id": "synthetic-development-v1",
+  "scenario_id": "synthetic-v1",
+  "dataset_version": "synthetic-v1",
+  "network_version": "synthetic-v1",
+  "demand_version": "synthetic-v1",
+  "conditions_version": "synthetic-v1",
+  "service_date": "2026-11-07",
+  "split": "development",
+  "stops": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "segments": [
+    {
+      "segment_id": "ab",
+      "origin": "A",
+      "destination": "B",
+      "travel_s": 60,
+      "distance_m": 300
+    },
+    {
+      "segment_id": "bc",
+      "origin": "B",
+      "destination": "C",
+      "travel_s": 60,
+      "distance_m": 300
+    },
+    {
+      "segment_id": "bd",
+      "origin": "B",
+      "destination": "D",
+      "travel_s": 60,
+      "distance_m": 300
+    },
+    {
+      "segment_id": "ba",
+      "origin": "B",
+      "destination": "A",
+      "travel_s": 60,
+      "distance_m": 300
+    },
+    {
+      "segment_id": "cb",
+      "origin": "C",
+      "destination": "B",
+      "travel_s": 60,
+      "distance_m": 300
+    },
+    {
+      "segment_id": "db",
+      "origin": "D",
+      "destination": "B",
+      "travel_s": 60,
+      "distance_m": 300
+    }
+  ],
+  "allowed_turns": [
+    [
+      "ab",
+      "ba"
+    ],
+    [
+      "ab",
+      "bc"
+    ],
+    [
+      "ab",
+      "bd"
+    ],
+    [
+      "ba",
+      "ab"
+    ],
+    [
+      "bc",
+      "cb"
+    ],
+    [
+      "bd",
+      "db"
+    ],
+    [
+      "cb",
+      "ba"
+    ],
+    [
+      "db",
+      "ba"
+    ]
+  ],
+  "turnaround_stops": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "routes": [
+    {
+      "route_id": "r1",
+      "outbound": [
+        "ab",
+        "bc"
+      ],
+      "return_segments": [
+        "cb",
+        "ba"
+      ],
+      "original": true
+    },
+    {
+      "route_id": "r2",
+      "outbound": [
+        "ab",
+        "bd"
+      ],
+      "return_segments": [
+        "db",
+        "ba"
+      ],
+      "original": true
+    },
+    {
+      "route_id": "r3",
+      "outbound": [
+        "ab"
+      ],
+      "return_segments": [
+        "ba"
+      ],
+      "original": false
+    }
+  ],
+  "demands": [
+    {
+      "demand_id": "d1",
+      "origin": "A",
+      "destination": "C",
+      "arrival_s": 0,
+      "passenger_count": 3,
+      "original_route_id": "r1"
+    },
+    {
+      "demand_id": "d2",
+      "origin": "B",
+      "destination": "C",
+      "arrival_s": 60,
+      "passenger_count": 2,
+      "original_route_id": "r1"
+    },
+    {
+      "demand_id": "d3",
+      "origin": "A",
+      "destination": "D",
+      "arrival_s": 0,
+      "passenger_count": 2,
+      "original_route_id": "r2"
+    },
+    {
+      "demand_id": "d4",
+      "origin": "C",
+      "destination": "A",
+      "arrival_s": 0,
+      "passenger_count": 1,
+      "original_route_id": "r1"
+    },
+    {
+      "demand_id": "d5",
+      "origin": "A",
+      "destination": "B",
+      "arrival_s": 120,
+      "passenger_count": 1,
+      "original_route_id": "r1"
+    }
+  ],
+  "fleet": [
+    {
+      "vehicle_id": "v1",
+      "capacity": 2,
+      "initial_stop": "A",
+      "return_stop": "A",
+      "available_start_s": 0,
+      "available_end_s": 480
+    },
+    {
+      "vehicle_id": "v2",
+      "capacity": 2,
+      "initial_stop": "A",
+      "return_stop": "A",
+      "available_start_s": 0,
+      "available_end_s": 480
+    }
+  ],
+  "policy": {
+    "start_s": 0,
+    "end_s": 480,
+    "dwell_s": 0,
+    "turnaround_s": 0,
+    "max_wait_s": 300,
+    "max_travel_s": 420
+  },
+  "scope_mode": "single_bus_leg"
+}
