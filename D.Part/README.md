@@ -21,6 +21,9 @@
 
 1. [GTFS 입력 요구사항](01-gtfs-input-requirements.md) — 경로 탐색 입력 파일과 검증 기준
 2. [API 요청·응답 형식](02-api-response-format.md) — 검색·평가 API 필드와 JSON 예제
+3. [인수인계 및 팀 합의 체크리스트](03-day1-2-handoff-checklist.md) — A/B/C에 확인할 입력·미결정 사항
+4. [M00·A/B/C 정합성 검토](04-m00-abc-integration-review.md) — 공개 구현 상태와 D 입력 게이트
+5. [C→D 수락 사례](05-c-to-d-acceptance-cases.md) — 후속 합성 contract test 사례
 
 이 문서의 ID·API 경로·JSON 필드 중 확정되지 않은 값은 **제안 형식**이며, 팀 공통 `contracts/` 모델이 존재하면 그 모델을 우선한다.
 
@@ -40,3 +43,22 @@
 - `main`에 직접 push하지 않고 기능 브랜치에서 PR을 제출한다.
 - 코드 작성·검증을 하지 않았다면 완료로 표시하지 않는다.
 - AI가 초안을 작성했을 경우 실제 검토 후 Commit 설명에 사용 내역을 기록한다.
+
+## 첫 번째 실행 가능한 실습: GTFS 입력 기본 검사
+
+`gtfs_header_check.py`는 GTFS 폴더 또는 ZIP 안에 필수 파일과 CSV 헤더가 있는지 확인한다.
+**실제 파업 노선·시간표의 유효성이나 경로 검색 가능 여부까지 검증하지는 않는다.** 원시 교통카드 데이터는 사용하지 않는다.
+
+```bash
+# 저장소 최상위에서 실행 (GTFS 파일은 로컬에만 보관)
+python D.Part/gtfs_header_check.py /로컬/GTFS_폴더
+python D.Part/gtfs_header_check.py /로컬/gtfs.zip
+
+# 합성 데이터만 사용하는 자동 테스트
+python -m unittest discover -s D.Part/tests -p "test_*.py" -v
+```
+
+- **통과 시:** `[통과] GTFS 필수 파일·헤더 기본 검사 완료`
+- **실패 시:** 누락된 파일 또는 열만 표시하고 종료 코드 `1` 반환
+- **제약:** 기본 파일·헤더만 검사하므로 날짜별 운행, 참조 ID, 정류장 좌표, 시간값 등은 후속 검증이 필요함
+- **다음 단계:** A·B가 제공하는 입력과 형식을 합의한 후 실제 경로 탐색기를 구현. `contracts/`를 임의로 만들거나 수정하지 않음
