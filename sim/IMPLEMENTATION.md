@@ -82,7 +82,9 @@ MemorySink는 테스트용 bounded sink다. sink 실패는 전파되어 성공 �
 로그는 사건별 time_s/phase/stable_id와 물리 이벤트·점유를 보존한다.
 결과는 plan ID/revision, source/run checksum, config hash, 분리된 물리/결과 상태를 보존한다.
 현재는 승객별 상태와 예정 사건을 메모리에 유지한다. 로그 분리가 상수 메모리 실행을
-의미하지 않는다. 정류장 승차 시 전체 승객을 스캔하므로 큰 운행편 수에서는 비용이 높다.
+의미하지 않는다. 승차는 정류장·목적지별 FIFO 대기열(발생 순서 = (time_s, passenger_id))의
+머리를 k-way 병합해 고른다. 승차·결과 확정으로 자격을 잃은 항목은 머리에서 지연 제거한다.
+변경 전 엔진으로 기록한 `tests/sim/golden` 로그와 바이트 단위로 같다(P2).
 benchmark는 1만/10만/100만 명의 시간·peak memory·사건 수 측정 기반이다. 단일 대용량
 차량 fixture는 처리 비용 측정용이며 현실적인 운송 능력 근거가 아니다. cohort 미구현.
 

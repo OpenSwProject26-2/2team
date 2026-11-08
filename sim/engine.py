@@ -1,4 +1,6 @@
+from collections import deque
 from dataclasses import asdict
+import heapq
 from .dispatcher import Dispatcher
 from .events import Event, NullSink
 from .models import SimulationError, integer
@@ -19,12 +21,21 @@ def simulate(plan_id, revision, inputs, trips, config, sink=None, probe=None):
     states = {p.passenger_id: PassengerState(p) for p in inputs.passengers}
     vehicles = {t.vehicle_id: VehicleState(t.capacity) for t in trips}
     dispatcher, count = Dispatcher(), [0]
+    # waiting[origin][destination]: FIFO in generation order, i.e. (time_s, passenger_id),
+    # because generate events run in (time_s, phase 1, 'generate:'+pid) order. Entries that
+    # stopped being eligible (boarded or outcome fixed) are dropped lazily at the head.
+    waiting = {}
+    def eligible(s): return s.physical == 'waiting' and s.outcome is None
+    def head(q):
+        while q and not eligible(q[0]): q.popleft()
+        return q[0] if q else None
     def emit(key, kind, pid=None, vid=None):
         sink.emit(Event(*key, kind, pid, vid, len(vehicles[vid].onboard) if vid else None))
         count[0] += 1
     for pid, state in states.items():
         def generate(*key, s=state):
             s.physical = 'waiting'
+            waiting.setdefault(s.passenger.origin, {}).setdefault(s.passenger.destination, deque()).append(s)
             emit(key, 'generated', s.passenger.passenger_id)
         def expire(*key, s=state):
             if s.outcome is None and s.physical != 'arrived':
@@ -50,10 +61,23 @@ def simulate(plan_id, revision, inputs, trips, config, sink=None, probe=None):
                 emit(key, 'vehicle_arrived', vid=t.vehicle_id)
             def board(*key, t=trip, i=i):
                 v = vehicles[t.vehicle_id]
-                eligible = sorted((s for s in states.values() if s.physical == 'waiting' and s.outcome is None
-                    and s.passenger.origin == t.stops[i] and s.passenger.destination in t.stops[i+1:]),
-                    key=lambda s:(s.passenger.time_s, s.passenger.passenger_id))
-                for s in eligible[:v.capacity-len(v.onboard)]:
+                free, queues = v.capacity-len(v.onboard), waiting.get(t.stops[i])
+                if free <= 0 or not queues: return
+                # k-way merge of per-destination FIFO heads == old global (time_s, id) sort.
+                heads = []
+                for dest in t.stops[i+1:]:
+                    q = queues.get(dest)
+                    s = head(q) if q else None
+                    if s is not None: heads.append(((s.passenger.time_s, s.passenger.passenger_id), dest))
+                heapq.heapify(heads)
+                while heads and free > 0:
+                    _, dest = heapq.heappop(heads)
+                    q = queues[dest]
+                    s = q.popleft()
+                    nxt = head(q)
+                    if nxt is not None:
+                        heapq.heappush(heads, ((nxt.passenger.time_s, nxt.passenger.passenger_id), dest))
+                    free -= 1
                     if s.vehicle_id is not None: raise RuntimeError('multiple vehicles')
                     s.physical, s.vehicle_id, s.boarding_s = 'onboard', t.vehicle_id, key[0]
                     v.onboard[s.passenger.passenger_id] = s
