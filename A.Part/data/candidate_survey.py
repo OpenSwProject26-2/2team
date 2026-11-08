@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import time
 
-from data.demand_analysis import AnalysisError, csv_rows, error, od_rows, read_labels, route_display, stop_display
+from .demand_analysis import AnalysisError, csv_rows, error, od_rows, read_labels, route_display, stop_display
 
 
 # Exact IDs from the existing morning boarding/alighting top 20. No place merge.

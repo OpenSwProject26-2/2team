@@ -2,9 +2,11 @@
 
 공식 지역·파업 중단 노선을 정하지 않는 탐색 작업이다. 원본 ZIP·시간대 전체 OD는 읽지 않고 기존 분석 결과, 오전 OD, 정류장 방문열과 노선 버전 자료만 사용한다. 기존 분석 출력과 stash를 보존한다.
 
+아래 명령은 저장소 루트 기준이다. A.Part 기준 실행은 [A 실행 설명](../../README.md)을 참고한다. 상대 경로는 현재 작업 디렉터리 기준이며 자료 자체는 이동하지 않는다.
+
 ```powershell
-python -B -m unittest discover -s tests -t . -v
-python -B -m data.candidate_survey --input-dir raw/from_teammate --analysis-dir data/processed/taims_demand --output-dir data/processed/taims_candidate_survey
+python -B -m unittest discover -s A.Part/tests -t A.Part -v
+python -B A.Part/run.py candidate_survey --input-dir raw/from_teammate --analysis-dir data/processed/taims_demand --output-dir data/processed/taims_candidate_survey
 ```
 
 새 출력 디렉터리를 지정한다. 실제 상세 자료는 Git 제외 경로에만 저장하며 공개 가능성을 확정하지 않는다. `survey.json`, `report.md`, `comparison.csv`, `pairwise.csv`, `group_quality.csv`, `source_visits.csv`를 생성한다.

@@ -10,11 +10,13 @@
 
 ## 실행
 
+아래 명령은 저장소 루트 기준이다. A.Part 기준 명령·import·상대 경로 해석은 [A 실행 설명](../../README.md)을 참고한다. 실제 입력과 출력은 루트 `raw/`, `data/processed/`에 그대로 둔다.
+
 저장소 루트, 외부 패키지 없이 Python 표준 라이브러리로 실행한다.
 
 ```powershell
-python -B -m unittest discover -s tests -t . -v
-python -B -m data.demand_analysis --input-dir raw/from_teammate --output-dir data/processed/taims_demand
+python -B -m unittest discover -s A.Part/tests -t A.Part -v
+python -B A.Part/run.py demand_analysis --input-dir raw/from_teammate --output-dir data/processed/taims_demand
 ```
 
 출력 경로는 새 디렉터리여야 한다. 기존 분석 결과나 입력 경로 안에는 쓰지 않으며, 재실행 시 다른 출력 경로를 지정한다. 기본 출력은 기존 `.gitignore`가 제외하는 `data/processed/` 아래다. 사용자 지정 출력도 공개 가능성이 승인된 것은 아니므로 Git에 추가하지 않는다.

@@ -4,9 +4,11 @@
 
 저장소 루트에서 표준 라이브러리만으로 실행한다.
 
+A.Part 기준 실행과 상대 경로는 [A 실행 설명](../../README.md)을 참고한다. 현재 작업 디렉터리가 A.Part이면 입력·출력에 `../raw/`, `../data/processed/`를 명시해 기존 루트 자료를 가리킨다.
+
 ```powershell
-python -B -m unittest discover -s tests -t . -v
-python -B -m data.extract_guro_draft --input-dir raw/from_teammate --survey-dir data/processed/taims_candidate_survey_final --output-dir data/processed/guro_real_input_draft
+python -B -m unittest discover -s A.Part/tests -t A.Part -v
+python -B A.Part/run.py extract_guro_draft --input-dir raw/from_teammate --survey-dir data/processed/taims_candidate_survey_final --output-dir data/processed/guro_real_input_draft
 ```
 
 출력은 새 디렉터리여야 하며 기존 출력·입력 디렉터리에는 덮어쓰지 않는다. `data/processed/`는 Git 제외 경로다. 임의 경로에 출력해도 공개 승인을 의미하지 않는다. 실제 추출 결과는 추적 코드·문서에 복사하지 않는다.

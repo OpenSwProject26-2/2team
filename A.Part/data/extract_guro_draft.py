@@ -10,8 +10,8 @@ import math
 from pathlib import Path
 import time
 
-from data.candidate_survey import group_quality, slots, visit_groups, visit_source_rows
-from data.demand_analysis import AnalysisError, csv_rows, error, od_rows, stop_display
+from .candidate_survey import group_quality, slots, visit_groups, visit_source_rows
+from .demand_analysis import AnalysisError, csv_rows, error, od_rows, stop_display
 
 
 ENDPOINT_CLASSES = ("both_inside", "boarding_only_inside", "alighting_only_inside", "both_outside")
@@ -424,7 +424,7 @@ def extract(input_dir, survey_dir, output_dir, candidate_name="southwest"):
             "", "## 실행 부족 항목", ""]
     text.extend("- " + value for value in report["missing_execution_inputs"])
     text.extend(["", "팀원의 추출·집계·좌표 변환과 기존 후보 조사를 근거로 한 부분 추출이다. 원본 OD 독립 재생성이나 실제 수송 검증이 아니다.",
-                 "실제 결과는 Git 제외 경로에만 보관한다. 처리 코드 실행법은 data/docs/guro_input_extraction.md를 참고한다."])
+                 "실제 결과는 Git 제외 경로에만 보관한다. 처리 코드 실행법은 A.Part/data/docs/guro_input_extraction.md를 참고한다."])
     (output_dir / "README.md").write_text("\n".join(text) + "\n", encoding="utf-8")
     return report
 
