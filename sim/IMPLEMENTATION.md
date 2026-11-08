@@ -40,10 +40,27 @@ assessment = port(plan, inputs)
 만들 수 없다. 일정 오류나 realization 불일치는 예외로 전파한다. 실제 검증된 추천이나
 실제 운행 승인을 의미하지 않는다. 입력·결과 checksum은 별도로 보존한다.
 
+## R5 도착 생성 (`arrivals.py`)
+
+- 입력은 `BinRow(aggregate_id, origin, destination, bin_start_s, bin_width_s, passenger_count)`다.
+  bin 폭은 항상 명시 입력이며 기본값이 없다(기본 실험 10분=600초는 호출자가 넘긴다).
+- 각 행의 인원을 정수 초 `[bin_start_s, bin_start_s+bin_width_s)`에 균등 발생시킨다.
+  오프셋은 (generator, seed, aggregate_id, index) 키의 SHA-256 카운터 스트림과 rejection
+  sampling으로 만든다. 행 순서·Python `random` 구현·버전에 의존하지 않는다.
+- 같은 행·seed는 같은 realization·checksum이다. seed가 다르면 다른 발생이 *대부분* 나오지만
+  폭 1초·0수요·충돌에서는 같을 수 있으므로 보장하지 않는다.
+- `validate_realization`은 사전 생성 realization을 행 일치·OD·bin 경계·행별 정확 인원·ID
+  정규형·checksum으로 검증한다. 외부 생성(편중 민감도 등)도 bin 안이면 수용하며,
+  `regenerate=True`·`expected_checksum`으로 생성기 출력 고정을 추가로 강제할 수 있다.
+- 파일 형식: JSONL 첫 줄 메타데이터(generator·seed·rows·checksum), 이후 승객별 배열.
+- C adapter는 `realized_inputs(inputs, realization)`로 수용한다. 이때만 C `Demand.arrival_s`를
+  bin 시작으로 읽는다. TODO(ADR): C Demand의 arrival_s가 정확 시각인지 bin 시작인지 미정이다.
+- 합성 초 단위 발생은 실측 초 정밀도가 아니며 태그 시각을 정류장 도착으로 확정하지 않는다.
+
 ## 명시적 프로토타입 정책 · 팀 검토 필요
 
-- exact aggregate arrival_s를 그대로 개인별 발생 시각으로 확장한다. 시간 bin 내 분포를
-  추정하지 않는다. seed만으로 입력 동일성을 판단하지 않는다.
+- exact 모드(`expand`, `prepare_inputs`)는 집계 arrival_s를 그대로 개인별 발생 시각으로
+  확장한다(기존 fixture 보존). R5 모드는 위 절을 따른다. seed만으로 입력 동일성을 판단하지 않는다.
 - fixed_segments는 C snapshot의 모든 구간 이동시간과 완전히 일치해야 한다.
   누락·추가·변경 realization을 거절한다. 시간대별 혼잡과 확률적 realization은 미지원이다.
 - 동일 조건 차량을 ID 순서로 배분하고, 노선당 cycle/count 간격으로 시작한다.
