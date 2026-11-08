@@ -1,0 +1,18 @@
+{
+  "schema_version": "network-cleaning-config-v1",
+  "source_namespace": "synthetic-network",
+  "input_dir": "A.Part/tests/network/fixtures/synthetic",
+  "output_dir": "data/processed/synthetic_network_cleaning",
+  "route_ids": ["route-A"],
+  "selected_groups": [
+    {"route_id": "route-A", "source_route_name": "Synthetic source group"}
+  ],
+  "distance": {
+    "cumulative_unit": "m",
+    "unit_evidence": {
+      "source": "synthetic fixture definition",
+      "field": "BSST_SUM_DISTANCE",
+      "statement": "Synthetic cumulative distances are defined in metres."
+    }
+  }
+}

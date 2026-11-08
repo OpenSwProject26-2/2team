@@ -1,9 +1,10 @@
 # A 담당: 공유 정리본 수요 분석·후보 조사·개발용 추출
 
-Issue #10의 코드·문서·합성 테스트를 이 폴더에서 관리한다. 집계·분류 규칙과 기대 결과는 기존 구현과 같다. 공통 규약은 [AGENTS.md](../AGENTS.md), 데이터 의미는 [M00](../docs/contracts/M00_DATA_CONTRACT.md)를 참고한다. 엔진 입력 변환·여정 연결·정제 기능은 이번 범위가 아니다.
+Issue #10의 코드·문서·합성 테스트를 이 폴더에서 관리한다. 기존 분석·추출의 집계·분류 규칙은 유지한다. 공통 규약은 [AGENTS.md](../AGENTS.md), 데이터 의미는 [M00](../docs/contracts/M00_DATA_CONTRACT.md)를 참고한다. 추가 교통망 정제는 정류장·방문·연속 구간의 개발용 초안까지만 지원하며 엔진 입력 변환·여정 연결은 포함하지 않는다.
 
 - `data/`: 분석·후보 조사·추출 Python 패키지
 - `data/docs/`: [수요 분석](data/docs/seoul_demand_analysis.md), [후보 조사](data/docs/candidate_survey.md), [구로 추출](data/docs/guro_input_extraction.md)
+- [교통망 정제](data/docs/network_cleaning.md): `python -B A.Part/run.py clean_network --config <설정 경로>`로 실행한다. 대상 노선·원천 그룹·경로·단위 근거는 설정으로 받는다.
 - `tests/demand/`: 실제 이용 기록을 사용하지 않는 합성 회귀 테스트
 - `run.py`: 저장소 루트에서 도구를 실행하는 진입점. 작업 디렉터리를 바꾸지 않는다.
 
@@ -46,7 +47,7 @@ python -B -m data.extract_guro_draft --input-dir ../raw/from_teammate --survey-d
 | `../raw/from_teammate` | 저장소 바깥의 raw 경로 | 루트의 실제 공유 자료 |
 | `../data/processed/...` | 저장소 바깥의 data 경로 | 루트의 실제 로컬 출력 |
 
-따라서 **A.Part에서는 위 예시처럼 `../raw/`와 `../data/processed/`를 명시한다.** 기존 `.gitignore`의 실제 결과 제외 경로는 루트 `data/processed/`다. `A.Part/data/processed/`가 자동 제외된다고 가정하지 않는다. 절대 경로도 지정할 수 있다.
+따라서 **A.Part에서는 위 예시처럼 `../raw/`와 `../data/processed/`를 명시한다.** `.gitignore`는 루트 `data/processed/`와 `A.Part/raw/`, `A.Part/data/processed/`도 제외하지만 실제 입력·출력은 기존 루트 자료 경로를 사용한다. 절대 경로도 지정할 수 있다. 정제 설정 내부 경로도 현재 작업 디렉터리 기준이며, 두 위치에서 같은 설정을 쓰려면 입력·출력을 절대 경로로 지정한다.
 
 ## 테스트
 
