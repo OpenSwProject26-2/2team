@@ -108,6 +108,21 @@ benchmark는 1만/10만/100만 명의 시간·peak memory·사건 수 측정 기
 - 모든 수치는 합성 입력 측정값이며 독립 검증 전 잠정이다. 외삽하지 않는다.
 - 기존 `benchmark.py`는 과거 비교용으로 보존한다.
 
+## 자원 가드 (`guard.py`) — P7
+
+```sh
+.venv/bin/python -m sim.guard --timeout-s 1800 --mem-limit-mb 12000 --mem-mode rss \
+    --failures results/failures.jsonl --label complex-900k -- .venv/bin/python -m sim.harness run ...
+```
+
+- 상태: OK / NA(의도적 미실행) / TIMEOUT / MEMORY_LIMIT / EXCEPTION. OK가 아니면 모두
+  failures.jsonl에 append한다(상한·경과시간·표본 최대 RSS·오류 유형·로그 위치·잠정 표기).
+- `rss`: 부모가 자식 VmRSS를 poll_s(기본 0.05초)마다 표본 조사해 초과 시 프로세스 그룹을 SIGKILL.
+  표본 간격보다 짧은 급증은 놓칠 수 있다. `as`: 자식 RLIMIT_AS(가상 주소공간) → MemoryError.
+  주소공간은 RSS보다 크므로 같은 숫자라도 더 엄격하다. `both`: 둘 다.
+- 가드가 죽이지 않은 신호 종료(예: OS OOM killer)는 EXCEPTION(`Signal9`)으로 기록한다.
+- 재시도: 프로세스 생성 OSError(인프라)만 `infra_retries`회. 코드 오류·시간·메모리 초과는 재시도 안 함.
+
 ## 미확인 자료와 검토
 
 노션 M00/M05 페이지는 접근 실패했으며 이미지·첨부의 존재나 내용을 확인하지 못했다.
