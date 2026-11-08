@@ -1,0 +1,16 @@
+{"kind": "vehicle_arrived", "occupancy": 0, "passenger_id": null, "phase": 0, "stable_id": "0:00000000", "time_s": 0, "vehicle_id": "v"}
+{"kind": "generated", "occupancy": null, "passenger_id": "[\"d\",0]", "phase": 1, "stable_id": "generate:[\"d\",0]", "time_s": 0, "vehicle_id": null}
+{"kind": "generated", "occupancy": null, "passenger_id": "[\"d\",1]", "phase": 1, "stable_id": "generate:[\"d\",1]", "time_s": 0, "vehicle_id": null}
+{"kind": "generated", "occupancy": null, "passenger_id": "[\"d\",2]", "phase": 1, "stable_id": "generate:[\"d\",2]", "time_s": 0, "vehicle_id": null}
+{"kind": "boarded", "occupancy": 1, "passenger_id": "[\"d\",0]", "phase": 2, "stable_id": "0:00000000", "time_s": 0, "vehicle_id": "v"}
+{"kind": "boarded", "occupancy": 2, "passenger_id": "[\"d\",1]", "phase": 2, "stable_id": "0:00000000", "time_s": 0, "vehicle_id": "v"}
+{"kind": "departed", "occupancy": 2, "passenger_id": null, "phase": 3, "stable_id": "0:00000000", "time_s": 0, "vehicle_id": "v"}
+{"kind": "alighted", "occupancy": 1, "passenger_id": "[\"d\",0]", "phase": 0, "stable_id": "0:00000001", "time_s": 5, "vehicle_id": "v"}
+{"kind": "alighted", "occupancy": 0, "passenger_id": "[\"d\",1]", "phase": 0, "stable_id": "0:00000001", "time_s": 5, "vehicle_id": "v"}
+{"kind": "vehicle_arrived", "occupancy": 0, "passenger_id": null, "phase": 0, "stable_id": "0:00000001", "time_s": 5, "vehicle_id": "v"}
+{"kind": "departed", "occupancy": 0, "passenger_id": null, "phase": 3, "stable_id": "0:00000001", "time_s": 5, "vehicle_id": "v"}
+{"kind": "expired", "occupancy": null, "passenger_id": "[\"d\",2]", "phase": 4, "stable_id": "wait:[\"d\",2]", "time_s": 9, "vehicle_id": null}
+{"kind": "vehicle_arrived", "occupancy": 0, "passenger_id": null, "phase": 0, "stable_id": "1:00000000", "time_s": 10, "vehicle_id": "v"}
+{"kind": "departed", "occupancy": 0, "passenger_id": null, "phase": 3, "stable_id": "1:00000000", "time_s": 10, "vehicle_id": "v"}
+{"kind": "vehicle_arrived", "occupancy": 0, "passenger_id": null, "phase": 0, "stable_id": "1:00000001", "time_s": 15, "vehicle_id": "v"}
+{"kind": "departed", "occupancy": 0, "passenger_id": null, "phase": 3, "stable_id": "1:00000001", "time_s": 15, "vehicle_id": "v"}
