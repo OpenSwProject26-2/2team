@@ -8,7 +8,8 @@ from .schedule import validate_schedule
 from .reporting import Result, p90
 from .run_inputs import digest
 
-def simulate(plan_id, revision, inputs, trips, config, sink=None):
+def simulate(plan_id, revision, inputs, trips, config, sink=None, probe=None):
+    """probe(stage) is an optional measurement hook; it never changes simulation state."""
     integer(revision, 1)
     if not plan_id: raise SimulationError('missing plan ID')
     validate_schedule(trips)
@@ -61,7 +62,9 @@ def simulate(plan_id, revision, inputs, trips, config, sink=None):
             dispatcher.add(trip.arrivals[i], 0, sid, arrive)
             dispatcher.add(trip.arrivals[i], 2, sid, board)
             dispatcher.add(trip.departures[i], 3, sid, lambda *key,t=trip: emit(key,'departed',vid=t.vehicle_id))
+    if probe: probe('engine_init')
     dispatcher.run(config.drain_s)
+    if probe: probe('engine_run')
     for s in states.values():
         if s.outcome is None: s.outcome = 'censored'
     ordered = tuple(states[k] for k in sorted(states))

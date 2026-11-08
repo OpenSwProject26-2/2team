@@ -86,6 +86,28 @@ MemorySink는 테스트용 bounded sink다. sink 실패는 전파되어 성공 �
 benchmark는 1만/10만/100만 명의 시간·peak memory·사건 수 측정 기반이다. 단일 대용량
 차량 fixture는 처리 비용 측정용이며 현실적인 운송 능력 근거가 아니다. cohort 미구현.
 
+## 측정 하네스 (`harness.py`, `synthetic.py`) — P6
+
+```sh
+.venv/bin/python -m sim.harness generate --network complex --passengers 100k --out results/scenarios/complex-100k
+.venv/bin/python -m sim.harness run --scenario results/scenarios/complex-100k --arrival-seed a1 \
+    --policy proposed-v0.2 --sink null --out results/runs/complex-100k-a1   # --tracemalloc 는 별도 실행
+```
+
+- 규모: `1k/10k/100k/900k` 또는 정수. 900k는 합성 규모 라벨이며 오전 실측 행 수가 아니다.
+- 망: `simple`(노선1·정류장2·차량4, 처리 상한용) / `complex`(공유정류장 60회랑×양방향=120노선,
+  노선당 30정류장·차량8, 정원45·정차30초·회차300초). 수송 현실성 근거가 아닌 시험 fixture다.
+- 단계: load(파일 읽기) → init(R5 realization·RunInputs 검증·엔진 사건 적재) → run(사건 루프)
+  → finalize(결과·checksum) → write(metrics.json·passenger_outcomes.csv). 각 단계 wall·CPU·
+  VmRSS·peak RSS(ru_maxrss)를 기록한다. JSONL 기록은 run 단계 안에서 일어나므로 null/jsonl
+  실행을 비교해 분리한다. tracemalloc은 `--tracemalloc` 별도 실행이며 시간 비교에 쓰지 않는다.
+- 정책 `proposed-v0.2`: max_wait 1200초, max_journey 3600초(evidence plan §7 제안 가정, 미승인).
+  drain = 발생 창 종료 + max_journey (plan v0.2 §7, manifest에 규칙 기록).
+- 산출: measurement.json(단계·사건 수·로그 bytes/sha256·결과 sha256·env), env_manifest.json
+  (commit·dirty·Python·platform·CPU·메모리), metrics.json, passenger_outcomes.csv, events.jsonl.
+- 모든 수치는 합성 입력 측정값이며 독립 검증 전 잠정이다. 외삽하지 않는다.
+- 기존 `benchmark.py`는 과거 비교용으로 보존한다.
+
 ## 미확인 자료와 검토
 
 노션 M00/M05 페이지는 접근 실패했으며 이미지·첨부의 존재나 내용을 확인하지 못했다.
