@@ -1,0 +1,13 @@
+
+# 제목: <type>(<scope>): <한글 요약> (#<issue>)
+#   type: feat fix test docs refactor perf build ci chore revert
+#   scope 예: demand network planning simulation routing evaluation api web contracts repo
+#   50자 안팎, 마침표 없음. 예) feat(demand): PSNG_NUM 가중 OD 집계 추가 (#12)
+#
+# (제목 아래 한 줄 비우기)
+#
+# 본문 첫 줄: 무엇을 왜 바꿨는지 한 문장
+# - 파일/모듈: 바꾼 내용 (코드 식별자·경로는 `백틱`, 번역하지 않기)
+# - 검증: 실제로 실행한 테스트·측정과 결과 (못 했으면 이유)
+#
+# '#'으로 시작하는 줄은 커밋 메시지에 들어가지 않습니다. 자세한 규칙: CONTRIBUTING.md "커밋" 절
