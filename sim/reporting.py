@@ -20,8 +20,10 @@ class Result:
     # P4 raw counters (defaults keep older constructors valid).
     refusal_count: int = 0
     vehicle_stats: tuple['VehicleStats', ...] = ()
+    # Set only when passengers were streamed to an outcome sink (passengers == ()).
+    streamed_total: int | None = None
     @property
-    def total(self): return len(self.passengers)
+    def total(self): return len(self.passengers) if self.streamed_total is None else self.streamed_total
 
 @dataclass(frozen=True)
 class VehicleStats:
