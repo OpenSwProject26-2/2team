@@ -21,28 +21,6 @@
     "served": 7,
     "unserved": 2
   },
-  "adapter-r5-r1": {
-    "censored": 0,
-    "distance_m": 2400,
-    "event_count": 31,
-    "log_sha256": "94596358256043cd30e813d99f7ee27de87a972dd2b1d59434d432ffa58cad1b",
-    "outcome_sha256": "b155be37a781dbf52068b48e9692d314e80d14395c86ab4d26a932f926c78db2",
-    "p90_wait_s": 130,
-    "passengers": 9,
-    "served": 1,
-    "unserved": 8
-  },
-  "adapter-r5-r1-r2": {
-    "censored": 0,
-    "distance_m": 4800,
-    "event_count": 44,
-    "log_sha256": "7ec377ac13dab4c4924c6d70b596435c0779116a98cc8f345af099c376c639d4",
-    "outcome_sha256": "6e9ca253d956529498e00098ca79f192be13abf3b958395c28761a85bd8cbbb6",
-    "p90_wait_s": 130,
-    "passengers": 9,
-    "served": 2,
-    "unserved": 7
-  },
   "direct": {
     "censored": 0,
     "distance_m": 200,

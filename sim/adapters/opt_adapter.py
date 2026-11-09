@@ -1,11 +1,12 @@
 """The only M05 module allowed to depend on C's prototype DTOs."""
 from dataclasses import asdict
+import json
 from opt.candidates import validate_allocation
 from opt.integration import Assessment
-from opt.models import InputError
+from opt.models import Demand, InputError
 from sim.models import Trip, SimulationError
 from sim.run_inputs import RunInputs, expand
-from sim.arrivals import BinRow, validate_realization
+from sim.arrivals import validate_realization
 from sim.schedule import validate_schedule
 from sim.engine import simulate
 
@@ -18,40 +19,49 @@ def prepare_inputs(inputs, *, seed):
         tuple(sorted((s.segment_id, s.travel_s) for s in inputs.segments)), seed)
 
 
-def demand_bins(inputs, bin_width_s):
-    """R5 mode only: read C Demand.arrival_s as the bin start of an explicit-width bin.
+def c_demands(realization, route_of_row):
+    """R5 realization -> C Demand rows with exact arrival_s (C ADR-001, PR #16).
 
-    TODO(ADR, D07/R5): C's Demand has no time_bin field. Whether arrival_s is an exact
-    time or a bin start is not decided; the exact mode (prepare_inputs) stays the default.
+    C defines Demand.arrival_s as an already generated arrival time that is never
+    re-drawn from a seed, so R5 runs *before* C: one Demand per (aggregate_id, time_s),
+    demand_id '<aggregate_id>@<time_s>'. route_of_row(BinRow) must return the row's
+    original_route_id explicitly (OD x bin rows carry no route; no default is guessed).
     """
-    return tuple(BinRow(d.demand_id, d.origin, d.destination, d.arrival_s, bin_width_s,
-                        d.passenger_count) for d in inputs.demands)
+    validate_realization(realization)
+    rows = {r.aggregate_id: r for r in realization.rows}
+    counts = {}
+    for p in realization.passengers:
+        key = (json.loads(p.passenger_id)[0], p.time_s)
+        counts[key] = counts.get(key, 0) + 1
+    demands = []
+    for (aid, time_s), n in sorted(counts.items()):
+        row = rows[aid]
+        route = route_of_row(row)
+        if not isinstance(route, str) or not route:
+            raise SimulationError('missing original_route_id for aggregate row')
+        demands.append(Demand(f'{aid}@{time_s}', row.origin, row.destination, time_s, n, route))
+    return tuple(sorted(demands, key=lambda d: d.demand_id))
 
 
-def realized_inputs(inputs, realization):
-    """Accept a pre-generated R5 realization after validating it against C demands."""
-    widths = {r.bin_width_s for r in realization.rows}
-    if len(widths) != 1:
-        raise InputError('realization must use one explicit bin width', 'DATA_VERSION_MISMATCH')
+def check_c_demands(inputs, realization, route_of_row):
+    """Reject C inputs whose demands are not exactly the conversion of `realization`."""
     try:
-        validate_realization(realization, demand_bins(inputs, widths.pop()))
+        expected = c_demands(realization, route_of_row)
     except SimulationError as exc:
         raise InputError(f'realization rejected: {exc}', 'DATA_VERSION_MISMATCH') from exc
-    return RunInputs(inputs.input_bundle_id, inputs.scenario_id, inputs.checksum,
-        inputs.service_date, realization.passengers,
-        tuple(sorted((s.segment_id, s.travel_s) for s in inputs.segments)), realization.seed)
+    if tuple(sorted(inputs.demands, key=lambda d: d.demand_id)) != expected:
+        raise InputError('C demands differ from the declared R5 realization', 'DATA_VERSION_MISMATCH')
 
 
-def check_inputs(inputs, run, realization=None):
-    expected = (prepare_inputs(inputs, seed=run.seed) if realization is None
-                else realized_inputs(inputs, realization))
+def check_inputs(inputs, run):
+    expected = prepare_inputs(inputs, seed=run.seed)
     if run != expected:
         raise InputError('RunInputs realization or source mismatch', 'DATA_VERSION_MISMATCH')
 
 
-def compile_schedule(plan, inputs, run, realization=None):
+def compile_schedule(plan, inputs, run):
     validate_allocation(inputs, plan)
-    check_inputs(inputs, run, realization)
+    check_inputs(inputs, run)
     segments = {s.segment_id: s for s in inputs.segments}
     travel = dict(run.travel_times)
     routes = {r.route_id: r for r in inputs.routes}
@@ -99,14 +109,14 @@ def assessment(plan, inputs, result):
         True, False, result.served, result.total, result.p90_wait_s, result.distance_m)
 
 
-def evaluation_port(run_inputs, config, sink_factory=None, realization=None):
+def evaluation_port(run_inputs, config, sink_factory=None):
     """Bind one fixed realization and explicit policy; exceptions reach the caller.
 
-    With `realization`, run_inputs must be realized_inputs(inputs, realization); every
-    evaluated plan then shares the same pre-generated R5 arrivals.
+    For R5 arrivals, build the C inputs from c_demands(realization, ...) first; every
+    plan evaluated on those inputs then shares the same exact arrivals.
     """
     def evaluate(plan, inputs):
-        trips = compile_schedule(plan, inputs, run_inputs, realization)
+        trips = compile_schedule(plan, inputs, run_inputs)
         if trips and max(t.return_s for t in trips) > config.drain_s:
             raise SimulationError('drain must include full vehicle duties for Assessment distance')
         result = simulate(plan.plan_id, plan.revision, run_inputs, trips, config,
@@ -115,8 +125,8 @@ def evaluation_port(run_inputs, config, sink_factory=None, realization=None):
     return evaluate
 
 
-def service_plan(plan, inputs, run, realization=None):
-    trips = compile_schedule(plan, inputs, run, realization)
+def service_plan(plan, inputs, run):
+    trips = compile_schedule(plan, inputs, run)
     output = plan.to_service_plan(inputs)
     output['trips'] = [asdict(t) for t in trips]
     output['vehicle_duties'] = [

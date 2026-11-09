@@ -56,8 +56,14 @@ assessment = port(plan, inputs)
   정규형·checksum으로 검증한다. 외부 생성(편중 민감도 등)도 bin 안이면 수용하며,
   `regenerate=True`·`expected_checksum`으로 생성기 출력 고정을 추가로 강제할 수 있다.
 - 파일 형식: JSONL 첫 줄 메타데이터(generator·seed·rows·checksum), 이후 승객별 배열.
-- C adapter는 `realized_inputs(inputs, realization)`로 수용한다. 이때만 C `Demand.arrival_s`를
-  bin 시작으로 읽는다. TODO(ADR): C Demand의 arrival_s가 정확 시각인지 bin 시작인지 미정이다.
+- C 연결은 C 정의를 따른다: `Demand.arrival_s`는 이미 생성된 정확 시각이며 seed로 다시 만들지 않는다
+  (C ADR-001, PR #16). 따라서 R5는 C보다 먼저 실행한다. `c_demands(realization, route_of_row)`가
+  (aggregate_id, time_s)마다 C Demand 1행(`<aggregate_id>@<time_s>`)을 만들고, `check_c_demands`가 C 입력이
+  선언한 realization의 변환과 정확히 같은지 검사한다. 노선(original_route_id)은 호출자가 명시적으로 준다.
+  이후 C 탐색·B 평가는 기존 exact 모드(`prepare_inputs`) 그대로다.
+- 영향: seed마다 C 입력 checksum이 달라 같은 배분도 plan_id가 달라진다. seed 간 paired 비교는 C의
+  `evaluate_holdout`처럼 배분을 고정하고 plan을 다시 만든다. C 입력 행 수는 (OD, 초) 단위로 커지며
+  실제 규모에서 C 근사 평가기 성능은 측정하지 않았다.
 - 합성 초 단위 발생은 실측 초 정밀도가 아니며 태그 시각을 정류장 도착으로 확정하지 않는다.
 
 ## 명시적 프로토타입 정책 · 팀 검토 필요

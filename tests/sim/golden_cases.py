@@ -16,7 +16,7 @@ from sim.events import JsonlSink
 from sim.models import Config, Trip
 from sim.run_inputs import RunInputs, expand
 from sim import synthetic
-from sim.adapters.opt_adapter import prepare_inputs, compile_schedule, demand_bins, realized_inputs
+from sim.adapters.opt_adapter import prepare_inputs, compile_schedule
 from opt.models import load_inputs, make_plan
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -60,9 +60,6 @@ def adapter_cases():
         plan = make_plan(x, alloc, 'golden')
         run = prepare_inputs(x, seed='fixed')
         yield 'adapter-exact-' + '-'.join(sorted(alloc)), run, compile_schedule(plan, x, run), config
-        real = generate(demand_bins(x, 600), 'golden')
-        rrun = realized_inputs(x, real)
-        yield 'adapter-r5-' + '-'.join(sorted(alloc)), rrun, compile_schedule(plan, x, rrun, real), config
 
 
 def synthetic_cases():
