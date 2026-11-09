@@ -57,8 +57,12 @@ class HarnessTests(unittest.TestCase):
             self.assertEqual(self.jsonl[key], self.again[key])
 
     def test_outputs_and_env(self):
-        metrics = json.loads((self.root / 'null' / 'metrics.json').read_text())
-        self.assertEqual(metrics['served'] + metrics['unserved'] + metrics['censored'], 300)
+        report = json.loads((self.root / 'null' / 'metrics.json').read_text())
+        m1 = report['M1']
+        self.assertEqual(m1['served'] + m1['unserved'] + m1['censored'], 300)
+        self.assertEqual(sum(report['M2']['unserved_by_reason'].values()), m1['unserved'])
+        self.assertIn('R12', report['G'])
+        self.assertIsNotNone(report['M5'])
         lines = (self.root / 'null' / 'passenger_outcomes.csv').read_text().splitlines()
         self.assertEqual(len(lines), 301)
         env = env_manifest()

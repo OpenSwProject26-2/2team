@@ -29,6 +29,7 @@ import tracemalloc
 from .arrivals import BinRow, generate
 from .engine import simulate
 from .events import NullSink
+from .metrics import check_max_headway, summarize
 from .models import Config, Trip
 from .run_inputs import RunInputs
 from . import synthetic
@@ -36,7 +37,9 @@ from . import synthetic
 PROVISIONAL = '독립 검증 전 잠정 (provisional, not independently verified)'
 SCALES = {'1k': 1_000, '10k': 10_000, '100k': 100_000, '900k': 900_000}
 # Proposed assumptions from .omx/plans/m05-experiment-evidence-plan.md §7; not approved values.
-POLICIES = {'proposed-v0.2': {'max_wait_s': 1200, 'max_journey_s': 3600,
+# R12 max headway 20 min and the M3 20-minute wait threshold are plan values, also unapproved.
+POLICIES = {'proposed-v0.2': {'max_wait_s': 1200, 'max_journey_s': 3600, 'max_headway_s': 1200,
+                              'wait_threshold_s': 1200,
                               'source': 'experiment-evidence-plan §7 proposed baseline (제안 가정)'}}
 SERVICE_DATE = '2026-11-09'
 
@@ -216,10 +219,14 @@ def run_measured(scenario, out, *, arrival_seed, policy, sink_kind, trace=False)
             f.write(data)
             outcome_hash.update(data)
             outcome_bytes += len(data)
+    report = summarize(result, wait_threshold_s=values['wait_threshold_s'], stop_area=network['stop_area'],
+                       headway=check_max_headway(network['trips'], network['route_of'], values['max_headway_s']))
+    (out / 'metrics.json').write_text(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False))
     metrics = {'served': result.served, 'unserved': result.unserved, 'censored': result.censored,
                'total': result.total, 'p90_wait_s': result.p90_wait_s, 'distance_m': result.distance_m,
-               'event_count': result.event_count, 'label': PROVISIONAL}
-    (out / 'metrics.json').write_text(json.dumps(metrics, indent=2, sort_keys=True))
+               'event_count': result.event_count, 'refusal_events': result.refusal_count,
+               'unserved_by_reason': report['M2']['unserved_by_reason'], 'R12_pass': report['G']['R12']['pass'],
+               'label': PROVISIONAL}
     stages.mark('write')
     measurement = {
         'status': 'ok', 'label': PROVISIONAL, 'scenario': str(scenario),
@@ -233,7 +240,7 @@ def run_measured(scenario, out, *, arrival_seed, policy, sink_kind, trace=False)
         'stages': stages.records, 'peak_rss_bytes': peak_rss_bytes(),
         'total_wall_s': sum(r['wall_s'] for r in stages.records.values()),
         'total_cpu_s': sum(r['cpu_s'] for r in stages.records.values()),
-        'metrics': metrics, 'env': env_manifest()}
+        'metrics': metrics, 'env': env_manifest()}  # full M1-M6 report: metrics.json
     if trace: tracemalloc.stop()
     (out / 'measurement.json').write_text(json.dumps(measurement, indent=2, sort_keys=True))
     (out / 'env_manifest.json').write_text(json.dumps(measurement['env'], indent=2, sort_keys=True))
