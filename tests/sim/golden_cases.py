@@ -1,8 +1,7 @@
-"""Scenarios whose event logs were recorded with the pre-P2 engine (commit 39d730f).
+"""golden 시나리오: P2 대기열 변경 전 엔진(커밋 9d37dab, 메시지 한글화 전 39d730f)으로 기록한 사건 로그.
 
-The engine must reproduce these logs byte-for-byte after queue/memory refactors.
-Regenerate only for an intentional, documented behaviour change:
-    .venv/bin/python -m tests.sim.golden_cases --write
+엔진을 바꿔도 이 로그와 바이트 단위로 같아야 한다. 의도적이고 문서화한 동작 변경일 때만 다시 기록한다:
+    PYTHONPATH=C.Part .venv/bin/python -m tests.sim.golden_cases --write
 """
 from dataclasses import replace
 import hashlib
@@ -21,7 +20,7 @@ from opt.models import load_inputs, make_plan
 
 ROOT = Path(__file__).resolve().parents[2]
 GOLDEN = Path(__file__).resolve().parent / 'golden'
-FULL_LOG_LIMIT = 400  # store complete logs for small cases, hashes for all
+FULL_LOG_LIMIT = 400  # 작은 사례는 로그 전체, 모든 사례는 해시를 저장
 
 GOLDEN_SPEC = synthetic.NetworkSpec('golden', 6, 12, 4, True, 3, 10, 90, 30, 400, 20, 60,
                                     6 * 3600, 12 * 3600, 5)
@@ -40,8 +39,8 @@ def direct_cases():
 
 
 def tie_case():
-    """Hand-built ties: same-time passengers, two trips at one stop at once, shared stops,
-    capacity binding, journey deadline shorter than wait, competing destinations."""
+    """동시각·경쟁 사례: 같은 시각 발생, 한 정류장에 두 운행편 동시 도착, 공유 정류장,
+    정원 부족, 대기 기한보다 짧은 여정 기한, 목적지가 다른 승객 경쟁."""
     passengers = expand([('a', 'A', 'C', 0, 3), ('b', 'A', 'B', 0, 2), ('c', 'B', 'C', 10, 3),
                          ('d', 'A', 'D', 5, 2), ('e', 'C', 'A', 0, 1), ('f', 'A', 'C', 40, 2)])
     run = RunInputs('tie', 'tie', 'tie', '2026-11-09', passengers, (), 'tie')

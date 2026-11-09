@@ -1,5 +1,5 @@
-"""R5 -> C under C's definition: Demand.arrival_s is an exact, already generated time
-(C ADR-001, PR #16). The realization is converted into C demands before C runs."""
+"""R5 → C 연결 테스트. C 정의대로 Demand.arrival_s는 이미 생성된 정확 시각이므로
+(C ADR-001, PR #16) realization을 C 실행 전에 C 수요로 바꾼다."""
 from dataclasses import replace
 from pathlib import Path
 import unittest
@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 class CDemandConversionTests(unittest.TestCase):
     def setUp(self):
         self.x = load_inputs(ROOT / 'C.Part/opt/examples/synthetic.json')
-        # Synthetic OD x 10-minute rows built from the C example; routes mapped explicitly.
+        # C 예제로 만든 합성 OD×10분 행. 노선은 명시적으로 매핑한다.
         self.rows = tuple(BinRow(d.demand_id, d.origin, d.destination, d.arrival_s, 600, d.passenger_count)
                           for d in self.x.demands)
         self.route = {d.demand_id: d.original_route_id for d in self.x.demands}
@@ -50,14 +50,13 @@ class CDemandConversionTests(unittest.TestCase):
 
     def test_mismatch_rejected(self):
         with self.assertRaises(InputError): check_c_demands(self.cx, generate(self.rows, 'other'), self.route_of)
-        with self.assertRaises(InputError): check_c_demands(self.x, self.real, self.route_of)  # original exact demands
+        with self.assertRaises(InputError): check_c_demands(self.x, self.real, self.route_of)  # 원래의 정확 시각 수요
         with self.assertRaises(InputError):
-            check_c_demands(self.cx, retime(self.real, 0, 10 ** 6), self.route_of)  # tampered realization
+            check_c_demands(self.cx, retime(self.real, 0, 10 ** 6), self.route_of)  # 변조한 realization
         with self.assertRaises(Exception): c_demands(self.real, lambda row: None)
 
     def test_seed_changes_c_input_and_plan_identity(self):
-        # Under C's definition each realization is a different C input bundle, so the same
-        # allocation gets a different plan_id; paired seed comparison must re-mint plans.
+        # realization마다 C 입력이 달라져 같은 배분도 plan_id가 다르다. seed 간 비교는 plan을 다시 만든다.
         other = replace(self.x, demands=c_demands(generate(self.rows, 'other'), self.route_of))
         self.assertNotEqual(self.cx.checksum, other.checksum)
         self.assertNotEqual(make_plan(self.cx, {'r1': 1}, 's').plan_id, make_plan(other, {'r1': 1}, 's').plan_id)

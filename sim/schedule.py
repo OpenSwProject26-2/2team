@@ -1,6 +1,13 @@
+"""운행 일정 검증."""
 from .models import SimulationError, integer
 
 def validate_schedule(trips):
+    """운행편 목록이 실행 가능한지 검사한다. 하나라도 어기면 SimulationError.
+
+    - 운행편 ID 중복 없음, 정원 ≥ 1, 정류장 2개 이상이고 한 운행편 안에서 중복 없음
+    - 정류장마다 출발 ≥ 도착, 다음 정류장 도착 > 이전 출발, 복귀 ≥ 마지막 출발
+    - 같은 차량의 운행편은 정원·출발 거점이 같고, 앞 운행편 복귀 뒤에 다음이 시작
+    """
     ids, duties = set(), {}
     for t in trips:
         integer(t.capacity, 1)

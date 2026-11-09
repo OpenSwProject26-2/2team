@@ -1,21 +1,14 @@
-"""P7 resource guard: run one measurement command under timeout and memory limits.
+"""P7 자원 가드: 측정 명령 1개를 시간·메모리 상한 아래 별도 프로세스로 실행한다.
 
     python -m sim.guard --timeout-s 600 --mem-limit-mb 8000 --mem-mode rss \
         --failures results/failures.jsonl --label complex-100k -- \
         python -m sim.harness run ...
 
-Statuses: OK, TIMEOUT, MEMORY_LIMIT, EXCEPTION, NA (cell intentionally not run).
-Every non-OK outcome is appended to failures.jsonl; nothing is dropped.
-
-Memory modes (they measure different things, see plan v0.2 §8):
-- rss: the parent samples the child's VmRSS every poll_s and kills it above the
-  limit. Spikes shorter than one poll interval can pass unnoticed; the sampled
-  maximum is recorded.
-- as: RLIMIT_AS (virtual address space) inside the child. Allocation fails with
-  MemoryError; address space is larger than RSS, so this limit is stricter.
-- both: apply both.
-Retries: only infrastructure failures to spawn the process (OSError) are retried
-up to infra_retries; code failures, timeouts and limits are never retried.
+상태: OK, TIMEOUT, MEMORY_LIMIT, EXCEPTION, NA(일부러 실행 안 함). OK가 아니면 모두
+failures.jsonl에 남긴다.
+메모리 모드: rss는 부모가 poll_s마다 자식 RSS를 재서 넘으면 종료(아주 짧은 급증은 놓칠 수 있음),
+as는 자식의 가상 주소공간 상한(RSS보다 커서 더 엄격, MemoryError로 실패), both는 둘 다.
+재시도는 프로세스 생성 실패(OSError)만 한다. 코드 오류·시간·메모리 초과는 재시도하지 않는다.
 """
 import argparse
 from datetime import datetime
@@ -36,6 +29,7 @@ _EXC = re.compile(r'^([A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt))(?::|$)'
 
 
 def _rss(pid):
+    # /proc에서 자식 프로세스의 현재 RSS(bytes)를 읽는다.
     try:
         with open(f'/proc/{pid}/status') as f:
             for line in f:
@@ -49,6 +43,7 @@ def _now(): return datetime.now().astimezone().isoformat(timespec='seconds')
 
 
 def _error_type(stderr_text):
+    # stderr 마지막 traceback 줄에서 예외 이름을 찾는다.
     for line in reversed(stderr_text.strip().splitlines()):
         m = _EXC.match(line.strip())
         if m: return m.group(1), line.strip()[:500]
@@ -56,6 +51,7 @@ def _error_type(stderr_text):
 
 
 def append_failure(path, record):
+    """failures.jsonl에 한 줄 추가한다(덮어쓰지 않음)."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, 'a', encoding='utf-8') as f:
@@ -63,6 +59,7 @@ def append_failure(path, record):
 
 
 def record_na(failures_path, label, reason, context=None):
+    """실행하지 않은 셀을 NA로 기록한다."""
     record = {'status': 'NA', 'label': label, 'reason': reason, 'context': context or {},
               'recorded_at': _now(), 'provisional': PROVISIONAL}
     append_failure(failures_path, record)
@@ -71,6 +68,7 @@ def record_na(failures_path, label, reason, context=None):
 
 def run_guarded(cmd, *, timeout_s, mem_limit_bytes, mem_mode='rss', poll_s=0.05, failures_path=None,
                 label='', context=None, log_dir=None, infra_retries=1, env=None):
+    """cmd를 실행하고 결과 기록(dict)을 돌려준다. 실패는 failures_path에도 남긴다."""
     if mem_mode not in ('rss', 'as', 'both'): raise ValueError('mem_mode must be rss, as or both')
     if timeout_s <= 0 or mem_limit_bytes <= 0: raise ValueError('limits must be positive')
     log_dir = Path(log_dir) if log_dir else Path(tempfile.mkdtemp(prefix='m05-guard-'))
@@ -98,6 +96,7 @@ def run_guarded(cmd, *, timeout_s, mem_limit_bytes, mem_mode='rss', poll_s=0.05,
                 if failures_path: append_failure(failures_path, record)
                 return record
     killed, max_rss = None, 0
+    # 끝날 때까지 시간·RSS를 재고, 넘으면 프로세스 그룹 전체를 SIGKILL로 끝낸다.
     while proc.poll() is None:
         elapsed = time.monotonic() - started
         rss = _rss(proc.pid)
@@ -118,6 +117,7 @@ def run_guarded(cmd, *, timeout_s, mem_limit_bytes, mem_mode='rss', poll_s=0.05,
     stderr_text = err_path.read_text(errors='replace')
     stdout_text = out_path.read_text(errors='replace')
     error_type, message = _error_type(stderr_text)
+    # 가드가 끝냈으면 그 사유, 정상 종료면 OK, MemoryError면 메모리 초과, 나머지는 예외.
     if killed:
         status = killed
     elif proc.returncode == 0:

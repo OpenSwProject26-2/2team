@@ -1,14 +1,9 @@
-"""Public synthetic networks and OD x 10-minute demand for correctness and scale tests.
+"""정확성·규모 시험용 공개 합성 망과 OD×10분 수요 생성기.
 
-Nothing here is derived from observed card data. Topology, travel times and
-demand weights are SHA-256 hash draws of (seed, key), so every scenario file is
-reproducible across Python versions. Networks are *test fixtures*: their supply
-is not a realistic Seoul transport capacity and results are not field evidence.
-
-Model: each corridor is a window of a cyclic stop list; neighbouring corridors
-share stops. Each corridor yields an outbound and an inbound directional route.
-A trip visits its route's stops, then dead-heads back (return_s), matching the
-current one-way-visit trip model in sim.models.Trip / opt_adapter.
+관측 카드 자료를 쓰지 않는다. 모든 난수는 (seed, 키)의 SHA-256이라 Python 버전과 무관하게 재현된다.
+망은 시험용 fixture일 뿐 서울 실제 공급이 아니다.
+구조: 정류장을 원형으로 늘어놓고 회랑(노선 묶음)마다 연속 구간을 잘라 쓴다. 이웃 회랑은 정류장을
+공유한다. 회랑마다 갈 때·올 때 노선 2개를 만들고, 운행편은 정류장을 다 돈 뒤 빈 차로 복귀한다.
 """
 from dataclasses import dataclass, asdict
 import hashlib
@@ -20,6 +15,7 @@ from .models import SimulationError, Trip, integer
 
 @dataclass(frozen=True)
 class NetworkSpec:
+    """합성 망 설정: 회랑 수, 노선당 정류장, 공유 정류장, 차량, 정원, 시간(초), 거리(m), 운영 시간."""
     name: str
     corridors: int
     stops_per_route: int
@@ -51,6 +47,7 @@ class NetworkSpec:
 
 @dataclass(frozen=True)
 class DemandSpec:
+    """합성 수요 설정: 총 인원, 발생 창, bin 폭, 행당 평균 인원, 연결 불가 비율(천분율)."""
     passengers: int
     window_start_s: int
     window_end_s: int
@@ -67,26 +64,28 @@ class DemandSpec:
 
 
 HOUR = 3600
-# L1-like: one route, two stops. Processing-bound fixture, not transport realism.
+# 단순 망: 노선 1개·정류장 2개. 처리 속도 상한 측정용이며 수송 현실성은 없다.
 SIMPLE = NetworkSpec('simple', 1, 2, 0, False, 4, 45, 300, 0, 2000, 30, 300,
                      6 * HOUR, 22 * HOUR, 1)
-# Many shared stops, both directions, long routes, staggered vehicles.
+# 복잡 망: 공유 정류장이 많은 60회랑 양방향, 노선당 30정류장, 노선당 차량 8대.
 COMPLEX = NetworkSpec('complex', 60, 30, 10, True, 8, 45, 120, 30, 500, 30, 300,
                       6 * HOUR, 22 * HOUR, 8)
 PRESETS = {'simple': SIMPLE, 'complex': COMPLEX}
 
 
 def _unit(seed, *key):
-    """Uniform float in [0,1) from a version-independent hash draw."""
+    """해시로 만든 [0, 1) 균등 난수."""
     h = hashlib.sha256(json.dumps([seed, *key], separators=(',', ':')).encode()).digest()
     return int.from_bytes(h[:7], 'big') / (1 << 56)
 
 
 def _pick(seed, n, *key):
+    """해시로 고른 0..n-1 정수."""
     return min(int(_unit(seed, *key) * n), n - 1)
 
 
 def build_network(spec, seed):
+    """정류장·노선·운행편·trip_id→노선·정류장→지역(dong)을 담은 dict를 만든다."""
     step = spec.stops_per_route - spec.shared_stops
     pool = max(spec.stops_per_route, spec.corridors * step + spec.shared_stops)
     width = len(str(pool))
@@ -129,6 +128,7 @@ def build_network(spec, seed):
 
 
 def served_pairs(routes):
+    """어떤 노선으로든 갈 수 있는 (출발, 도착) 쌍 집합."""
     pairs = set()
     for seq in routes.values():
         for i, o in enumerate(seq):
@@ -137,7 +137,7 @@ def served_pairs(routes):
 
 
 def build_demand(network, spec, seed):
-    """Exactly spec.passengers people in OD x bin rows; heavy-tailed row weights."""
+    """정확히 spec.passengers명을 OD×bin 행으로 나눈다. 행마다 인원 편차가 크게 나도록 가중치를 준다."""
     routes = sorted(network['routes'].items())
     stops, pairs = network['stops'], served_pairs(network['routes'])
     bins = (spec.window_end_s - spec.window_start_s) // spec.bin_width_s
@@ -158,7 +158,7 @@ def build_demand(network, spec, seed):
             o, d = seq[i], seq[j]
         cells.append((o, d, b))
         weights.append(1 / (_unit(seed, 'w', r) + 0.05))
-    # Largest-remainder allocation: the total is exact, never rounded away.
+    # 최대 나머지 방식으로 정수 배분해 총 인원을 정확히 맞춘다.
     total_w = sum(weights)
     raw = [spec.passengers * w / total_w for w in weights]
     counts = [int(x) for x in raw]

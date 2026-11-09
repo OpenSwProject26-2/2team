@@ -1,16 +1,9 @@
-"""R5 arrival realization: OD x time-bin aggregates -> per-passenger integer time_s.
+"""R5 승객 발생: OD×시간 bin 집계를 승객별 정수 초 발생 시각으로 펼친다.
 
-Policy (R5, plan v0.2 §3/§7): each aggregate row's passengers are generated
-uniformly over the integer seconds [bin_start_s, bin_start_s + bin_width_s).
-The bin width is always an explicit input; there is no hidden default.
-The tag time is not treated as a stop arrival time and second-level offsets are
-a synthetic assumption, not observed precision.
-
-Determinism: offsets come from a counter-based SHA-256 stream keyed by
-(generator, seed, aggregate_id, index). Results do not depend on row order,
-Python's `random` implementation, or the Python version. Exact uniformity is
-kept with rejection sampling. A different seed is *not* guaranteed to give a
-different realization (e.g. width 1, zero demand, or a collision).
+규칙: 각 행의 인원을 [bin_start_s, bin_start_s + bin_width_s) 안의 정수 초에 균등하게 발생시킨다.
+bin 폭은 항상 호출자가 정한다. 초 단위 시각은 합성 가정이며 실측 정밀도가 아니다.
+결정성: (생성기, seed, 집계 ID, 순번)의 SHA-256으로 오프셋을 정하므로 행 순서·Python 버전과
+무관하게 같은 결과가 나온다. seed가 달라도 결과가 같을 수 있다(폭 1초, 0명 등).
 """
 from dataclasses import dataclass, asdict
 import hashlib
@@ -24,6 +17,7 @@ _SPAN = 1 << 64
 
 @dataclass(frozen=True)
 class BinRow:
+    """OD×시간 bin 집계 1행: bin 안에 passenger_count명이 발생한다."""
     aggregate_id: str
     origin: str
     destination: str
@@ -34,6 +28,7 @@ class BinRow:
 
 @dataclass(frozen=True)
 class ArrivalRealization:
+    """생성된 승객 목록과 출처. checksum으로 같은 realization인지 확인한다."""
     generator: str
     seed: str
     source_checksum: str
@@ -51,6 +46,7 @@ def _text(value):
 
 
 def check_rows(rows):
+    """집계 행을 ID 순으로 정렬하고 ID 중복·빈 값·같은 출도착·정수 범위를 검사한다."""
     rows = tuple(sorted(rows, key=lambda r: r.aggregate_id))
     seen = set()
     for r in rows:
@@ -64,15 +60,18 @@ def check_rows(rows):
 
 
 def source_checksum(rows):
+    """집계 행 전체의 checksum."""
     return digest([asdict(r) for r in check_rows(rows)])
 
 
 def passenger_id(aggregate_id, index):
-    """Same ID scheme as run_inputs.expand so exact and R5 modes stay comparable."""
+    """승객 ID ["집계 ID", 순번]. run_inputs.expand와 같은 형식이다."""
     return json.dumps([aggregate_id, index], separators=(',', ':'))
 
 
 def _offsets(seed, row):
+    # 승객마다 bin 안 오프셋(0..폭-1)을 만든다. 2^64를 폭으로 나눈 나머지 구간은 버리고
+    # 다시 뽑아(rejection sampling) 모든 초가 정확히 같은 확률이 되게 한다.
     width = row.bin_width_s
     limit = _SPAN - _SPAN % width
     base = hashlib.sha256(json.dumps([GENERATOR, seed, row.aggregate_id]).encode() + b'\0')
@@ -89,6 +88,7 @@ def _offsets(seed, row):
 
 
 def realization_checksum(generator, seed, source, passengers):
+    """생성기·seed·집계 checksum과 승객 목록(순서 포함)의 checksum."""
     h = hashlib.sha256(json.dumps([generator, seed, source], separators=(',', ':')).encode())
     for p in passengers:
         h.update(b'\n' + json.dumps([p.passenger_id, p.origin, p.destination, p.time_s],
@@ -97,6 +97,7 @@ def realization_checksum(generator, seed, source, passengers):
 
 
 def generate(rows, seed):
+    """집계 행과 seed로 realization을 만든다. 승객 순서는 집계 ID 순, 그 안에서 순번 순."""
     _text(seed)
     rows = check_rows(rows)
     passengers = []
@@ -111,12 +112,11 @@ def generate(rows, seed):
 
 
 def validate_realization(realization, rows=None, *, expected_checksum=None, regenerate=False):
-    """Accept a pre-generated realization only if it is consistent with its bins.
+    """미리 만든 realization이 집계 행과 맞는지 검사하고 맞으면 그대로 돌려준다.
 
-    Checks: declared rows (and `rows`, if given) match; every passenger maps to
-    exactly one (aggregate_id, index) slot with the row's OD and a time inside
-    the bin; per-row counts are exact; checksum recomputes; optional pinned
-    checksum; optional regeneration equality for the declared generator.
+    검사: 행 일치, 승객마다 (집계 ID, 순번) 하나에 대응, OD 일치, 시각이 bin 안, 행별 인원
+    정확, checksum 일치. expected_checksum을 주면 그 값과도 비교하고, regenerate=True면
+    같은 seed로 다시 생성한 결과와도 비교한다. bin 안이면 다른 방식으로 만든 것도 받는다.
     """
     declared = check_rows(realization.rows)
     if rows is not None and check_rows(rows) != declared:
@@ -159,7 +159,7 @@ def validate_realization(realization, rows=None, *, expected_checksum=None, rege
 
 
 def write_realization(realization, stream):
-    """JSONL: one metadata line, then one [id, origin, destination, time_s] line per passenger."""
+    """JSONL로 저장: 첫 줄 메타데이터, 이후 승객마다 [ID, 출발, 도착, time_s] 한 줄."""
     stream.write(json.dumps({'generator': realization.generator, 'seed': realization.seed,
         'source_checksum': realization.source_checksum, 'checksum': realization.checksum,
         'rows': [asdict(r) for r in realization.rows], 'passenger_count': realization.total},
@@ -170,6 +170,7 @@ def write_realization(realization, stream):
 
 
 def read_realization(stream, rows=None, *, expected_checksum=None):
+    """write_realization 파일을 읽고 validate_realization으로 검사한다."""
     meta = json.loads(stream.readline())
     passengers = tuple(Passenger(*json.loads(line)) for line in stream if line.strip())
     if len(passengers) != meta['passenger_count']:

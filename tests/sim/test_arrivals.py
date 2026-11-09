@@ -12,7 +12,7 @@ from sim.events import JsonlSink
 
 ROWS = (BinRow('d1', 'A', 'C', 25200, 600, 50), BinRow('d2', 'B', 'C', 25800, 600, 30),
         BinRow('d0', 'C', 'A', 25200, 600, 0))
-# Pinned with generator uniform_bin_sha256_v1; a change means the realization changed.
+# uniform_bin_sha256_v1 생성기의 고정 checksum. 바뀌면 realization이 바뀐 것이다.
 PINNED = '7803c4e1a75801e41d26e61f09fd3468bf406877279d63eff70a9851179f5ba4'
 
 
@@ -36,7 +36,7 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(a.generator, GENERATOR)
 
     def test_selected_other_seed_differs(self):
-        # Holds for this selected fixture only; seeds are not guaranteed to differ in general.
+        # 이 fixture에서만 성립. seed가 다르면 항상 결과가 다르다는 보장은 없다.
         a, b = generate(ROWS, 'fixture'), generate(ROWS, 'fixture-2')
         self.assertNotEqual(a.checksum, b.checksum)
         self.assertNotEqual([p.time_s for p in a.passengers], [p.time_s for p in b.passengers])
@@ -62,7 +62,7 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(generate((), 's').total, 0)
 
     def test_uniform_within_bin(self):
-        # Deterministic for the fixed seed. 10 sub-bins of 60 s, chi-square 9 df, 0.999 crit 27.88.
+        # seed 고정이라 결정적. 60초 칸 10개 카이제곱(자유도 9), 0.999 임계값 27.88.
         r = generate((BinRow('u', 'A', 'B', 0, 600, 6000),), 'uniformity')
         counts = Counter(p.time_s // 60 for p in r.passengers)
         chi2 = sum((counts[i] - 600) ** 2 / 600 for i in range(10))
@@ -87,7 +87,7 @@ class ValidationTests(unittest.TestCase):
         validate_realization(self.r, ROWS, expected_checksum=PINNED, regenerate=True)
 
     def test_accepts_external_realization_inside_bins_but_not_regeneration(self):
-        external = retime(self.r, 0, 25200)  # e.g. a front-loaded sensitivity realization
+        external = retime(self.r, 0, 25200)  # 예: 앞쪽 편중 민감도용 realization
         validate_realization(external, ROWS)
         with self.assertRaises(SimulationError): validate_realization(external, ROWS, regenerate=True)
         with self.assertRaises(SimulationError): validate_realization(external, ROWS, expected_checksum=PINNED)
@@ -95,14 +95,14 @@ class ValidationTests(unittest.TestCase):
     def test_rejects_tampering(self):
         p0 = self.r.passengers[0]
         cases = (
-            retime(self.r, 0, 25800),  # outside [25200, 25800)
-            reseal(self.r, self.r.passengers[1:]),  # lost passenger
-            reseal(self.r, self.r.passengers + (self.r.passengers[0],)),  # duplicate
-            reseal(self.r, (replace(p0, destination='B'),) + self.r.passengers[1:]),  # OD changed
+            retime(self.r, 0, 25800),  # bin [25200, 25800) 밖
+            reseal(self.r, self.r.passengers[1:]),  # 승객 누락
+            reseal(self.r, self.r.passengers + (self.r.passengers[0],)),  # 중복
+            reseal(self.r, (replace(p0, destination='B'),) + self.r.passengers[1:]),  # OD 변경
             reseal(self.r, (replace(p0, passenger_id='["d1",50]'),) + self.r.passengers[1:]),
             reseal(self.r, (replace(p0, passenger_id='["zz",0]'),) + self.r.passengers[1:]),
             replace(self.r, checksum='0' * 64),
-            replace(self.r, seed='other'),  # checksum covers seed
+            replace(self.r, seed='other'),  # checksum에 seed가 포함됨
             replace(self.r, source_checksum='wrong'),
         )
         for case in cases:

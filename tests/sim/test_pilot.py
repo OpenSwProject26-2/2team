@@ -18,7 +18,7 @@ class PilotTests(unittest.TestCase):
             self.assertEqual([(r['scale'], r['mode'], r['status']) for r in rows],
                              [('100', 'batch', 'OK'), ('200', 'batch', 'OK'), ('100', 'stream', 'OK'), ('200', 'stream', 'OK')])
             for r in rows: self.assertIn('독립 검증 전 잠정', r['label'])
-            self.assertEqual(rows[0]['metrics_sha256'], rows[2]['metrics_sha256'])  # batch == stream report
+            self.assertEqual(rows[0]['metrics_sha256'], rows[2]['metrics_sha256'])  # batch와 stream 보고서가 같다
             self.assertFalse((Path(tmp) / 'failures.jsonl').exists())
 
     def test_failure_then_na(self):

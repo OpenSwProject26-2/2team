@@ -1,37 +1,25 @@
-"""P4 metrics (M1-M6) and the R12 maximum-headway check.
+"""P4 지표(M1–M6)와 R12 최대 배차간격 검사. 결과를 인용할 때 이 정의를 함께 밝힌다.
 
-Definitions are fixed here before any experiment and must be cited with results.
+M1  served / total. total = served + unserved + censored. total=0이면 NA(None).
+    censored가 있으면 rate 대신 하한 served/total, 상한 (served+censored)/total을 낸다.
 
-M1  served / total. total = served + unserved + censored (exact, never estimated).
-    total == 0 -> NA (None). With censored > 0, report bounds:
-    lower = served / total (all censored fail), upper = (served + censored) / total.
+M2  unserved 사유는 하나만, 아래 순서로 먼저 맞는 것(REASON_PRIORITY):
+    1. no_connection: 일정 어디에도 출발지를 거쳐 목적지로 가는 운행편이 없음
+    2. service_end:   연결은 있지만 [발생 시각, drain_s]에 출발지에 오는 그런 운행편이 없음
+    3. journey / wait: 결과를 확정한 기한. 같은 시각이면 journey가 먼저 처리된다.
+    만차 거절은 별도 집계: 만석으로 끝난 방문마다 탈 수 있었던 남은 승객 1명당 1건(중복 허용).
+    거절을 겪은 승객 수도 결과별로 세지만, 그것을 실패 원인으로 보지는 않는다.
 
-M2  Exclusive unserved reason, first matching rule wins (REASON_PRIORITY):
-    1. no_connection: no trip in the compiled schedule visits origin and later destination.
-    2. service_end:   connected, but no such visit arrives at the origin in [time_s, drain_s].
-    3. journey / wait: the deadline event that fixed the outcome. Both deadlines are phase 4;
-       at an equal time 'journey:' sorts before 'wait:', so journey wins the tie.
-    Full-vehicle refusals are a separate, duplicable count: at each visit that ends full,
-    every still-eligible passenger it could have carried counts once. Passengers who
-    experienced >= 1 refusal are also counted per outcome. Experiencing a refusal is not
-    reported as the cause of failure.
+M3  대기 = boarding_s − time_s(초). 모집단을 나눠 낸다: served(포기자 제외라 치우침),
+    boarded(탄 사람 전부, 이후 여정 초과·censored 포함). 못 탄 unserved는 사유별 인원만.
+    평균, nearest-rank P90, 임계 초과(>) 비율. max_wait_s ≤ 임계면 served 초과율은 당연히 0.
 
-M3  Wait = boarding_s - time_s, integer seconds, for explicitly named populations:
-    'served' (selection-biased: excludes abandoners) and 'boarded' (all who boarded,
-    including later journey failures and censored riders). Not-boarded unserved riders are
-    counted by reason only (their observed wait is bounded by the deadline that removed
-    them). Mean, nearest-rank P90, and share with wait > threshold (strict). With
-    max_wait_s <= threshold the served exceedance is mechanically 0.
+M5  출발 정류장의 지역별(호출자가 stop→지역 지정, 없으면 'unknown') 인원과 충족률, 최저 지역.
 
-M5  Per area of the origin stop (caller-supplied stop->area map; unmapped -> 'unknown').
-    Rate = served / total per area; min over areas with total > 0.
+M6  차량별 집계(sim.reporting.VehicleStats). 빈 차 거리는 구간 거리가 없어 NA(TODO).
 
-M6  Per vehicle (sim.reporting.VehicleStats). Empty distance: NA, Trip lacks per-segment
-    distance (TODO).
-
-G/R12 Consecutive departures of the same route at each stop must be <= max_headway_s.
-    TODO(policy): gaps between service start / evaluation window edges and the first or
-    last departure are not checked; route identity must be supplied by the caller.
+R12 같은 노선의 연속 출발 간격(정류장마다) ≤ max_headway_s. 운영 시작·종료와 첫·마지막
+    출발 사이 간격은 검사하지 않는다(TODO 정책). 노선 구분은 호출자가 준다.
 """
 from collections import Counter
 from dataclasses import asdict
@@ -46,7 +34,7 @@ def _rate(n, d): return None if d == 0 else n / d
 
 
 class WaitStats:
-    """Exact streaming wait statistics via an integer histogram (no per-person list)."""
+    """대기시간 통계. 승객별 목록 대신 초 단위 히스토그램으로 정확한 값을 낸다."""
     def __init__(self, threshold_s):
         self.threshold_s, self.hist, self.n, self.sum = threshold_s, Counter(), 0, 0
 
@@ -70,7 +58,7 @@ class WaitStats:
 
 
 class MetricsAccumulator:
-    """Consumes each passenger's final state exactly once (batch or streaming)."""
+    """승객의 확정 상태를 한 명씩 한 번만 받아 지표를 누적한다(배치·스트리밍 공용)."""
     def __init__(self, *, wait_threshold_s, stop_area=None):
         integer(wait_threshold_s)
         self.stop_area = stop_area
@@ -99,7 +87,7 @@ class MetricsAccumulator:
 
 
 def check_max_headway(trips, route_of, max_headway_s):
-    """R12 between consecutive same-route departures at each stop. Returns a G report."""
+    """R12 검사. route_of는 trip_id → 노선. 위반 목록과 노선별 최대 간격을 돌려준다."""
     integer(max_headway_s, 1)
     departures = {}
     for t in trips:
@@ -121,7 +109,7 @@ def check_max_headway(trips, route_of, max_headway_s):
 
 
 def summarize(result, *, wait_threshold_s, stop_area=None, accumulator=None, headway=None):
-    """Build the M1-M6 report. Pass `accumulator` when passengers were streamed (P3)."""
+    """M1–M6 보고서(dict). 결과를 스트리밍했다면 그때 쓴 accumulator를 넘긴다."""
     if accumulator is None:
         accumulator = MetricsAccumulator(wait_threshold_s=wait_threshold_s, stop_area=stop_area)
         for s in result.passengers: accumulator.add(s)

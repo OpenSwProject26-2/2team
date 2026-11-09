@@ -1,5 +1,4 @@
-"""P3: lazy event streams, pending-key pruning, streamed outcomes and checksum must not
-change any observable result."""
+"""P3 테스트: 사건 스트림, 키 정리, 결과 스트리밍, checksum 분할 계산이 결과를 바꾸지 않아야 한다."""
 from collections import Counter
 from dataclasses import asdict
 import hashlib
@@ -52,7 +51,7 @@ class StreamingEquivalenceTests(unittest.TestCase):
                          summarize(batch, wait_threshold_s=60, stop_area=AREA))
 
     def test_final_states_are_final(self):
-        # A state passed to the sink must not change afterwards.
+        # sink로 넘긴 상태는 그 뒤에 바뀌면 안 된다.
         run = RunInputs('hc', 'hc', 'hc', '2026-11-09', expand(ROWS), (), 'hc')
         snapshots, states = [], []
         def sink(s):

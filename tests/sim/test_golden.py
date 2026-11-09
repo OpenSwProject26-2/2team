@@ -4,7 +4,7 @@ from tests.sim.golden_cases import GOLDEN, cases, record
 
 
 class GoldenLogTests(unittest.TestCase):
-    """Event logs and outcomes must equal those recorded before the P2/P3 refactors."""
+    """사건 로그와 결과가 P2·P3 변경 전에 기록한 golden과 같아야 한다."""
     def test_logs_identical_to_recorded(self):
         expected = json.loads((GOLDEN / 'golden.json').read_text())
         seen = set()

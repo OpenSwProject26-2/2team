@@ -1,5 +1,4 @@
-"""Hand-calculated M1-M6 / R12 fixture. Expected values are derived in the comments,
-not from the engine."""
+"""손계산 M1–M6·R12 fixture. 기대값은 주석의 손계산에서 나왔고 엔진 출력에서 복사하지 않았다."""
 import unittest
 from sim.engine import simulate
 from sim.metrics import summarize, check_max_headway, MetricsAccumulator, WaitStats
@@ -7,19 +6,19 @@ from sim.models import Config, Trip, SimulationError
 from sim.run_inputs import RunInputs, expand
 from sim.adapters.opt_adapter import route_of_trips
 
-# Stops A,B,C,D. No trip visits D, and none visits C before A.
+# 정류장 A·B·C·D. D에 가는 운행편은 없고, C 다음에 A를 가는 운행편도 없다.
 TRIPS = (
     Trip('t1', 'v1', 2, ('A', 'B', 'C'), (100, 200, 300), (110, 210, 300), 400, 1000),
     Trip('t2', 'v1', 2, ('A', 'B', 'C'), (700, 800, 900), (710, 810, 900), 1000, 1000),
     Trip('t3', 'v2', 5, ('A', 'B', 'C'), (400, 500, 1000), (410, 510, 1000), 1050, 500),
 )
-ROWS = [('a', 'A', 'C', 0, 3),    # a0,a1 board t1@100 -> served (wait 100); a2 refused, wait-expires @300
-        ('b', 'B', 'C', 150, 1),  # t1 full @200 -> refused; wait-expires @450 (t3 reaches B @500)
-        ('c', 'A', 'D', 0, 1),    # D never served -> no_connection
-        ('d', 'C', 'A', 50, 1),   # no C->A visit order -> no_connection
-        ('e', 'A', 'B', 750, 1),  # last A visit is 700 < 750 -> service_end (expires @1050 <= drain)
-        ('f', 'B', 'C', 820, 1),  # deadlines 1120/1420 > drain 1100 -> censored, still waiting
-        ('g', 'A', 'C', 380, 1)]  # boards t3@400 (wait 20), journey deadline 980 < arrival 1000
+ROWS = [('a', 'A', 'C', 0, 3),    # a0·a1은 t1@100 승차 → served(대기 100), a2는 만석 거절 후 300에 대기 만료
+        ('b', 'B', 'C', 150, 1),  # t1이 200에 만석으로 와서 거절, 450에 대기 만료(t3는 500에 B 도착)
+        ('c', 'A', 'D', 0, 1),    # D행 운행편 없음 → no_connection
+        ('d', 'C', 'A', 50, 1),   # C→A 순서로 가는 운행편 없음 → no_connection
+        ('e', 'A', 'B', 750, 1),  # A 마지막 방문 700 < 발생 750 → service_end(1050 만료 ≤ drain)
+        ('f', 'B', 'C', 820, 1),  # 기한 1120·1420 > drain 1100 → censored(대기 중)
+        ('g', 'A', 'C', 380, 1)]  # t3@400 승차(대기 20), 여정 기한 980 < 도착 1000 → journey
 CONFIG = Config(300, 600, 1100, 'fifo', 'fixed_segments')
 AREA = {'A': 'dong-1', 'B': 'dong-1', 'C': 'dong-2', 'D': 'dong-2'}
 
@@ -64,7 +63,7 @@ class HandCalculatedMetricsTests(unittest.TestCase):
         served, boarded = self.m['M3']['served'], self.m['M3']['boarded']
         self.assertEqual((served['n'], served['mean_s'], served['p90_s']), (2, 100, 100))
         self.assertEqual((served['over_threshold_n'], served['over_threshold_rate']), (2, 1.0))
-        # boarded waits: a0 100, a1 100, g 20 -> nearest-rank P90 = 3rd of [20,100,100]
+        # 탑승자 대기 a0 100, a1 100, g 20 → P90 = [20,100,100]의 3번째
         self.assertEqual((boarded['n'], boarded['p90_s'], boarded['over_threshold_n']), (3, 100, 2))
         self.assertAlmostEqual(boarded['mean_s'], 220 / 3)
         self.assertEqual(self.m['M3']['not_boarded_unserved_by_reason'],
@@ -79,12 +78,12 @@ class HandCalculatedMetricsTests(unittest.TestCase):
                          {'total': 1, 'served': 0, 'unserved': 1, 'censored': 0, 'served_rate': 0.0})
         self.assertEqual(m5['min_served_rate'], {'area': 'dong-2', 'rate': 0.0})
         unmapped = summarize(self.result, wait_threshold_s=60, stop_area={'A': 'x'})['M5']['by_origin_area']
-        self.assertEqual(unmapped['unknown']['total'], 3)  # b, d, f start at unmapped B/C
+        self.assertEqual(unmapped['unknown']['total'], 3)  # b·d·f는 지역이 없는 B·C에서 출발
         self.assertIsNone(summarize(self.result, wait_threshold_s=60)['M5'])
 
     def test_m6_vehicles(self):
         v1, v2 = self.m['M6']['vehicles']
-        # v1 empty: t1 dead-head 100 + t2 legs 90+90 + t2 dead-head 100; t3 dead-head 50
+        # v1 공차: t1 복귀 100 + t2 빈 구간 90+90 + t2 복귀 100, v2 공차: t3 복귀 50
         self.assertEqual(v1, {'vehicle_id': 'v1', 'trips_completed': 2, 'boarded': 2, 'served_alighted': 2,
                               'service_time_s': 600, 'distance_m': 2000, 'empty_time_s': 380})
         self.assertEqual(v2, {'vehicle_id': 'v2', 'trips_completed': 1, 'boarded': 1, 'served_alighted': 0,
@@ -121,7 +120,7 @@ class ReasonTieTests(unittest.TestCase):
     def test_full_on_arrival_counts_refusal(self):
         trips = (Trip('0', 'v', 1, ('A', 'B', 'C'), (0, 5, 9), (0, 5, 9), 12, 1),)
         r = run(Config(30, 30, 40, 'fifo', 'fixed_segments'), [('x', 'A', 'C', 0, 1), ('y', 'B', 'C', 0, 2)], trips)
-        self.assertEqual(r.refusal_count, 2)  # vehicle arrives at B already full; y0, y1 left behind
+        self.assertEqual(r.refusal_count, 2)  # B에 이미 만석으로 도착 → y0·y1 거절
 
 
 class AccumulatorTests(unittest.TestCase):

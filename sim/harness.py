@@ -1,16 +1,12 @@
-"""P6 measurement harness for synthetic M05 runs.
+"""P6 측정 하네스: 합성 시나리오를 만들고 시뮬레이션 1회의 시간·메모리를 단계별로 잰다.
 
     python -m sim.harness generate --network complex --passengers 100k --out DIR
     python -m sim.harness run --scenario DIR --arrival-seed a1 --policy proposed-v0.2 \
         --sink null --out RUN_DIR [--tracemalloc]
 
-Stages (wall + CPU + RSS each): load (read scenario files), init (R5 realization,
-RunInputs validation, engine setup), run (event loop), finalize (result/checksums),
-write (metrics.json + passenger_outcomes.csv). JSONL logging happens during run,
-so its I/O cost is inside `run`; compare null vs jsonl runs to separate it.
-tracemalloc is opt-in and slows execution, so its timings are not comparable to
-plain runs. All numbers are measurements of synthetic inputs and are provisional
-until independent verification (M07).
+단계: load(파일 읽기) → init(R5 생성·입력 검증·엔진 준비) → run(사건 처리) → finalize(결과·
+checksum) → write(metrics.json·결과 CSV). JSONL 로그 쓰기는 run에 포함되므로 null/jsonl 실행을
+비교해 분리한다. tracemalloc은 느려지므로 별도 실행으로만 쓴다. 모든 수치는 독립 검증 전 잠정이다.
 """
 import argparse
 import csv
@@ -36,8 +32,7 @@ from . import synthetic
 
 PROVISIONAL = '독립 검증 전 잠정 (provisional, not independently verified)'
 SCALES = {'1k': 1_000, '10k': 10_000, '100k': 100_000, '900k': 900_000}
-# Proposed assumptions from .omx/plans/m05-experiment-evidence-plan.md §7; not approved values.
-# R12 max headway 20 min and the M3 20-minute wait threshold are plan values, also unapproved.
+# 계획서(experiment-evidence-plan §7)의 제안 가정. 팀 승인 전 값이다.
 POLICIES = {'proposed-v0.2': {'max_wait_s': 1200, 'max_journey_s': 3600, 'max_headway_s': 1200,
                               'wait_threshold_s': 1200,
                               'source': 'experiment-evidence-plan §7 proposed baseline (제안 가정)'}}
@@ -45,10 +40,11 @@ SERVICE_DATE = '2026-11-09'
 
 
 def scale(value):
+    """'1k'·'10k'·'100k'·'900k' 또는 정수 문자열을 인원 수로 바꾼다."""
     return SCALES[value] if value in SCALES else int(value)
 
 
-# ---------- environment ----------
+# ---------- 실행 환경 ----------
 
 def _git(*args):
     try:
@@ -67,6 +63,7 @@ def _meminfo_total():
 
 
 def env_manifest():
+    """커밋·작업 트리 상태·Python·플랫폼·CPU·메모리를 기록한다(재현성 확인용)."""
     try:
         import simpy
         simpy_version = simpy.__version__
@@ -74,7 +71,7 @@ def env_manifest():
         simpy_version = None
     status = _git('status', '--porcelain')
     tracked = _git('status', '--porcelain', '--untracked-files=no')
-    # dirty: any change incl. untracked files; dirty_tracked: modified tracked files (code changes).
+    # dirty: 미추적 파일 포함 모든 변경, dirty_tracked: 추적 파일(코드) 변경만.
     return {'commit': _git('rev-parse', 'HEAD'), 'branch': _git('rev-parse', '--abbrev-ref', 'HEAD'),
             'dirty': bool(status) if status is not None else None,
             'dirty_tracked': bool(tracked) if tracked is not None else None,
@@ -85,7 +82,7 @@ def env_manifest():
             'recorded_at': datetime.now().astimezone().isoformat(timespec='seconds')}
 
 
-# ---------- memory probes ----------
+# ---------- 메모리 측정 ----------
 
 def _status_bytes(field):
     try:
@@ -96,10 +93,12 @@ def _status_bytes(field):
 
 
 def peak_rss_bytes():
-    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024  # Linux reports KiB
+    """프로세스 시작 후 최대 RSS(bytes)."""
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024  # Linux는 KiB 단위
 
 
 class Stages:
+    """mark(이름)를 부를 때마다 직전 mark 이후의 wall·CPU 시간과 현재·최대 RSS를 기록한다."""
     def __init__(self, trace):
         self.trace, self.records = trace, {}
         self.wall, self.cpu = perf_counter(), process_time()
@@ -115,10 +114,10 @@ class Stages:
         self.wall, self.cpu = perf_counter(), process_time()
 
 
-# ---------- sinks ----------
+# ---------- 로그 출력 ----------
 
 class HashingJsonlSink:
-    """JSONL sink that also counts bytes and hashes the log for reproducibility checks."""
+    """JSONL로 쓰면서 로그 bytes와 sha256을 함께 센다(재현성 비교용)."""
     def __init__(self, stream):
         self.stream, self.bytes, self.hash = stream, 0, hashlib.sha256()
 
@@ -129,9 +128,10 @@ class HashingJsonlSink:
         self.hash.update(line)
 
 
-# ---------- scenario files ----------
+# ---------- 시나리오 파일 ----------
 
 def write_scenario(out, network, rows, meta):
+    """network.json·demand_bins.csv·scenario_manifest.json(파일 sha256 포함)을 쓴다."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     payload = {k: v for k, v in network.items() if k != 'trips'}
@@ -152,6 +152,7 @@ def write_scenario(out, network, rows, meta):
 
 
 def load_scenario(path):
+    """write_scenario로 만든 디렉터리를 읽어 (망, 집계 행, manifest)를 돌려준다."""
     path = Path(path)
     network = json.loads((path / 'network.json').read_text())
     network['trips'] = tuple(Trip(**{**t, 'stops': tuple(t['stops']), 'arrivals': tuple(t['arrivals']),
@@ -166,6 +167,7 @@ def load_scenario(path):
 
 def generate_scenario(network_name, passengers, out, network_seed, demand_seed, *,
                       window=(7 * 3600, 9 * 3600), bin_width_s=600, mean_per_row=2, unconnected_permille=20):
+    """프리셋 망과 07–09시 10분 bin 합성 수요로 시나리오 디렉터리를 만든다."""
     spec = synthetic.PRESETS[network_name]
     network = synthetic.build_network(spec, network_seed)
     dspec = synthetic.DemandSpec(passengers, window[0], window[1], bin_width_s, mean_per_row, unconnected_permille)
@@ -174,13 +176,14 @@ def generate_scenario(network_name, passengers, out, network_seed, demand_seed, 
                           'demand_seed': demand_seed, 'demand_spec': asdict(dspec)})
 
 
-# ---------- measured run ----------
+# ---------- 측정 실행 ----------
 
 OUTCOME_HEADER = ('passenger_id,origin,destination,time_s,outcome,reason,physical,vehicle_id,'
                   'boarding_s,arrival_s,refused\n')
 
 
 def outcome_line(s):
+    """승객 결과 1명을 CSV 한 줄로."""
     p = s.passenger
     values = (p.passenger_id, p.origin, p.destination, p.time_s, s.outcome, s.reason, s.physical,
               s.vehicle_id, s.boarding_s, s.arrival_s, s.refused)
@@ -189,7 +192,7 @@ def outcome_line(s):
 
 
 class OutcomeWriter:
-    """Writes outcome CSV lines, hashing and counting bytes; optionally feeds metrics."""
+    """결과 CSV를 쓰면서 bytes·sha256을 세고, 필요하면 지표 누적기에도 넘긴다."""
     def __init__(self, path, accumulator=None):
         self.f, self.hash, self.bytes, self.accumulator = open(path, 'wb'), hashlib.sha256(), 0, accumulator
         self._write(OUTCOME_HEADER)
@@ -207,27 +210,28 @@ class OutcomeWriter:
 
 def run_measured(scenario, out, *, arrival_seed, policy, sink_kind, trace=False, stream_outcomes=False,
                  save_realization=False):
-    """stream_outcomes=True (P3): outcomes are written in finalization order during `run`
-    and are not retained in memory; otherwise they are written sorted by passenger_id."""
+    """시뮬레이션 1회를 단계별로 측정하고 out에 결과 파일을 쓴다. measurement dict를 돌려준다.
+
+    stream_outcomes=True면 결과를 확정 순서로 바로 쓰고 메모리에 두지 않는다(아니면 ID 순).
+    """
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     if trace: tracemalloc.start()
-    # Code state is recorded before any work; a tree that changes during the run is flagged.
+    # 코드 상태는 작업 전에 기록한다. 실행 중 트리가 바뀌면 dirty_at_end로 표시한다.
     env = env_manifest()
     stages = Stages(trace)
     network, rows, scen_manifest = load_scenario(scenario)
     stages.mark('load')
     values = POLICIES[policy]
     window_end = scen_manifest['demand_spec']['window_end_s']
-    # Drain rule (plan v0.2 §7): last generation window end + max journey, so no
-    # feasible journey is cut. Recorded explicitly in the manifest.
+    # drain = 발생 창 끝 + 최대 여정(계획서 v0.2 §7). 가능한 여정을 중간에 자르지 않는다.
     drain_s = window_end + values['max_journey_s']
     config = Config(values['max_wait_s'], values['max_journey_s'], drain_s, 'fifo', 'fixed_segments')
     realization = generate(rows, arrival_seed)
-    if save_realization:  # input for the independent verifier (docs/verifier_spec.md); costs init time
+    if save_realization:  # 독립 검증기 입력용(docs/verifier_spec.md). init 시간이 늘어난다.
         with open(out / 'realization.jsonl', 'w', encoding='utf-8') as f: write_realization(realization, f)
     run = RunInputs('synthetic-' + scen_manifest['network'], 'scale-pilot', realization.source_checksum,
-                    SERVICE_DATE, realization.passengers, (), arrival_seed)  # travel times are compiled into network trips
+                    SERVICE_DATE, realization.passengers, (), arrival_seed)  # 주행시간은 망의 운행편 시각에 이미 들어 있다
     stream = open(out / 'events.jsonl', 'wb') if sink_kind == 'jsonl' else None
     sink = HashingJsonlSink(stream) if stream else NullSink()
     def probe(name):
@@ -274,7 +278,7 @@ def run_measured(scenario, out, *, arrival_seed, policy, sink_kind, trace=False,
         'stages': stages.records, 'peak_rss_bytes': peak_rss_bytes(),
         'total_wall_s': sum(r['wall_s'] for r in stages.records.values()),
         'total_cpu_s': sum(r['cpu_s'] for r in stages.records.values()),
-        'metrics': metrics, 'env': env}  # full M1-M6 report: metrics.json
+        'metrics': metrics, 'env': env}  # M1–M6 전체 보고서는 metrics.json
     end_status = _git('status', '--porcelain')
     measurement['env']['dirty_at_end'] = bool(end_status) if end_status is not None else None
     if trace: tracemalloc.stop()

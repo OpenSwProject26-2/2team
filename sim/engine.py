@@ -1,3 +1,4 @@
+"""M05 시뮬레이터 본체: 고정 입력과 운행 일정으로 승객 한 명 한 명의 결과를 계산한다."""
 from collections import deque
 from dataclasses import asdict
 from functools import partial
@@ -14,7 +15,7 @@ from .run_inputs import digest
 
 
 class _Connectivity:
-    """Lazy per-OD facts for unserved-reason classification (sim.metrics.REASON_PRIORITY)."""
+    """unserved 사유 판정용 OD 연결 정보. OD별로 처음 필요할 때 계산해 둔다."""
     def __init__(self, trips, drain_s):
         self.visits, self.drain_s, self.cache = {}, drain_s, {}
         for t in trips:
@@ -23,6 +24,7 @@ class _Connectivity:
                 self.visits.setdefault(stop, []).append((t.arrivals[i], i, position))
 
     def reason(self, passenger, trigger):
+        """우선순위: 연결 없음 → 운행 종료 → 결과를 확정한 기한(journey/wait)."""
         od = (passenger.origin, passenger.destination)
         if od not in self.cache:
             connected, last = False, None
@@ -38,13 +40,12 @@ class _Connectivity:
 
 
 def simulate(plan_id, revision, inputs, trips, config, sink=None, probe=None, outcome_sink=None):
-    """Run one fixed realization.
+    """운행안 1개를 고정 입력 1개로 시뮬레이션하고 Result를 돌려준다.
 
-    probe(stage): optional measurement hook; never changes simulation state.
-    outcome_sink(state): optional P3 streaming. Each passenger's final state is passed
-    exactly once, when it can no longer change (alighted, or outcome fixed while still
-    waiting), then censored ones in passenger_id order at the end. Final states are then
-    not retained: Result.passengers is () and Result.total comes from streamed_total.
+    sink: 사건 로그 출력처(기본 NullSink). probe(stage): 측정용 훅, 상태를 바꾸지 않는다.
+    outcome_sink(state): 결과 스트리밍. 승객 결과가 더는 바뀌지 않는 순간 한 번씩 넘기고
+    메모리에서 지운다. 이때 Result.passengers는 ()이다.
+    입력·일정 오류는 SimulationError, 정원 초과·인원 불일치는 RuntimeError로 멈춘다.
     """
     integer(revision, 1)
     if not plan_id: raise SimulationError('missing plan ID')
@@ -53,9 +54,8 @@ def simulate(plan_id, revision, inputs, trips, config, sink=None, probe=None, ou
         raise SimulationError('drain precedes passenger generation')
     sink = sink if sink is not None else NullSink()
     streaming = outcome_sink is not None
-    # Generation order (time_s, passenger_id) equals the ('generate:'+pid) key order, and
-    # deadline keys (time_s + constant) follow the same order, so all three per-passenger
-    # event kinds are sorted streams instead of 3N pre-loaded heap entries.
+    # 승객을 (발생 시각, ID) 순으로 정렬해 두면 발생·대기 만료·여정 만료 사건도 같은 순서가
+    # 된다. 그래서 승객 사건을 미리 다 넣지 않고 정렬된 스트림 3개로 꺼내 쓴다.
     order = sorted(inputs.passengers, key=lambda p: (p.time_s, p.passenger_id))
     states = {}
     vehicles = {t.vehicle_id: VehicleState(t.capacity) for t in trips}
@@ -64,10 +64,10 @@ def simulate(plan_id, revision, inputs, trips, config, sink=None, probe=None, ou
     dispatcher, count, refusals = Dispatcher(), [0], [0]
     tally = {'served': 0, 'unserved': 0, 'censored': 0}
     served_waits = WaitStats(0)
-    # waiting[origin][destination]: FIFO in generation order, i.e. (time_s, passenger_id),
-    # because generate events run in (time_s, phase 1, 'generate:'+pid) order. Entries that
-    # stopped being eligible (boarded or outcome fixed) are dropped lazily at the head.
+    # 대기열 waiting[출발 정류장][목적지]: 발생 순서((시각, ID) 순)로 쌓이는 선착순 줄.
+    # 이미 탔거나 결과가 정해진 승객은 줄에서 바로 빼지 않고, 줄 맨 앞에 왔을 때 버린다.
     waiting = {}
+    # 탈 자격: 정류장에서 기다리는 중이고 결과가 아직 미확정.
     def eligible(s): return s.physical == 'waiting' and s.outcome is None
     def head(q):
         while q and not eligible(q[0]): q.popleft()
@@ -75,17 +75,21 @@ def simulate(plan_id, revision, inputs, trips, config, sink=None, probe=None, ou
     def emit(key, kind, pid=None, vid=None):
         sink.emit(Event(*key, kind, pid, vid, len(vehicles[vid].onboard) if vid else None))
         count[0] += 1
+    # 승객 결과 확정: 인원 집계, served 대기 기록, 스트리밍이면 내보내고 메모리에서 삭제.
     def final(s):
         tally[s.outcome] += 1
         if s.outcome == 'served': served_waits.add(s.boarding_s - s.passenger.time_s)
         if streaming:
             del states[s.passenger.passenger_id]
             outcome_sink(s)
+    # phase 1 발생: 승객 상태를 만들고 출발 정류장 대기열에 넣는다.
     def generate(*key, p):
         s = states[p.passenger_id] = PassengerState(p)
         s.physical = 'waiting'
         waiting.setdefault(p.origin, {}).setdefault(p.destination, deque()).append(s)
         emit(key, 'generated', p.passenger_id)
+    # phase 4 기한 만료: 대기 기한은 아직 대기 중일 때만, 여정 기한은 도착 전이면 적용한다.
+    # 탑승 중 여정 기한을 넘기면 결과만 unserved가 되고 차에서는 내리지 않는다.
     def expire(*key, pid):
         s = states.get(pid)
         if s is not None and s.outcome is None and s.physical != 'arrived':
@@ -100,6 +104,7 @@ def simulate(plan_id, revision, inputs, trips, config, sink=None, probe=None, ou
                            partial(expire, pid=p.passenger_id)) for p in order)
     dispatcher.add_stream(((p.time_s+config.max_journey_s, 4, 'journey:'+p.passenger_id),
                            partial(expire, pid=p.passenger_id)) for p in order)
+    # phase 0 도착: 이 정류장이 목적지인 승객을 내린다(아직 미확정이면 served).
     def arrive(*key, t, i):
         stop, v = t.stops[i], vehicles[t.vehicle_id]
         for pid in sorted(tuple(v.onboard)):
@@ -114,11 +119,12 @@ def simulate(plan_id, revision, inputs, trips, config, sink=None, probe=None, ou
                 final(s)
         v.check()
         emit(key, 'vehicle_arrived', vid=t.vehicle_id)
+    # phase 2 승차: 이 운행편의 남은 정류장이 목적지인 대기 승객을 선착순으로 빈 좌석만큼 태운다.
     def board(*key, t, i):
         v = vehicles[t.vehicle_id]
         free, queues = v.capacity-len(v.onboard), waiting.get(t.stops[i])
         if not queues: return
-        # k-way merge of per-destination FIFO heads == old global (time_s, id) sort.
+        # 목적지별 줄의 맨 앞끼리 비교해 가장 먼저 온 승객부터 태운다(전체 선착순과 같은 결과).
         heads = []
         if free > 0:
             for dest in t.stops[i+1:]:
@@ -141,13 +147,13 @@ def simulate(plan_id, revision, inputs, trips, config, sink=None, probe=None, ou
             vstats[t.vehicle_id]['boarded'] += 1
             emit(key, 'boarded', s.passenger.passenger_id, t.vehicle_id)
         if free == 0:
-            # M2 full-vehicle refusals: every still-eligible passenger this visit could
-            # have carried counts once per visit (duplicates across visits allowed).
+            # 만석으로 끝난 방문: 이 차를 탈 수 있었는데 남은 승객마다 거절 1건(방문마다 중복 집계).
             for dest in t.stops[i+1:]:
                 for s in queues.get(dest, ()):
                     if eligible(s):
                         s.refused += 1
                         refusals[0] += 1
+    # phase 3 출발: 빈 차로 떠나는 구간(마지막 정류장이면 복귀)을 공차 시간으로 더한다.
     def depart(*key, t, i):
         if not vehicles[t.vehicle_id].onboard:
             if i < len(t.stops)-1:
@@ -157,7 +163,7 @@ def simulate(plan_id, revision, inputs, trips, config, sink=None, probe=None, ou
                 vstats[t.vehicle_id]['empty_time_s'] += t.return_s-t.departures[i]
         emit(key, 'departed', vid=t.vehicle_id)
     def trip_events(t):
-        # Within one trip keys ascend: a_i <= d_i < a_{i+1}, phases 0 < 2 < 3 at equal times.
+        # 한 운행편의 사건은 이미 시간순이다(도착 ≤ 출발 < 다음 도착, 같은 시각이면 0<2<3).
         for i in range(len(t.stops)):
             sid = t.trip_id+':'+str(i).zfill(8)
             yield (t.arrivals[i], 0, sid), partial(arrive, t=t, i=i)
@@ -167,8 +173,7 @@ def simulate(plan_id, revision, inputs, trips, config, sink=None, probe=None, ou
     if probe: probe('engine_init')
     dispatcher.run(config.drain_s)
     if probe: probe('engine_run')
-    # Remaining non-final states: never-resolved (censored) and journey-expired riders still
-    # onboard at drain (unserved). Both are finalized here in passenger_id order.
+    # drain 시점에 남은 승객 확정: 결과 미정이면 censored, 여정 초과로 아직 탑승 중이면 unserved.
     for pid in sorted(states):
         s = states[pid]
         if s.outcome is None:
@@ -187,6 +192,7 @@ def simulate(plan_id, revision, inputs, trips, config, sink=None, probe=None, ou
 
 
 def vehicle_stats(trips, counters, drain_s):
+    """차량별 집계(M6): 엔진 카운터 + drain_s 안에 복귀까지 끝난 운행편의 시간·거리."""
     completed = {vid: [0, 0, 0] for vid in counters}
     for t in trips:
         if t.return_s <= drain_s:

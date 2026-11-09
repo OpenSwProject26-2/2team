@@ -6,7 +6,7 @@ import unittest
 from sim.guard import run_guarded, record_na, _error_type
 
 MB = 2 ** 20
-# Touch every page so RSS really grows (bytes(n) * ... is copied, not lazily zero-mapped).
+# 실제로 메모리를 채워 RSS가 늘게 한다(0으로 채운 페이지는 RSS에 안 잡힐 수 있음).
 ALLOC = 'import time; x = b"\\x01" * ({mb} * 2**20); time.sleep(5)'
 
 

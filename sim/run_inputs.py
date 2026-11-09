@@ -1,3 +1,4 @@
+"""고정 실행 입력(RunInputs). 비교하는 운행안은 모두 같은 RunInputs를 쓴다."""
 from dataclasses import dataclass, asdict
 from datetime import date
 import hashlib
@@ -5,10 +6,15 @@ import json
 from .models import Passenger, SimulationError, integer
 
 def digest(value):
+    """정규 JSON(키 정렬, 공백 없음)의 SHA-256."""
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 @dataclass(frozen=True)
 class RunInputs:
+    """한 번의 실행에 쓰는 승객·주행시간·출처. 생성 시 중복 ID와 값을 검사한다.
+
+    seed는 기록용이다. seed가 같다고 입력이 같다고 보지 않고 checksum으로 비교한다.
+    """
     input_bundle_id: str
     scenario_id: str
     source_checksum: str
@@ -34,8 +40,7 @@ class RunInputs:
             integer(value, 1)
     @property
     def checksum(self):
-        """Byte-identical to digest(asdict(self)) but streamed passenger by passenger, so a
-        large realization is never copied into one dict/JSON string (P3)."""
+        """digest(asdict(self))와 같은 값. 승객 전체를 한 번에 복사하지 않고 한 명씩 해시한다."""
         dump = json.dumps
         h = hashlib.sha256()
         h.update(('{"input_bundle_id":' + dump(self.input_bundle_id) + ',"passengers":[').encode())
@@ -50,7 +55,10 @@ class RunInputs:
         return h.hexdigest()
 
 def expand(rows):
-    """Rows: (aggregate ID, origin, destination, exact arrival_s, count)."""
+    """정확 시각 집계 (집계 ID, 출발, 도착, arrival_s, 인원)를 1인 단위 승객으로 펼친다.
+
+    승객 ID는 ["집계 ID", 순번] JSON이다.
+    """
     result = []
     seen = set()
     for key, origin, destination, arrival, count in sorted(rows):

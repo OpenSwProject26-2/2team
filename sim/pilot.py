@@ -1,12 +1,11 @@
-"""Scale pilot: run guarded harness measurements in ascending scale order.
+"""규모 파일럿: 규모를 작은 것부터 늘리며 하네스 측정을 가드 아래 반복 실행한다.
 
     python -m sim.pilot --network complex --scales 1k,10k,100k,900k --repeat 3 \
         --modes batch,stream --timeout-s 1800 --mem-limit-mb 16000 \
         --csv results/scale_pilot.csv --failures results/failures.jsonl
 
-Every cell gets a CSV row, including TIMEOUT / MEMORY_LIMIT / EXCEPTION / NA. After a
-failure at one scale, larger scales of the same mode are recorded as NA (not run)
-unless --continue-on-failure. Rows are measurements only; nothing is extrapolated.
+실패·NA를 포함해 셀(규모×모드×반복)마다 CSV 1행을 남긴다. 한 규모가 실패하면 같은 모드의 더 큰
+규모는 --continue-on-failure가 없으면 NA로 기록한다. 측정값만 적고 외삽하지 않는다.
 """
 import argparse
 import csv
@@ -28,6 +27,7 @@ def _mib(x): return None if x is None else round(x / 2**20, 1)
 
 
 def row_from(cell, guard, measurement=None, metrics_sha=None):
+    """가드 결과와 measurement.json을 CSV 1행(dict)으로 만든다."""
     row = dict.fromkeys(FIELDS)
     row.update(cell, status=guard['status'], label=PROVISIONAL,
                guard_max_sampled_rss_mib=_mib(guard.get('max_sampled_rss_bytes')),

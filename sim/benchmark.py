@@ -1,5 +1,6 @@
-"""Synthetic person-mode baseline: python -m sim.benchmark --passengers 10000.
-No cohort compression; JSONL optional, NullSink otherwise. Not a throughput claim.
+"""PR #6 시절 측정 스크립트(비교용으로 보존): python -m sim.benchmark --passengers 10000.
+
+차량 1대·정류장 2개 합성 입력이라 실제 처리 성능 근거가 아니다. 새 측정은 sim.harness를 쓴다.
 """
 import argparse
 from dataclasses import asdict
