@@ -16,7 +16,7 @@ class HarnessTests(unittest.TestCase):
         common = dict(arrival_seed='a1', policy='proposed-v0.2')
         cls.null = run_measured(cls.root / 'sc', cls.root / 'null', sink_kind='null', **common)
         cls.jsonl = run_measured(cls.root / 'sc', cls.root / 'jsonl', sink_kind='jsonl', **common)
-        cls.again = run_measured(cls.root / 'sc', cls.root / 'again', sink_kind='jsonl', **common)
+        cls.again = run_measured(cls.root / 'sc', cls.root / 'again', sink_kind='jsonl', save_realization=True, **common)
         cls.traced = run_measured(cls.root / 'sc', cls.root / 'traced', sink_kind='null', trace=True, **common)
 
     @classmethod
@@ -69,6 +69,14 @@ class HarnessTests(unittest.TestCase):
         for key in ('commit', 'python', 'platform', 'machine', 'cpu_count', 'recorded_at'): self.assertIn(key, env)
         self.assertIn('dirty_at_end', self.null['env'])
         self.assertEqual(json.loads((self.root / 'null' / 'env_manifest.json').read_text())['python'], env['python'])
+
+    def test_saved_realization_validates(self):
+        from sim.arrivals import read_realization
+        _, rows, _ = load_scenario(self.root / 'sc')
+        with open(self.root / 'again' / 'realization.jsonl') as f:
+            r = read_realization(f, rows, expected_checksum=self.again['realization_checksum'])
+        self.assertEqual(r.total, 300)
+        self.assertFalse((self.root / 'null' / 'realization.jsonl').exists())
 
     def test_scale_names(self):
         self.assertEqual([scale(x) for x in ('1k', '10k', '100k', '900k', '1234')],

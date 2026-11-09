@@ -26,7 +26,7 @@ import sys
 from time import perf_counter, process_time
 from datetime import datetime
 import tracemalloc
-from .arrivals import BinRow, generate
+from .arrivals import BinRow, generate, write_realization
 from .engine import simulate
 from .events import NullSink
 from .metrics import MetricsAccumulator, check_max_headway, summarize
@@ -201,7 +201,8 @@ class OutcomeWriter:
     def close(self): self.f.close()
 
 
-def run_measured(scenario, out, *, arrival_seed, policy, sink_kind, trace=False, stream_outcomes=False):
+def run_measured(scenario, out, *, arrival_seed, policy, sink_kind, trace=False, stream_outcomes=False,
+                 save_realization=False):
     """stream_outcomes=True (P3): outcomes are written in finalization order during `run`
     and are not retained in memory; otherwise they are written sorted by passenger_id."""
     out = Path(out)
@@ -219,6 +220,8 @@ def run_measured(scenario, out, *, arrival_seed, policy, sink_kind, trace=False,
     drain_s = window_end + values['max_journey_s']
     config = Config(values['max_wait_s'], values['max_journey_s'], drain_s, 'fifo', 'fixed_segments')
     realization = generate(rows, arrival_seed)
+    if save_realization:  # input for the independent verifier (docs/verifier_spec.md); costs init time
+        with open(out / 'realization.jsonl', 'w', encoding='utf-8') as f: write_realization(realization, f)
     run = RunInputs('synthetic-' + scen_manifest['network'], 'scale-pilot', realization.source_checksum,
                     SERVICE_DATE, realization.passengers, (), arrival_seed)  # travel times are compiled into network trips
     stream = open(out / 'events.jsonl', 'wb') if sink_kind == 'jsonl' else None
@@ -292,6 +295,7 @@ def main(argv=None):
     r.add_argument('--sink', choices=('null', 'jsonl'), required=True)
     r.add_argument('--tracemalloc', action='store_true')
     r.add_argument('--stream-outcomes', action='store_true', help='P3: write outcomes during run, keep none')
+    r.add_argument('--write-realization', action='store_true', help='save realization.jsonl for verification')
     r.add_argument('--out', required=True)
     args = parser.parse_args(argv)
     if args.command == 'generate':
@@ -299,7 +303,7 @@ def main(argv=None):
     else:
         m = run_measured(args.scenario, args.out, arrival_seed=args.arrival_seed, policy=args.policy,
                          sink_kind=args.sink, trace=args.tracemalloc,
-                         stream_outcomes=args.stream_outcomes)
+                         stream_outcomes=args.stream_outcomes, save_realization=args.write_realization)
         result = {k: m[k] for k in ('status', 'passengers', 'event_count', 'total_wall_s',
                                     'peak_rss_bytes', 'log_bytes', 'outcome_sha256')}
     print(json.dumps(result, sort_keys=True))
