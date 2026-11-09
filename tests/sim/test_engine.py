@@ -75,7 +75,7 @@ class SimulationTests(unittest.TestCase):
 
 class AdapterTests(unittest.TestCase):
     def setUp(self):
-        self.x=load_inputs(ROOT/'opt/examples/synthetic.json')
+        self.x=load_inputs(ROOT/'C.Part/opt/examples/synthetic.json')
         self.p=make_plan(self.x,{'r1':1},'m05-test')
         self.run=prepare_inputs(self.x,seed='fixed')
         self.config=Config(self.x.policy.max_wait_s,self.x.policy.max_travel_s,1000,'fifo','fixed_segments')

@@ -13,11 +13,14 @@ ScheduleConsumer로 일정만 받을 수 있으며 M07 import는 없다.
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install -r sim/requirements.txt
-.venv/bin/python -m unittest discover -s tests -t . -v
+PYTHONPATH=C.Part .venv/bin/python -m unittest discover -s tests -t . -v
+(cd C.Part && ../.venv/bin/python -m unittest discover -s tests -t . -v)   # C 자체 테스트
 .venv/bin/python -m sim.benchmark --passengers 10000
 ```
 
-`-t .`는 tests/opt, tests/sim이 실제 패키지를 가리지 않도록 필요하다.
+`-t .`는 tests/sim이 실제 sim 패키지를 가리지 않도록 필요하다. C 코드는 #11(PR #12)로
+`C.Part/opt/`에 있으므로 C adapter와 그 테스트는 `PYTHONPATH=C.Part`가 필요하다(C ADR-001 위치 변경 절).
+하네스·가드·파일럿(`sim.harness`, `sim.guard`, `sim.pilot`)은 C를 import하지 않아 PYTHONPATH가 필요 없다.
 SimPy 4.1.2 (MIT)는 사용자 요청에 따른 M05 전용 의존성이다. 표준 라이브러리 heapq는
 명시 순서를 정하고 SimPy Environment/process/timeout은 시간 전진을 실행한다.
 공식 API: https://simpy.readthedocs.io/en/stable/api_reference/simpy.core.html

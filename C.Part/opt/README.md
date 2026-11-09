@@ -5,9 +5,10 @@
 
 ## 실행
 
-저장소 루트에서 실행한다.
+저장소 루트에서 `cd C.Part`로 이동한 뒤 실행한다.
 
 ```bash
+cd C.Part
 python3 -m unittest discover -s tests -t . -v
 python3 -m opt --input opt/examples/synthetic.json
 python3 -m opt --input opt/examples/synthetic.json --max-evaluations 100
@@ -104,3 +105,7 @@ module-owned routes에 vehicle_count를 추가하며 vehicle_duties/trips는 빈
 4. 선택안을 고정한 뒤 미사용 날짜·시나리오로 최종 평가한다.
 
 실제 데이터, 지자체·범용 AI 비교안, 시민 경로, 자동 후보 생성, MIP·강건 최적화는 이 PR 범위 밖이다.
+
+## 다른 파트에서 가져오기
+
+저장소 루트에서 `PYTHONPATH=C.Part python3 ...`로 실행하면 기존 `from opt...` import를 사용한다. 패키지 이름은 opt로 유지하며 C.Part를 Python 패키지 이름으로 사용하지 않는다.

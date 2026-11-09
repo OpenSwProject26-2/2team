@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class AdapterRealizationTests(unittest.TestCase):
     def setUp(self):
-        self.x = load_inputs(ROOT / 'opt/examples/synthetic.json')
+        self.x = load_inputs(ROOT / 'C.Part/opt/examples/synthetic.json')
         self.p = make_plan(self.x, {'r1': 1}, 'm05-test')
         self.real = generate(demand_bins(self.x, 600), 'adapter')
         self.run = realized_inputs(self.x, self.real)

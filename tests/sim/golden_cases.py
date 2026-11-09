@@ -54,7 +54,7 @@ def tie_case():
 
 
 def adapter_cases():
-    x = load_inputs(ROOT / 'opt/examples/synthetic.json')
+    x = load_inputs(ROOT / 'C.Part/opt/examples/synthetic.json')
     config = Config(x.policy.max_wait_s, x.policy.max_travel_s, 2000, 'fifo', 'fixed_segments')
     for alloc in ({'r1': 1}, {'r1': 1, 'r2': 1}):
         plan = make_plan(x, alloc, 'golden')
