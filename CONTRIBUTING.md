@@ -89,6 +89,16 @@ Add files via upload
 
 무엇을 왜 바꿨는지 알 수 없습니다. GitHub 웹에서 파일을 수정하거나 올릴 때도 기본으로 채워지는 메시지를 그대로 쓰지 말고 위 형식으로 고쳐 씁니다.
 
+### 커밋 템플릿 설정
+
+저장소 루트의 `.gitmessage`를 커밋 템플릿으로 쓰면 `git commit` 편집기에 위 형식 안내가 나타납니다. 저장소를 받은 뒤 한 번만 설정합니다.
+
+```bash
+git config commit.template .gitmessage
+```
+
+`#`으로 시작하는 안내 줄은 커밋 메시지에 들어가지 않습니다.
+
 ### type과 scope
 
 사용할 type은 아래로 통일합니다.
