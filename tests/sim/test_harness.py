@@ -67,6 +67,7 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(len(lines), 301)
         env = env_manifest()
         for key in ('commit', 'python', 'platform', 'machine', 'cpu_count', 'recorded_at'): self.assertIn(key, env)
+        self.assertIn('dirty_at_end', self.null['env'])
         self.assertEqual(json.loads((self.root / 'null' / 'env_manifest.json').read_text())['python'], env['python'])
 
     def test_scale_names(self):

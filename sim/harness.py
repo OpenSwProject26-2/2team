@@ -207,6 +207,8 @@ def run_measured(scenario, out, *, arrival_seed, policy, sink_kind, trace=False,
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     if trace: tracemalloc.start()
+    # Code state is recorded before any work; a tree that changes during the run is flagged.
+    env = env_manifest()
     stages = Stages(trace)
     network, rows, scen_manifest = load_scenario(scenario)
     stages.mark('load')
@@ -265,7 +267,9 @@ def run_measured(scenario, out, *, arrival_seed, policy, sink_kind, trace=False,
         'stages': stages.records, 'peak_rss_bytes': peak_rss_bytes(),
         'total_wall_s': sum(r['wall_s'] for r in stages.records.values()),
         'total_cpu_s': sum(r['cpu_s'] for r in stages.records.values()),
-        'metrics': metrics, 'env': env_manifest()}  # full M1-M6 report: metrics.json
+        'metrics': metrics, 'env': env}  # full M1-M6 report: metrics.json
+    end_status = _git('status', '--porcelain')
+    measurement['env']['dirty_at_end'] = bool(end_status) if end_status is not None else None
     if trace: tracemalloc.stop()
     (out / 'measurement.json').write_text(json.dumps(measurement, indent=2, sort_keys=True))
     (out / 'env_manifest.json').write_text(json.dumps(measurement['env'], indent=2, sort_keys=True))
