@@ -127,6 +127,21 @@ benchmark는 1만/10만/100만 명의 시간·peak memory·사건 수 측정 기
 - 모든 수치는 합성 입력 측정값이며 독립 검증 전 잠정이다. 외삽하지 않는다.
 - 기존 `benchmark.py`는 과거 비교용으로 보존한다.
 
+- 추가 옵션: `--stream-outcomes`(P3, 결과를 run 중 확정 순서로 쓰고 메모리에 보존하지 않음, 지표 동일),
+  `--write-realization`(검증기 입력용 realization.jsonl). env_manifest는 실행 시작 시점 commit·`dirty`
+  (미추적 파일 포함)·`dirty_tracked`(추적 파일 변경)를 기록하고 `dirty_at_end`를 덧붙인다.
+
+## 규모 파일럿 (`pilot.py`)
+
+```sh
+.venv/bin/python -m sim.pilot --network complex --scales 1k,10k,100k,900k --repeat 3 --modes batch,stream \
+    --timeout-s 1800 --mem-limit-mb 16000 --csv results/runs/scale_pilot.csv --failures results/runs/failures.jsonl
+```
+
+셀마다 CSV 1행(실패·NA 포함)을 남긴다. 한 규모가 실패하면 같은 모드의 더 큰 규모는 NA로 기록한다.
+출력 CSV를 저장소 추적 경로에 두면 이후 실행이 `dirty=True`가 되므로 `results/runs/`에 쓰고 복사한다.
+측정 결과: `results/p3_memory.md`, `results/scale_pilot.md`. 독립 검증기 명세: `docs/verifier_spec.md`.
+
 ## 자원 가드 (`guard.py`) — P7
 
 ```sh
