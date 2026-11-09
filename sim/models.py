@@ -8,7 +8,7 @@ def integer(x, minimum=0):
     if type(x) is not int or x < minimum:
         raise SimulationError("invalid integer")
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Passenger:
     passenger_id: str
     origin: str

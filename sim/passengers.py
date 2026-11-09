@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from .models import Passenger
 
-@dataclass
+@dataclass(slots=True)
 class PassengerState:
     passenger: Passenger
     physical: str = 'not_generated'

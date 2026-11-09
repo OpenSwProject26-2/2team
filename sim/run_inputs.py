@@ -33,7 +33,21 @@ class RunInputs:
             if not sid: raise SimulationError('missing segment ID')
             integer(value, 1)
     @property
-    def checksum(self): return digest(asdict(self))
+    def checksum(self):
+        """Byte-identical to digest(asdict(self)) but streamed passenger by passenger, so a
+        large realization is never copied into one dict/JSON string (P3)."""
+        dump = json.dumps
+        h = hashlib.sha256()
+        h.update(('{"input_bundle_id":' + dump(self.input_bundle_id) + ',"passengers":[').encode())
+        for k, p in enumerate(self.passengers):
+            h.update(((',' if k else '') + '{"destination":' + dump(p.destination) + ',"origin":'
+                      + dump(p.origin) + ',"passenger_id":' + dump(p.passenger_id) + ',"time_s":'
+                      + str(p.time_s) + '}').encode())
+        h.update(('],"scenario_id":' + dump(self.scenario_id) + ',"seed":' + dump(self.seed)
+                  + ',"service_date":' + dump(self.service_date) + ',"source_checksum":'
+                  + dump(self.source_checksum) + ',"travel_times":'
+                  + json.dumps(self.travel_times, separators=(',', ':')) + '}').encode())
+        return h.hexdigest()
 
 def expand(rows):
     """Rows: (aggregate ID, origin, destination, exact arrival_s, count)."""

@@ -1,6 +1,7 @@
 """P3: lazy event streams, pending-key pruning, streamed outcomes and checksum must not
 change any observable result."""
 from collections import Counter
+from dataclasses import asdict
 import hashlib
 import io
 import json
@@ -9,8 +10,8 @@ from sim.dispatcher import Dispatcher
 from sim.engine import simulate
 from sim.events import JsonlSink
 from sim.metrics import MetricsAccumulator, summarize
-from sim.models import SimulationError
-from sim.run_inputs import RunInputs, expand
+from sim.models import Passenger, SimulationError
+from sim.run_inputs import RunInputs, digest, expand
 from tests.sim.golden_cases import GOLDEN, cases, outcome_digest
 from tests.sim.test_metrics import AREA, CONFIG, TRIPS, ROWS
 
@@ -88,6 +89,14 @@ class DispatcherStreamTests(unittest.TestCase):
         d.add_stream(((t, 0, 'x'), lambda *k: seen.append(k[0])) for t in range(100))
         d.run(4)
         self.assertEqual(seen, [0, 1, 2, 3, 4])
+
+
+class ChecksumTests(unittest.TestCase):
+    def test_streamed_checksum_identical(self):
+        runs = [RunInputs('b', 's', 'src', '2026-11-09', expand([('d', 'A', 'B', 0, 3)]), (('ab', 5), ('ba', 5)), 'f'),
+                RunInputs('번들"\\', '시나리오', 'src ', '2026-11-09', (Passenger('p,"1"', '정류장\n', 'B', 7),), (), 's'),
+                RunInputs('b', 's', 'src', '2026-11-09', (), (), 's')]
+        for r in runs: self.assertEqual(r.checksum, digest(asdict(r)))
 
 
 if __name__ == '__main__': unittest.main()
