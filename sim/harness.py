@@ -73,8 +73,12 @@ def env_manifest():
     except ImportError:
         simpy_version = None
     status = _git('status', '--porcelain')
+    tracked = _git('status', '--porcelain', '--untracked-files=no')
+    # dirty: any change incl. untracked files; dirty_tracked: modified tracked files (code changes).
     return {'commit': _git('rev-parse', 'HEAD'), 'branch': _git('rev-parse', '--abbrev-ref', 'HEAD'),
             'dirty': bool(status) if status is not None else None,
+            'dirty_tracked': bool(tracked) if tracked is not None else None,
+            'untracked_files': None if status is None else sum(l.startswith('??') for l in status.splitlines()),
             'python': sys.version.split()[0], 'implementation': platform.python_implementation(),
             'platform': platform.platform(), 'machine': platform.machine(),
             'cpu_count': os.cpu_count(), 'mem_total_bytes': _meminfo_total(), 'simpy': simpy_version,

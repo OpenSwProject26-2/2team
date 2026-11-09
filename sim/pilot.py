@@ -20,7 +20,7 @@ from .harness import generate_scenario, scale
 FIELDS = ('scale', 'passengers', 'network', 'mode', 'sink', 'rep', 'status', 'rows', 'trips', 'stop_visits',
           'event_count', 'total_wall_s', 'total_cpu_s', 'load_wall_s', 'init_wall_s', 'run_wall_s',
           'finalize_wall_s', 'write_wall_s', 'peak_rss_mib', 'guard_max_sampled_rss_mib', 'log_bytes',
-          'outcome_bytes', 'metrics_sha256', 'served', 'unserved', 'censored', 'commit', 'dirty',
+          'outcome_bytes', 'metrics_sha256', 'served', 'unserved', 'censored', 'commit', 'dirty', 'dirty_tracked',
           'python', 'error_type', 'note', 'label')
 
 
@@ -43,7 +43,7 @@ def row_from(cell, guard, measurement=None, metrics_sha=None):
                    outcome_bytes=measurement['outcome_bytes'], metrics_sha256=metrics_sha,
                    served=measurement['metrics']['served'], unserved=measurement['metrics']['unserved'],
                    censored=measurement['metrics']['censored'], commit=(env['commit'] or '')[:12],
-                   dirty=env['dirty'], python=env['python'])
+                   dirty=env['dirty'], dirty_tracked=env.get('dirty_tracked'), python=env['python'])
     return row
 
 
