@@ -1,0 +1,72 @@
+{
+  "metadata": {
+    "schema_version": "a-common-synthetic-v1",
+    "dataset_version": "synthetic-v1",
+    "synthetic": true,
+    "status": "draft_for_team_review",
+    "source": {
+      "path": "C.Part/opt/examples/synthetic.json",
+      "related_issue": "#3",
+      "credit": "Existing C planning prototype; original computational values preserved.",
+      "changes": "A extracted common network/demand and added fictional coordinates and metadata."
+    },
+    "time_reference": {
+      "service_date": "2026-11-07",
+      "timezone": "Asia/Seoul",
+      "unit": "s",
+      "origin": "service_date_midnight"
+    },
+    "assumptions": [
+      "Development example with operation 0..480 seconds, not 07..09 hours.",
+      "No real traffic-card, road, or operational validation data."
+    ],
+    "data_version": "synthetic-v1",
+    "scope_mode": "single_bus_leg",
+    "arrival_semantics": "Synthetic passenger arrival at origin stop; not a boarding tag timestamp.",
+    "network_version": "synthetic-v1"
+  },
+  "data": {
+    "demands": [
+      {
+        "demand_id": "d1",
+        "origin": "A",
+        "destination": "C",
+        "arrival_s": 0,
+        "passenger_count": 3,
+        "original_route_id": "r1"
+      },
+      {
+        "demand_id": "d2",
+        "origin": "B",
+        "destination": "C",
+        "arrival_s": 60,
+        "passenger_count": 2,
+        "original_route_id": "r1"
+      },
+      {
+        "demand_id": "d3",
+        "origin": "A",
+        "destination": "D",
+        "arrival_s": 0,
+        "passenger_count": 2,
+        "original_route_id": "r2"
+      },
+      {
+        "demand_id": "d4",
+        "origin": "C",
+        "destination": "A",
+        "arrival_s": 0,
+        "passenger_count": 1,
+        "original_route_id": "r1"
+      },
+      {
+        "demand_id": "d5",
+        "origin": "A",
+        "destination": "B",
+        "arrival_s": 120,
+        "passenger_count": 1,
+        "original_route_id": "r1"
+      }
+    ]
+  }
+}

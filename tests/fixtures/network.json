@@ -1,0 +1,148 @@
+{
+  "metadata": {
+    "schema_version": "a-common-synthetic-v1",
+    "dataset_version": "synthetic-v1",
+    "synthetic": true,
+    "status": "draft_for_team_review",
+    "source": {
+      "path": "C.Part/opt/examples/synthetic.json",
+      "related_issue": "#3",
+      "credit": "Existing C planning prototype; original computational values preserved.",
+      "changes": "A extracted common network/demand and added fictional coordinates and metadata."
+    },
+    "time_reference": {
+      "service_date": "2026-11-07",
+      "timezone": "Asia/Seoul",
+      "unit": "s",
+      "origin": "service_date_midnight"
+    },
+    "assumptions": [
+      "Development example with operation 0..480 seconds, not 07..09 hours.",
+      "No real traffic-card, road, or operational validation data."
+    ],
+    "data_version": "synthetic-v1",
+    "coordinate_reference": {
+      "crs": "EPSG:4326",
+      "axis_order": [
+        "lat",
+        "lon"
+      ],
+      "unit": "degree",
+      "synthetic": true
+    },
+    "network_assumptions": [
+      "Each directed segment has fixed travel_s=60 and distance_m=300, independently of coordinates.",
+      "Allowed turns and turnaround stops are fictional permissions copied from the C example, not verified road feasibility."
+    ]
+  },
+  "data": {
+    "stops": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "segments": [
+      {
+        "segment_id": "ab",
+        "origin": "A",
+        "destination": "B",
+        "travel_s": 60,
+        "distance_m": 300
+      },
+      {
+        "segment_id": "bc",
+        "origin": "B",
+        "destination": "C",
+        "travel_s": 60,
+        "distance_m": 300
+      },
+      {
+        "segment_id": "bd",
+        "origin": "B",
+        "destination": "D",
+        "travel_s": 60,
+        "distance_m": 300
+      },
+      {
+        "segment_id": "ba",
+        "origin": "B",
+        "destination": "A",
+        "travel_s": 60,
+        "distance_m": 300
+      },
+      {
+        "segment_id": "cb",
+        "origin": "C",
+        "destination": "B",
+        "travel_s": 60,
+        "distance_m": 300
+      },
+      {
+        "segment_id": "db",
+        "origin": "D",
+        "destination": "B",
+        "travel_s": 60,
+        "distance_m": 300
+      }
+    ],
+    "allowed_turns": [
+      [
+        "ab",
+        "ba"
+      ],
+      [
+        "ab",
+        "bc"
+      ],
+      [
+        "ab",
+        "bd"
+      ],
+      [
+        "ba",
+        "ab"
+      ],
+      [
+        "bc",
+        "cb"
+      ],
+      [
+        "bd",
+        "db"
+      ],
+      [
+        "cb",
+        "ba"
+      ],
+      [
+        "db",
+        "ba"
+      ]
+    ],
+    "turnaround_stops": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ]
+  },
+  "coordinates": {
+    "A": {
+      "lat": 37.5,
+      "lon": 127.0
+    },
+    "B": {
+      "lat": 37.5027,
+      "lon": 127.0
+    },
+    "C": {
+      "lat": 37.5054,
+      "lon": 127.0
+    },
+    "D": {
+      "lat": 37.5027,
+      "lon": 127.0034
+    }
+  }
+}
