@@ -42,16 +42,54 @@ chore/5-ci-setup
 
 커밋은 작업 횟수를 채우기 위한 표시가 아니라, 나중에 “무엇을 왜 바꿨는지” 알 수 있게 남기는 기록입니다. 한 커밋에는 한 가지 설명 가능한 변경을 담습니다.
 
+### 제목
+
 ```text
-<type>(<scope>): <short English summary> (#<issue>)
+<type>(<scope>): <한글 요약> (#<issue>)
+```
+
+- type·scope는 아래 표의 영어 소문자, 요약은 한글로 씁니다.
+- 50자 안팎으로 짧게 쓰고 끝에 마침표를 찍지 않습니다.
+
+```text
+feat(demand): PSNG_NUM 가중 OD 집계 추가 (#12)
+fix(routing): 시간표 없는 노선은 미완료 상태로 반환 (#28)
+test(simulation): 정원이 찬 차량의 승차 거절 사례 추가 (#18)
+docs(contracts): service date 기준 초 단위 명세 보완 (#7)
+```
+
+### 본문
+
+사소한 한 줄 수정이 아니면 본문을 꼭 씁니다. 제목과 본문 사이는 한 줄 비웁니다.
+
+1. 첫 줄: 무엇을 왜 바꿨는지 한 문장
+2. `- 파일/모듈: 바꾼 내용` 형식의 bullet. 코드 식별자·경로는 백틱으로 감싸고 번역하지 않습니다.
+3. 마지막 줄: `- 검증: 실제로 실행한 테스트·측정과 결과`. 실행하지 못했으면 이유를 적습니다.
+
+좋은 예:
+
+```text
+fix(simulation): 만석 차량 도착 시 승차 거절 횟수 누락 수정 (#18)
+
+정원이 이미 찬 차량이 도착하면 거절을 세지 않아 M2 만차 거절이 적게 집계됐다.
+- `sim/engine.py`: 빈 좌석이 0이어도 남은 대기 승객을 `refusal_count`에 더함
+- `tests/sim/test_metrics.py`: 만석 도착 손계산 사례 추가
+- 검증: `python -m unittest discover -s tests -t .` 74개 통과, golden 로그 동일
+```
+
+나쁜 예:
+
+```text
+Update README.md
 ```
 
 ```text
-feat(demand): add weighted OD aggregation (#12)
-fix(routing): return incomplete status without timetable (#28)
-test(simulation): cover full-capacity boarding case (#18)
-docs(contracts): clarify service date time units (#7)
+Add files via upload
 ```
+
+무엇을 왜 바꿨는지 알 수 없습니다. GitHub 웹에서 파일을 수정하거나 올릴 때도 기본으로 채워지는 메시지를 그대로 쓰지 말고 위 형식으로 고쳐 씁니다.
+
+### type과 scope
 
 사용할 type은 아래로 통일합니다.
 
@@ -68,7 +106,8 @@ docs(contracts): clarify service date time units (#7)
 
 scope는 `demand`, `network`, `planning`, `simulation`, `routing`, `evaluation`, `api`, `web`, `contracts`, `repo`처럼 변경한 영역을 적습니다.
 
-- 제목은 영문으로 짧고 구체적으로 씁니다.
+### 그 밖의 규칙
+
 - `update`, `fix bug`, `final`처럼 내용이 보이지 않는 메시지는 피합니다.
 - Issue와 연결되는 커밋에는 `(#12)` 또는 `Refs #12`를 붙입니다.
 - 실제로 완료한 Issue만 PR 본문에서 `Closes #12`로 닫습니다.
@@ -91,6 +130,12 @@ scope는 `demand`, `network`, `planning`, `simulation`, `routing`, `evaluation`,
 - 남아 있는 제한이나 다음 작업
 
 PR 템플릿이 있다면 항목을 채우는 것으로 충분합니다. 실행하지 못한 테스트는 숨기지 말고 이유를 적습니다.
+
+- PR 제목은 커밋 제목과 같은 형식(`<type>(<scope>): <한글 요약> (#<issue>)`)으로 쓰고 `(#이슈)`를 붙입니다. 본문은 한글로 씁니다.
+- 한 PR에는 한 Issue만 담습니다. 여러 모듈에 걸친 작업은 PR을 나눕니다.
+- 작성자 외 최소 1명이 승인한 뒤 머지합니다. "사람 리뷰 미진행" 상태로 머지하지 않습니다.
+- 본문은 [PR 템플릿](.github/pull_request_template.md)의 섹션을 채웁니다. `/tmp`처럼 내 컴퓨터에만 있는 경로는 쓰지 않습니다.
+- 작업 범위가 바뀌면 PR 본문도 함께 갱신합니다.
 
 ## 리뷰와 병합
 
