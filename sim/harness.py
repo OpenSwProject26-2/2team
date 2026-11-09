@@ -29,7 +29,7 @@ import tracemalloc
 from .arrivals import BinRow, generate
 from .engine import simulate
 from .events import NullSink
-from .metrics import check_max_headway, summarize
+from .metrics import MetricsAccumulator, check_max_headway, summarize
 from .models import Config, Trip
 from .run_inputs import RunInputs
 from . import synthetic
@@ -172,17 +172,38 @@ def generate_scenario(network_name, passengers, out, network_seed, demand_seed, 
 
 # ---------- measured run ----------
 
-def outcome_lines(passengers):
-    yield 'passenger_id,origin,destination,time_s,outcome,physical,vehicle_id,boarding_s,arrival_s\n'
-    for s in passengers:
-        p = s.passenger
-        values = (p.passenger_id, p.origin, p.destination, p.time_s, s.outcome, s.physical,
-                  s.vehicle_id, s.boarding_s, s.arrival_s)
-        yield ','.join('' if v is None else ('"' + v.replace('"', '""') + '"' if isinstance(v, str) and
-                       (',' in v or '"' in v) else str(v)) for v in values) + '\n'
+OUTCOME_HEADER = ('passenger_id,origin,destination,time_s,outcome,reason,physical,vehicle_id,'
+                  'boarding_s,arrival_s,refused\n')
 
 
-def run_measured(scenario, out, *, arrival_seed, policy, sink_kind, trace=False):
+def outcome_line(s):
+    p = s.passenger
+    values = (p.passenger_id, p.origin, p.destination, p.time_s, s.outcome, s.reason, s.physical,
+              s.vehicle_id, s.boarding_s, s.arrival_s, s.refused)
+    return ','.join('' if v is None else ('"' + v.replace('"', '""') + '"' if isinstance(v, str) and
+                    (',' in v or '"' in v) else str(v)) for v in values) + '\n'
+
+
+class OutcomeWriter:
+    """Writes outcome CSV lines, hashing and counting bytes; optionally feeds metrics."""
+    def __init__(self, path, accumulator=None):
+        self.f, self.hash, self.bytes, self.accumulator = open(path, 'wb'), hashlib.sha256(), 0, accumulator
+        self._write(OUTCOME_HEADER)
+
+    def _write(self, text):
+        data = text.encode()
+        self.f.write(data); self.hash.update(data); self.bytes += len(data)
+
+    def __call__(self, state):
+        self._write(outcome_line(state))
+        if self.accumulator is not None: self.accumulator.add(state)
+
+    def close(self): self.f.close()
+
+
+def run_measured(scenario, out, *, arrival_seed, policy, sink_kind, trace=False, stream_outcomes=False):
+    """stream_outcomes=True (P3): outcomes are written in finalization order during `run`
+    and are not retained in memory; otherwise they are written sorted by passenger_id."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     if trace: tracemalloc.start()
@@ -206,20 +227,23 @@ def run_measured(scenario, out, *, arrival_seed, policy, sink_kind, trace=False)
         elif name == 'engine_run':
             stages.mark('run')
 
+    accumulator = MetricsAccumulator(wait_threshold_s=values['wait_threshold_s'],
+                                     stop_area=network['stop_area']) if stream_outcomes else None
+    writer = OutcomeWriter(out / 'passenger_outcomes.csv', accumulator) if stream_outcomes else None
     try:
-        result = simulate('synthetic-plan', 1, run, network['trips'], config, sink, probe)
+        result = simulate('synthetic-plan', 1, run, network['trips'], config, sink, probe, writer)
     finally:
         if stream: stream.close()
+        if writer: writer.close()
     run_checksum = result.run_checksum
     stages.mark('finalize')
-    outcome_hash, outcome_bytes = hashlib.sha256(), 0
-    with open(out / 'passenger_outcomes.csv', 'wb') as f:
-        for line in outcome_lines(result.passengers):
-            data = line.encode()
-            f.write(data)
-            outcome_hash.update(data)
-            outcome_bytes += len(data)
+    if writer is None:
+        writer = OutcomeWriter(out / 'passenger_outcomes.csv')
+        for s in result.passengers: writer(s)
+        writer.close()
+    outcome_hash, outcome_bytes = writer.hash, writer.bytes
     report = summarize(result, wait_threshold_s=values['wait_threshold_s'], stop_area=network['stop_area'],
+                       accumulator=accumulator,
                        headway=check_max_headway(network['trips'], network['route_of'], values['max_headway_s']))
     (out / 'metrics.json').write_text(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False))
     metrics = {'served': result.served, 'unserved': result.unserved, 'censored': result.censored,
@@ -237,6 +261,7 @@ def run_measured(scenario, out, *, arrival_seed, policy, sink_kind, trace=False)
         'passengers': result.total, 'event_count': result.event_count,
         'log_bytes': sink.bytes if stream else 0, 'log_sha256': sink.hash.hexdigest() if stream else None,
         'outcome_bytes': outcome_bytes, 'outcome_sha256': outcome_hash.hexdigest(),
+        'outcome_order': 'finalization' if stream_outcomes else 'passenger_id',
         'stages': stages.records, 'peak_rss_bytes': peak_rss_bytes(),
         'total_wall_s': sum(r['wall_s'] for r in stages.records.values()),
         'total_cpu_s': sum(r['cpu_s'] for r in stages.records.values()),
@@ -262,13 +287,15 @@ def main(argv=None):
     r.add_argument('--policy', choices=sorted(POLICIES), required=True)
     r.add_argument('--sink', choices=('null', 'jsonl'), required=True)
     r.add_argument('--tracemalloc', action='store_true')
+    r.add_argument('--stream-outcomes', action='store_true', help='P3: write outcomes during run, keep none')
     r.add_argument('--out', required=True)
     args = parser.parse_args(argv)
     if args.command == 'generate':
         result = generate_scenario(args.network, args.passengers, args.out, args.network_seed, args.demand_seed)
     else:
         m = run_measured(args.scenario, args.out, arrival_seed=args.arrival_seed, policy=args.policy,
-                         sink_kind=args.sink, trace=args.tracemalloc)
+                         sink_kind=args.sink, trace=args.tracemalloc,
+                         stream_outcomes=args.stream_outcomes)
         result = {k: m[k] for k in ('status', 'passengers', 'event_count', 'total_wall_s',
                                     'peak_rss_bytes', 'log_bytes', 'outcome_sha256')}
     print(json.dumps(result, sort_keys=True))

@@ -5,10 +5,13 @@ from dataclasses import asdict
 import hashlib
 import io
 import json
+from pathlib import Path
+import tempfile
 import unittest
 from sim.dispatcher import Dispatcher
 from sim.engine import simulate
 from sim.events import JsonlSink
+from sim.harness import generate_scenario, run_measured
 from sim.metrics import MetricsAccumulator, summarize
 from sim.models import Passenger, SimulationError
 from sim.run_inputs import RunInputs, digest, expand
@@ -97,6 +100,23 @@ class ChecksumTests(unittest.TestCase):
                 RunInputs('번들"\\', '시나리오', 'src ', '2026-11-09', (Passenger('p,"1"', '정류장\n', 'B', 7),), (), 's'),
                 RunInputs('b', 's', 'src', '2026-11-09', (), (), 's')]
         for r in runs: self.assertEqual(r.checksum, digest(asdict(r)))
+
+
+class HarnessStreamingTests(unittest.TestCase):
+    def test_stream_mode_same_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            generate_scenario('complex', 400, root / 'sc', 'net-v1', 'demand-v1')
+            common = dict(arrival_seed='a1', policy='proposed-v0.2', sink_kind='jsonl')
+            a = run_measured(root / 'sc', root / 'batch', **common)
+            b = run_measured(root / 'sc', root / 'stream', stream_outcomes=True, **common)
+            for key in ('log_sha256', 'event_count', 'run_checksum', 'metrics'): self.assertEqual(a[key], b[key])
+            self.assertEqual((a['outcome_order'], b['outcome_order']), ('passenger_id', 'finalization'))
+            self.assertEqual((root / 'batch' / 'metrics.json').read_text(), (root / 'stream' / 'metrics.json').read_text())
+            batch_lines = (root / 'batch' / 'passenger_outcomes.csv').read_text().splitlines()
+            stream_lines = (root / 'stream' / 'passenger_outcomes.csv').read_text().splitlines()
+            self.assertEqual(batch_lines[0], stream_lines[0])
+            self.assertEqual(Counter(batch_lines[1:]), Counter(stream_lines[1:]))
 
 
 if __name__ == '__main__': unittest.main()
