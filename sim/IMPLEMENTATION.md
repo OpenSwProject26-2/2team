@@ -88,6 +88,23 @@ MemorySink는 테스트용 bounded sink다. sink 실패는 전파되어 성공 �
 benchmark는 1만/10만/100만 명의 시간·peak memory·사건 수 측정 기반이다. 단일 대용량
 차량 fixture는 처리 비용 측정용이며 현실적인 운송 능력 근거가 아니다. cohort 미구현.
 
+## 지표 (`metrics.py`) — P4
+
+정의 원문은 `sim/metrics.py` docstring이며 결과와 함께 인용한다. 요약:
+
+- M1 = served/total, total=0이면 NA. censored>0이면 rate 대신 하한 served/total·상한 (served+censored)/total.
+- M2 배타 사유 우선순위: `no_connection`(일정상 출발→도착 순방향 방문 없음) → `service_end`(연결은
+  있으나 [time_s, drain_s]에 출발지 방문 없음) → `journey`/`wait`(결과를 확정한 기한 사건, 같은 시각이면
+  stable_id 순서상 journey 우선). 만차 거절은 별도 중복 가능 사건 수: 만석으로 끝난 방문마다 그 방문이
+  태울 수 있었던 잔여 자격 승객 1명당 1건. 거절 경험 승객 수는 결과별로 따로 센다(원인 판정 아님).
+- M3 대기 = boarding_s − time_s. 모집단 `served`(선택편향)와 `boarded`(이후 여정초과·censored 탑승 포함)를
+  각각 평균·nearest-rank P90·임계 초과(>) 비율로 낸다. 미탑승 unserved는 사유별 인원만 낸다.
+- M5 출발 정류장의 지역(호출자 제공 stop→area, 미매핑은 `unknown`)별 분모·충족률·최저값.
+- M6 차량별 완료 운행 수·탑승·served 하차·운행시간·거리·공차시간. 공차거리는 Trip에 구간 거리가 없어 NA(TODO).
+- R12: 같은 노선 연속 출발 간격(정류장별) ≤ max_headway_s. 운영 시작/종료와 첫·마지막 출발 사이 간격은
+  검사하지 않음(TODO 정책). 노선 식별은 호출자 제공(`route_of_trips`는 C adapter trip ID 규칙).
+- 엔진은 사건 로그를 바꾸지 않고 카운터만 추가했다(golden 로그 동일).
+
 ## 측정 하네스 (`harness.py`, `synthetic.py`) — P6
 
 ```sh

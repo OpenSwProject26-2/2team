@@ -85,6 +85,11 @@ def compile_schedule(plan, inputs, run, realization=None):
     return tuple(trips)
 
 
+def route_of_trips(trips):
+    """Route identity for R12 checks; compile_schedule names trips '<route>:<vehicle>:<seq>'."""
+    return {t.trip_id: t.trip_id.split(':', 1)[0] for t in trips}
+
+
 def assessment(plan, inputs, result):
     validate_allocation(inputs, plan)
     if (result.plan_id, result.plan_revision, result.input_bundle_id, result.source_checksum, result.total) != (
