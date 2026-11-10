@@ -42,40 +42,43 @@ chore/5-ci-setup
 
 커밋은 작업 횟수를 채우기 위한 표시가 아니라, 나중에 “무엇을 왜 바꿨는지” 알 수 있게 남기는 기록입니다. 한 커밋에는 한 가지 설명 가능한 변경을 담습니다.
 
-```text
-<type>(<scope>): <short English summary> (#<issue>)
+### 커밋 메시지 형식
+
+```
+type(scope): 한국어 제목 (#이슈번호)
 ```
 
-```text
-feat(demand): add weighted OD aggregation (#12)
-fix(routing): return incomplete status without timetable (#28)
-test(simulation): cover full-capacity boarding case (#18)
-docs(contracts): clarify service date time units (#7)
-```
+예시: `feat(simulation): 셔틀 차량 배차 이벤트 처리 추가 (#12)`
 
-사용할 type은 아래로 통일합니다.
+### type
+
+type은 아래 중 하나로 통일합니다.
 
 | type | 용도 |
 | --- | --- |
-| `feat` | 새 기능 |
+| `feat` | 새 기능 추가 |
 | `fix` | 오류 수정 |
 | `test` | 테스트 추가·수정 |
 | `docs` | 문서 변경 |
-| `refactor` | 동작은 유지하는 구조 개선 |
+| `refactor` | 동작은 그대로 두고 구조만 개선 |
 | `perf` | 성능 개선 |
-| `build`, `ci`, `chore` | 빌드·자동화·설정 등 |
-| `revert` | 변경 되돌리기 |
+| `build`, `ci`, `chore` | 빌드, 자동화, 설정 변경 |
+| `revert` | 이전 변경 되돌리기 |
 
-scope는 `demand`, `network`, `planning`, `simulation`, `routing`, `evaluation`, `api`, `web`, `contracts`, `repo`처럼 변경한 영역을 적습니다.
+### scope
 
-- 제목은 영문으로 짧고 구체적으로 씁니다.
-- `update`, `fix bug`, `final`처럼 내용이 보이지 않는 메시지는 피합니다.
-- Issue와 연결되는 커밋에는 `(#12)` 또는 `Refs #12`를 붙입니다.
-- 실제로 완료한 Issue만 PR 본문에서 `Closes #12`로 닫습니다.
-- 빈 커밋이나 횟수를 늘리기 위한 인위적인 커밋 쪼개기는 하지 않습니다.
-- 이미 원격에 올린 커밋은 되감거나 `push --force`로 바꾸지 않습니다. 실수는 새 커밋이나 revert PR로 고칩니다.
-- 각자 본인 GitHub 계정과 연결된 이메일로만 커밋합니다. 계정을 공유하거나 다른 팀원의 이메일을 사용하지 않습니다.
-- Gitmoji는 처음에는 쓰지 않습니다. 지금의 type만으로도 충분하고, 꼭 필요해지면 팀이 함께 정합니다.
+scope에는 변경한 영역을 적습니다.
+`demand`, `network`, `planning`, `simulation`, `routing`, `evaluation`, `api`, `web`, `contracts`, `repo`
+
+### 작성 규칙
+
+- 제목은 한국어로, 무엇을 바꿨는지 짧고 구체적으로 씁니다.
+- `업데이트`, `버그 수정`, `마지막`처럼 내용을 알 수 없는 제목은 쓰지 않습니다.
+- Issue와 관련된 커밋에는 제목 끝에 `(#12)`를 붙이거나 본문에 `Refs #12`를 적습니다.
+- PR 본문의 `Closes #12`는 실제로 작업을 마친 Issue에만 씁니다.
+- 원격에 이미 올린 커밋은 되돌려 쓰거나 `push --force`로 덮어쓰지 않습니다. 실수는 새 커밋이나 revert PR로 바로잡습니다.
+- 커밋은 각자 본인 GitHub 계정에 연결된 이메일로만 합니다. 계정을 같이 쓰거나 다른 팀원의 이메일로 커밋하지 않습니다.
+- Gitmoji는 당분간 쓰지 않습니다. 지금의 type만으로 충분하고, 필요해지면 팀이 함께 정합니다.
 
 ## PR을 여는 방법
 
