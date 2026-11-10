@@ -9,12 +9,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from gtfs_preview import Preview, PreviewError, load_preview, search
+from gtfs_preview import EXAMPLE, Preview, PreviewError, load_preview, search
+from normal_reachability import assess_normal_reachability
 
 PAGE = Path(__file__).with_name("preview.html")
 
 
-def handler_for(preview: Preview) -> type[BaseHTTPRequestHandler]:
+def handler_for(
+    preview: Preview | None, normal_folder: Path = EXAMPLE
+) -> type[BaseHTTPRequestHandler]:
     class PreviewHandler(BaseHTTPRequestHandler):
         def _json(self, payload: dict[str, object]) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -36,6 +39,40 @@ def handler_for(preview: Preview) -> type[BaseHTTPRequestHandler]:
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if url.path == "/__demo__/normal-reachability":
+                params = parse_qs(url.query, keep_blank_values=True)
+                required = (
+                    "query_id",
+                    "origin_stop_id",
+                    "destination_stop_id",
+                    "departure_at",
+                )
+                if any(len(params.get(name, [])) != 1 for name in required):
+                    result = assess_normal_reachability("", "", "", "", normal_folder)
+                else:
+                    result = assess_normal_reachability(
+                        params["query_id"][0],
+                        params["origin_stop_id"][0],
+                        params["destination_stop_id"][0],
+                        params["departure_at"][0],
+                        normal_folder,
+                    )
+                self._json({"preview_only": True, "result": result})
+                return
+            if url.path not in {"/__demo__/config", "/__demo__/search"}:
+                self.send_error(404)
+                return
+            if preview is None:
+                self._json(
+                    {
+                        "preview_only": True,
+                        "ok": False,
+                        "error": PreviewError(
+                            "DATA_INCOMPLETE", "시나리오 예제 시간표가 없습니다."
+                        ).as_dict(),
+                    }
+                )
+                return
             if url.path == "/__demo__/config":
                 self._json(
                     {
@@ -49,9 +86,6 @@ def handler_for(preview: Preview) -> type[BaseHTTPRequestHandler]:
                         "verification": preview.verification,
                     }
                 )
-                return
-            if url.path != "/__demo__/search":
-                self.send_error(404)
                 return
             params = parse_qs(url.query, keep_blank_values=True)
             try:
@@ -94,7 +128,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="D 합성 경로 미리보기 서버")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
-    preview = load_preview()
+    try:
+        preview = load_preview()
+    except PreviewError:
+        preview = None
     with ThreadingHTTPServer(("127.0.0.1", args.port), handler_for(preview)) as server:
         print(f"합성·미검증 개발 미리보기: http://127.0.0.1:{server.server_port}/")
         server.serve_forever()

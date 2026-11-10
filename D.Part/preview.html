@@ -66,6 +66,7 @@
         const response = await fetch('/__demo__/config');
         if (!response.ok) throw new Error('설정을 불러오지 못했습니다.');
         config = await response.json();
+        if (!config.stops) throw new Error('시나리오 예제 시간표가 없습니다.');
         for (const key of ['origin', 'destination']) {
           const select = document.querySelector(`#${key}`);
           for (const stop of config.stops) {

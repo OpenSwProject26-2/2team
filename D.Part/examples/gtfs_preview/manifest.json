@@ -5,6 +5,7 @@
   "plan_id": "D-DEMO-PLAN",
   "revision": 1,
   "network_snapshot_id": "synthetic-v1",
+  "normal_timetable_version": "d-normal-demo-v1",
   "normal_feed": "normal",
   "shuttle_feed": "shuttle",
   "demo_excluded_route_ids": ["normal:r1"],
