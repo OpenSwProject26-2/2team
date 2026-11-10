@@ -1,0 +1,3 @@
+route_id,route_short_name,route_type
+r1,합성 정상 1,3
+r2,합성 정상 2,3
