@@ -25,6 +25,8 @@
 4. [M00·A/B/C 정합성 검토](04-m00-abc-integration-review.md) — 공개 구현 상태와 D 입력 게이트
 5. [C→D 수락 사례](05-c-to-d-acceptance-cases.md) — 후속 합성 contract test 사례
 6. [3~5일차 합성 미리보기 현황](06-day3-5-preview.md) — 실행 방법·테스트·A/B/C 연동 전제
+7. [정상 교통 도달 가능 첫 전달물](07-normal-reachability-handoff.md) — A에 보낼 합성 조회 함수·응답과 남은 입력
+8. [ADR-002 제안](ADR-002-normal-reachability-preview.md) — 정상 조회 응답 의미와 팀 결정 대기 항목
 
 이 문서의 ID·API 경로·JSON 필드 중 확정되지 않은 값은 **제안 형식**이며, 팀 공통 `contracts/` 모델이 존재하면 그 모델을 우선한다.
 
@@ -82,3 +84,13 @@ py -3 -m ruff format --check D.Part
 기본 예제는 `normal:r1`을 **미리보기에서만 제외**하고 합성 셔틀 A→B, 정상 버스 B→C의 환승을 보여 준다. 화면과 CLI 결과에는 `plan_id`, `plan_revision`, `plan_mode=simulation`, `not_independently_verified`를 함께 보인다. `preview_server.py`의 `/__demo__/` 경로·JSON은 **M08 API 계약이 아니다**.
 
 현재 지원 범위는 `calendar_dates.txt`에 기록된 단일 서비스일, 정확한 정차 시각, 동일 정류장 최대 1회 환승이다. 도보·환승 최소시간·최대 대기·좌석·실제 파업 영향 판정은 팀 합의와 A/B 입력을 기다린다. 자세한 현재 상태는 [3~5일차 문서](06-day3-5-preview.md)에 적었다.
+
+## A 전달용 정상 교통 조회 초안
+
+`normal_reachability.py`는 위 합성 예제의 **정상 버스 GTFS만** 읽어 정류장 간 도달 가능성을 요약한다. 셔틀 파일이 없어도 작동한다. 조회 ID·도착시각·환승 횟수·정상 시간표 버전을 반환하고, 보행시간은 미계산 `null`로 둔다.
+
+```powershell
+py -3 D.Part/normal_reachability.py synthetic-demand-1 A C 2026-11-07T00:00:00+09:00
+```
+
+실제 교통카드↔GTFS ID 매핑, 지하철·보행 연결, 잔여 수요 판정 정책은 [A 전달 문서](07-normal-reachability-handoff.md)에 필요한 입력으로 정리했다.
