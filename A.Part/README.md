@@ -5,6 +5,7 @@ Issue #10의 코드·문서·합성 테스트를 이 폴더에서 관리한다. 
 - `data/`: 분석·후보 조사·추출 Python 패키지
 - `data/docs/`: [수요 분석](data/docs/seoul_demand_analysis.md), [후보 조사](data/docs/candidate_survey.md), [구로 추출](data/docs/guro_input_extraction.md)
 - [교통망 정제](data/docs/network_cleaning.md): `python -B A.Part/run.py clean_network --config <설정 경로>`로 실행한다. 대상 노선·원천 그룹·경로·단위 근거는 설정으로 받는다.
+- [수요 연결·검증](data/docs/demand_linking.md): `python -B A.Part/run.py link_demand --draft-dir <기존 추출> --network-dir <정제 망> --output-dir <새 출력>`으로 원천 방문·연속 구간에 연결하고 이전 추출 보고서·출처·전체/노선별 규모를 대조한다. 실제 실행 범위는 **구로 5개 노선 추출본의 오전 OD 전체**이며 서울 전체 분석과 구분한다.
 - `tests/demand/`: 실제 이용 기록을 사용하지 않는 합성 회귀 테스트
 - `run.py`: 저장소 루트에서 도구를 실행하는 진입점. 작업 디렉터리를 바꾸지 않는다.
 
