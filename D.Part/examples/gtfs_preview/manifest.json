@@ -1,0 +1,14 @@
+{
+  "kind": "d-synthetic-preview-v1",
+  "service_date": "2026-11-07",
+  "timezone": "Asia/Seoul",
+  "plan_id": "D-DEMO-PLAN",
+  "revision": 1,
+  "network_snapshot_id": "synthetic-v1",
+  "normal_timetable_version": "d-normal-demo-v1",
+  "normal_feed": "normal",
+  "shuttle_feed": "shuttle",
+  "demo_excluded_route_ids": ["normal:r1"],
+  "source": "D-authored synthetic timetable using stop IDs and fictional coordinates from A Draft PR #16",
+  "verification": "not_independently_verified"
+}
