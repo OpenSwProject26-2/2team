@@ -1,0 +1,14 @@
+{
+  "provenance": "synthetic hand-calculation fixture; no observed data",
+  "service_date": "2026-11-08",
+  "capacity": 2,
+  "passenger_count": 3,
+  "arrival_s": 0,
+  "outbound_s": 5,
+  "return_s": 5,
+  "turnaround_s": 0,
+  "departures": [0, 10],
+  "max_wait_s": 10,
+  "max_journey_s": 15,
+  "drain_s": 20
+}

@@ -1,0 +1,123 @@
+{
+  "adapter-exact-r1": {
+    "censored": 0,
+    "distance_m": 2400,
+    "event_count": 35,
+    "log_sha256": "c511b659908254ddc0ce8e94f4fc95175f1fe41d5a7abef9bc64ba650907fb1e",
+    "outcome_sha256": "aa2e8606221e23f7563d0af2e83405d98f2d3d0ecaeeeaa81054da813760ad64",
+    "p90_wait_s": 240,
+    "passengers": 9,
+    "served": 5,
+    "unserved": 4
+  },
+  "adapter-exact-r1-r2": {
+    "censored": 0,
+    "distance_m": 4800,
+    "event_count": 49,
+    "log_sha256": "fc02ee167c5e634b5269ec14c6e373203e1ecfeb842b563a70068f8a11bbe269",
+    "outcome_sha256": "c5cb9076459a27d2c853166d6f02ca5013cb1b6d13d24c44c5943d05beb23415",
+    "p90_wait_s": 240,
+    "passengers": 9,
+    "served": 7,
+    "unserved": 2
+  },
+  "direct": {
+    "censored": 0,
+    "distance_m": 200,
+    "event_count": 17,
+    "log_sha256": "7816480a20e061e0da4e2ecbc853ca166461700ecad3589fa2e1512d8081a0b2",
+    "outcome_sha256": "9b462aaca1da254bf1633d32f2eef628b0d741b8ba923ff347bc0e4381613ca3",
+    "p90_wait_s": 10,
+    "passengers": 3,
+    "served": 3,
+    "unserved": 0
+  },
+  "direct-drain12": {
+    "censored": 1,
+    "distance_m": 100,
+    "event_count": 14,
+    "log_sha256": "f4aa90863a12eb45a19badd5a011f64be3d08400973f62a075790aaf6afcd0f5",
+    "outcome_sha256": "3f7f2e696a20020902b0464644fe971ef3bd51d701a81b8c3c6a94eb92ec274e",
+    "p90_wait_s": 0,
+    "passengers": 3,
+    "served": 2,
+    "unserved": 0
+  },
+  "direct-journey14": {
+    "censored": 0,
+    "distance_m": 200,
+    "event_count": 18,
+    "log_sha256": "56567948ebcdd447ec53c1f4a3f75c79acd5375154995f9f41f8bf8a576ab433",
+    "outcome_sha256": "d0634f7eb445e98f1a0c8821ce96f1310b7a593541cd060550fb1308ce48d6c5",
+    "p90_wait_s": 0,
+    "passengers": 3,
+    "served": 2,
+    "unserved": 1
+  },
+  "direct-wait9": {
+    "censored": 0,
+    "distance_m": 200,
+    "event_count": 16,
+    "log_sha256": "669b90842fd6a50baa649221caf1bc6be4e019f4e857d95b644811046a7adf4f",
+    "outcome_sha256": "b4b23e66e8343d063ae9d2f0c3f05e6d8d45f34c130f47e144971d44d85d9af5",
+    "p90_wait_s": 0,
+    "passengers": 3,
+    "served": 2,
+    "unserved": 1
+  },
+  "simple-800": {
+    "censored": 0,
+    "distance_m": 128000,
+    "event_count": 2412,
+    "log_sha256": "d3a540af38796977b84838fe1266ead17594c72ff689bd4b5366c11566a2fec4",
+    "outcome_sha256": "37d6336b32320896b68deb278870b8055753cc738c2011ea757e26b5516cd2c0",
+    "p90_wait_s": 1137,
+    "passengers": 800,
+    "served": 670,
+    "unserved": 130
+  },
+  "synthetic-3000": {
+    "censored": 0,
+    "distance_m": 932800,
+    "event_count": 11002,
+    "log_sha256": "591d0af0161bc148415f01267fd443e9a944e3a9659c719f74de145f9df2419d",
+    "outcome_sha256": "1b5af7d11bc7779161877696f6c7b4dd13fbdff90c570c0b2d8b805cb5ef17d8",
+    "p90_wait_s": 805,
+    "passengers": 3000,
+    "served": 1738,
+    "unserved": 1262
+  },
+  "synthetic-600": {
+    "censored": 0,
+    "distance_m": 932800,
+    "event_count": 4943,
+    "log_sha256": "7606dcc13eb23bb7bb1513b0e8096111f8a3aa771711115b91038dfe7b07a994",
+    "outcome_sha256": "b16d8393631817ba9466e1a72615d4e0096a085141da98a28e7b17be104282ed",
+    "p90_wait_s": 707,
+    "passengers": 600,
+    "served": 526,
+    "unserved": 74
+  },
+  "tie": {
+    "censored": 0,
+    "distance_m": 40,
+    "event_count": 56,
+    "log_sha256": "3baad866158173856e49fcff5a64a6b008c387edc4b77f65fe7aa31a71c69700",
+    "outcome_sha256": "1cd61c7963a042d7b4e1a18192f2aee63d9d376a9266187274129be73b3d9cc0",
+    "p90_wait_s": 20,
+    "passengers": 13,
+    "served": 8,
+    "unserved": 5
+  },
+  "tie-journey-short": {
+    "censored": 0,
+    "distance_m": 40,
+    "event_count": 59,
+    "log_sha256": "6444a21c6a98668eac0a2ee37a79e57078b0928965a113775852307351e2d263",
+    "outcome_sha256": "1126f166edc9d70f67805cb62bbb96f2c967dbadad3fea2cba73ea10c2c56615",
+    "p90_wait_s": 10,
+    "passengers": 13,
+    "served": 1,
+    "unserved": 12
+  }
+}

@@ -4,3 +4,6 @@ __pycache__/
 .env
 raw/
 data/processed/
+# measurement run directories (large synthetic logs/outcomes); summaries live in results/*.csv|md
+results/runs/
+results/scenarios/
