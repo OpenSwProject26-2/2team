@@ -1,0 +1,8 @@
+{
+  "coordinate_basis": "Fictional coordinates; no validated CRS or road feasibility.",
+  "stops": [
+    {"stop_id": "stop-A", "stop_name_candidates": ["Synthetic A"], "coordinate_candidates": [[37.0, 127.0]], "administrative_candidates": []},
+    {"stop_id": "stop-B", "stop_name_candidates": ["Synthetic B"], "coordinate_candidates": [[37.001, 127.0]], "administrative_candidates": []},
+    {"stop_id": "stop-C", "stop_name_candidates": ["Synthetic C"], "coordinate_candidates": [[37.002, 127.0]], "administrative_candidates": []}
+  ]
+}
