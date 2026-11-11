@@ -79,11 +79,11 @@ D는 C 출력을 **운행안 후보 표시 데이터**로만 취급하고, 검�
 
 **1~2일 차:** `01`·`02` 명세 초안과 본 정합성 리뷰를 검토, 팀 공통 계약과 다른 부분 명시, 팀 회의 질문 및 GitHub Issue/PR 생성.
 
-**3~5일 차 이후:** A/B의 합성 입력으로 직행/환승·파업·셔틀 경로 검색; M00와 호환되는 API contract test; FastAPI/React 개발. 현재 GTFS 헤더 검사가 전체 GTFS 유효성이나 실제 서비스 통합을 보증하지 않는다.
+**3~5일 차 이후:** A/B의 합성 입력으로 직행/환승·파업·셔틀 경로 검색; M00와 호환되는 API contract test; D08 기술 스택 합의 후 API·화면 개발. 현재 GTFS 헤더 검사가 전체 GTFS 유효성이나 실제 서비스 통합을 보증하지 않는다.
 
 ## 7. 공용 규칙 관련 주의
 
-- `main` 루트의 `AGENTS.md` 및 `CONTRIBUTING.md`는 최신이며, 예전 `D.Part/AGENTS.md`, `D.Part/CONTRIBUTING.md`와 서로 다르다. **루트 공용 규칙·M00 우선순위와 충돌하지 않도록** 중복 사본 처리(삭제 또는 안내 링크로 교체)를 팀에 제안해야 한다. 코드 에이전트가 D 안의 오래된 규칙을 우선 읽을 수 있으므로 방치하지 않는다.
+- D 폴더에 있던 오래된 `AGENTS.md`·`CONTRIBUTING.md` 사본은 루트 공용 규칙과 달라 제거했다. 작업 규칙은 저장소 루트 문서를 참조한다.
 - 공용 `docs/contracts/M00_DATA_CONTRACT.md`, A/B/C 파일, `main`은 이 작업에서 수정하지 않는다.
 - 최신 팀 규칙의 브랜치명은 `<type>/<issue-number>-<short-description>`, 커밋 제목은 **영어**, Issue 참조 필수이다. 기존 `docs/d-service-day1-2`는 이전 규칙으로 만들어진 작업 브랜치이므로 팀과 Issue를 연결한 PR 계획을 먼저 확인한다.
 
