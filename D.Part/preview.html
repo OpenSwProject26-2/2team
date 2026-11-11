@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>D 합성 경로 미리보기</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #182334; background: #f4f6fa; }
+    body { max-width: 820px; margin: 0 auto; padding: 32px 16px 80px; }
+    h1 { margin-bottom: 8px; }
+    .notice { border: 2px solid #b45309; background: #fff7ed; padding: 16px; border-radius: 12px; }
+    .notice strong { display: block; margin-bottom: 6px; }
+    .panel { background: white; border: 1px solid #d8dfeb; border-radius: 12px; padding: 20px; margin-top: 18px; }
+    .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+    label { display: grid; gap: 8px; font-weight: 600; }
+    select, input, button { font: inherit; padding: 10px; border-radius: 8px; border: 1px solid #8d9aad; }
+    button { background: #174ea6; color: white; border: 0; cursor: pointer; margin-top: 18px; }
+    button:disabled { opacity: .5; cursor: wait; }
+    .meta { color: #475569; font-size: .94rem; }
+    .leg { padding: 14px 0; border-top: 1px solid #d8dfeb; }
+    .error { color: #9a3412; }
+    code { overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <h1>합성 경로 검색 미리보기</h1>
+  <div class="notice" role="note">
+    <strong>시뮬레이션 · 합성 시간표 · 독립 검증 전</strong>
+    이 화면은 개발용 예제입니다. 실제 버스 운행, 현장 승인, 좌석 확보를 보장하지 않습니다.
+  </div>
+  <section class="panel" aria-labelledby="form-title">
+    <h2 id="form-title">경로 조건</h2>
+    <p class="meta" id="plan">예제 운행안을 불러오는 중입니다.</p>
+    <form id="search-form">
+      <div class="fields">
+        <label>출발 정류장 <select id="origin" required></select></label>
+        <label>도착 정류장 <select id="destination" required></select></label>
+        <label>출발 시각 (Asia/Seoul) <input id="departure" type="datetime-local" required value="2026-11-07T00:00"></label>
+      </div>
+      <button type="submit" id="submit" disabled>합성 경로 찾기</button>
+    </form>
+    <p class="meta">같은 정류장에서 최대 1회 환승만 검색합니다. 도보·환승 최소시간·최대 대기 정책은 아직 적용하지 않습니다.</p>
+  </section>
+  <section class="panel" aria-live="polite" aria-labelledby="result-title">
+    <h2 id="result-title">검색 결과</h2>
+    <div id="result">출발지와 목적지를 입력해 검색하세요.</div>
+  </section>
+  <script>
+    const form = document.querySelector('#search-form');
+    const resultNode = document.querySelector('#result');
+    const submit = document.querySelector('#submit');
+    let config;
+    const addText = (parent, tag, content, className = '') => {
+      const node = document.createElement(tag);
+      node.textContent = content;
+      if (className) node.className = className;
+      parent.append(node);
+      return node;
+    };
+    const showError = (code, message) => {
+      resultNode.replaceChildren();
+      addText(resultNode, 'p', `${code}: ${message}`, 'error');
+    };
+    async function initialize() {
+      try {
+        const response = await fetch('/__demo__/config');
+        if (!response.ok) throw new Error('설정을 불러오지 못했습니다.');
+        config = await response.json();
+        for (const key of ['origin', 'destination']) {
+          const select = document.querySelector(`#${key}`);
+          for (const stop of config.stops) {
+            const option = document.createElement('option');
+            option.value = stop;
+            option.textContent = `합성 정류장 ${stop}`;
+            select.append(option);
+          }
+        }
+        document.querySelector('#destination').value = 'C';
+        document.querySelector('#plan').textContent =
+          `예제 ${config.plan_id} / revision ${config.revision} · service date ${config.service_date} · ${config.verification}`;
+        submit.disabled = false;
+        form.requestSubmit();
+      } catch (error) {
+        showError('DATA_INCOMPLETE', error.message);
+      }
+    }
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      submit.disabled = true;
+      resultNode.textContent = '합성 시간표를 검색하는 중입니다.';
+      const params = new URLSearchParams({
+        origin: document.querySelector('#origin').value,
+        destination: document.querySelector('#destination').value,
+        departure_at: `${document.querySelector('#departure').value}:00+09:00`,
+        plan_id: config.plan_id,
+        revision: String(config.revision),
+      });
+      try {
+        const response = await fetch(`/__demo__/search?${params}`);
+        if (!response.ok) throw new Error('미리보기 서버가 응답하지 않습니다.');
+        const payload = await response.json();
+        if (!payload.ok) {
+          showError(payload.error.code, payload.error.message);
+          return;
+        }
+        const journey = payload.result;
+        resultNode.replaceChildren();
+        addText(resultNode, 'p', `예상 도착 ${journey.arrival_at} · 환승 ${journey.transfers}회`);
+        addText(resultNode, 'p', `${journey.plan_id} / revision ${journey.plan_revision} · ${journey.plan_mode} · ${journey.verification}`, 'meta');
+        for (const leg of journey.legs) {
+          const item = document.createElement('div');
+          item.className = 'leg';
+          addText(item, 'strong', `${leg.mode === 'shuttle' ? '합성 셔틀' : '합성 정상 버스'} ${leg.route_id}`);
+          addText(item, 'div', `${leg.from_stop_id} ${leg.departure_at} → ${leg.to_stop_id} ${leg.arrival_at}`);
+          resultNode.append(item);
+        }
+        for (const warning of journey.warnings) addText(resultNode, 'p', warning, 'meta');
+      } catch (error) {
+        showError('JOB_FAILED', error.message);
+      } finally {
+        submit.disabled = false;
+      }
+    });
+    initialize();
+  </script>
+</body>
+</html>

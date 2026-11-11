@@ -1,0 +1,20 @@
+# D 파트 로컬 환경 및 자동 생성 파일
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+node_modules/
+
+# 개인 설정 및 비밀 정보
+.env
+.env.*
+!.env.example
+
+# 원본·대용량 교통 자료 (공통 원칙: 저장소에 커밋 금지)
+raw/
+data/processed/
+*.zip
+*.xlsx
+*.parquet
+VW_KSCC_*.csv
