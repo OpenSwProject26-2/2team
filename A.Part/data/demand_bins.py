@@ -62,10 +62,9 @@ def validate_bins(links, output, summary):
     return {"all_checks_passed": not issues, "issues": dict(issues), "counts": counts}
 
 
-def convert(links, draft, network_dir, output):
-    links, draft, network_dir, output = map(Path, (links, draft, network_dir, output))
-    if output.exists() or any(output.resolve().is_relative_to(p.resolve()) for p in (links, draft, network_dir)):
-        error(output, 0, "output_exists_or_inside_input")
+def validate_inputs(links, draft, network_dir):
+    """Read-only source/link validation shared with later preparation tools."""
+    links, draft, network_dir = map(Path, (links, draft, network_dir))
     report = read_json(links / "report.json")
     if report.get("rule_version") != RULE_VERSION or report.get("all_checks_passed") is not True:
         error("report.json", 0, "successful_linking_v2_required")
@@ -85,6 +84,14 @@ def convert(links, draft, network_dir, output):
     if not saved["all_checks_passed"] or not reconciliation["all_checks_passed"]:
         error("report.json", 0, "linking_source_or_extraction_reconciliation_failed")
     paths += [links / "report.json", links / "od_links.jsonl"]
+    return report, [p.resolve() for p in paths], saved, reconciliation
+
+
+def convert(links, draft, network_dir, output):
+    links, draft, network_dir, output = map(Path, (links, draft, network_dir, output))
+    if output.exists() or any(output.resolve().is_relative_to(p.resolve()) for p in (links, draft, network_dir)):
+        error(output, 0, "output_exists_or_inside_input")
+    report, paths, saved, reconciliation = validate_inputs(links, draft, network_dir)
     paths = [p.resolve() for p in paths]
     snapshots = [digest(p) for p in paths]
     output.mkdir(parents=True, exist_ok=False)
