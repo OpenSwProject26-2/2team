@@ -2,7 +2,7 @@
 
 > 상태: **D 담당자 검토 및 팀 확인 대기 — 제안 문서**<br>
 > 기준일: 2026-11-08<br>
-> 관련 문서: [GTFS 입력 요구사항](01-gtfs-input-requirements.md) · [API 요청·응답 형식](02-api-response-format.md) · [협업 규칙](CONTRIBUTING.md) · [코딩 규칙](AGENTS.md)
+> 관련 문서: [GTFS 입력 요구사항](01-gtfs-input-requirements.md) · [API 요청·응답 형식](02-api-response-format.md) · [협업 규칙](../CONTRIBUTING.md) · [코딩 규칙](../AGENTS.md)
 >
 > 이 파일은 **D.Part 내부의 협의 초안**이다. 팀 공통 `contracts/`를 생성하거나 변경한 것이 아니며, 아래 '결정 필요' 항목은 아직 확정된 계약이 아니다.
 
@@ -137,7 +137,7 @@ py -3 -m pytest -q D.Part/tests
 1. 공통 합성 GTFS로 정상 교통 경로 검색.
 2. 파업 중단 노선 제외 및 셔틀 GTFS 반영.
 3. 경로 없음·데이터 미준비·판정 불가를 구분.
-4. 합의된 JSON 계약으로 FastAPI 연결.
+4. 합의된 JSON 계약으로 API 연결.
 5. 시민 검색 화면 및 운영자 대시보드 골격 구현.
 
 > **완료 판정:** 1~2일 차는 *입출력 명세 작성 + 미결 사항·책임자 정리 + GitHub 협업 기록*으로 판단한다. 경로 검색·API·웹의 실행 완료를 주장하지 않는다.
