@@ -32,8 +32,9 @@
 ## 실행 (planning)
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -t . -v
-PYTHONPATH=src python3 -m busstrike.planning --input tests/fixtures/planning/synthetic.json
+pip install -e .
+python3 -m unittest discover -s tests -t . -v
+python3 -m busstrike.planning --input tests/fixtures/planning/synthetic.json
 ```
 
 협업 규칙은 [AGENTS.md](AGENTS.md)와 [CONTRIBUTING.md](CONTRIBUTING.md)를 봅니다.

@@ -8,12 +8,13 @@
 저장소 루트에서 실행한다.
 
 ```bash
-PYTHONPATH=src python3 -m unittest discover -s tests -t . -v
-PYTHONPATH=src python3 -m busstrike.planning --input tests/fixtures/planning/synthetic.json
-PYTHONPATH=src python3 -m busstrike.planning --input tests/fixtures/planning/synthetic.json --max-evaluations 100
+pip install -e .
+python3 -m unittest discover -s tests -t . -v
+python3 -m busstrike.planning --input tests/fixtures/planning/synthetic.json
+python3 -m busstrike.planning --input tests/fixtures/planning/synthetic.json --max-evaluations 100
 ```
 
-`PYTHONPATH=src`는 `busstrike` 패키지를 import 경로에 올린다. `-t .`는 저장소 루트를 테스트 탐색 기준으로 삼는다.
+`pip install -e .` 한 번이면 `PYTHONPATH` 없이 `busstrike`를 import한다. `-t .`는 저장소 루트를 테스트 탐색 기준으로 삼는다.
 CLI는 JSON을 stdout에 출력하고 오류는 stderr에 오류 코드와 함께 출력한다(exit 2).
 전체 전수 조합이 10,000개를 넘는 입력은 이 소규모 비교 CLI에서 거절한다.
 라이브러리의 search()는 전수 비교 없이 독립 사용 가능하다.
@@ -115,4 +116,4 @@ module-owned routes에 vehicle_count를 추가하며 vehicle_duties/trips는 빈
 
 ## 다른 파트에서 가져오기
 
-저장소 루트에서 `PYTHONPATH=src python3 ...`로 실행하면 `from busstrike.planning import ...`로 가져온다.
+저장소 루트에서 `pip install -e .` 후 `from busstrike.planning import ...`로 가져온다.
