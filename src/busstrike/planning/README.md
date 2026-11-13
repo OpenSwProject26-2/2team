@@ -5,16 +5,16 @@
 
 ## 실행
 
-저장소 루트에서 `cd C.Part`로 이동한 뒤 실행한다.
+저장소 루트에서 실행한다.
 
 ```bash
-cd C.Part
+pip install -e .
 python3 -m unittest discover -s tests -t . -v
-python3 -m opt --input opt/examples/synthetic.json
-python3 -m opt --input opt/examples/synthetic.json --max-evaluations 100
+python3 -m busstrike.planning --input tests/fixtures/planning/synthetic.json
+python3 -m busstrike.planning --input tests/fixtures/planning/synthetic.json --max-evaluations 100
 ```
 
-`-t .`는 tests/opt를 실제 opt 패키지와 구분하기 위해 필요하다.
+`pip install -e .` 한 번이면 `PYTHONPATH` 없이 `busstrike`를 import한다. `-t .`는 저장소 루트를 테스트 탐색 기준으로 삼는다.
 CLI는 JSON을 stdout에 출력하고 오류는 stderr에 오류 코드와 함께 출력한다(exit 2).
 전체 전수 조합이 10,000개를 넘는 입력은 이 소규모 비교 CLI에서 거절한다.
 라이브러리의 search()는 전수 비교 없이 독립 사용 가능하다.
@@ -97,6 +97,14 @@ module-owned routes에 vehicle_count를 추가하며 vehicle_duties/trips는 빈
 전수 배분은 10개(차량 미사용 포함), 최고 충족 인원 7명, 탐색 충족 인원 격차 0명.
 이는 탐색이 모든 실제 입력에서 최선이거나 기준안보다 우수하다는 증거가 아니다.
 
+## 다른 파트와의 연결
+
+| 파트 | 주고받는 내용 |
+| --- | --- |
+| A · 데이터 | 교통망, 기존 노선, 시간대별 이동 수요를 받습니다. |
+| B · 시뮬레이션 | 선택한 노선과 차량 배분을 전달하고, 상세 평가 결과를 받습니다. |
+| D · 서비스 | 운행안과 비교 결과가 운영자 화면에 표시되도록 연계합니다. |
+
 ## 다음 통합 작업
 
 1. A/B가 이 내부 입력 및 draft 출력 계약을 리뷰한다.
@@ -108,4 +116,4 @@ module-owned routes에 vehicle_count를 추가하며 vehicle_duties/trips는 빈
 
 ## 다른 파트에서 가져오기
 
-저장소 루트에서 `PYTHONPATH=C.Part python3 ...`로 실행하면 기존 `from opt...` import를 사용한다. 패키지 이름은 opt로 유지하며 C.Part를 Python 패키지 이름으로 사용하지 않는다.
+저장소 루트에서 `pip install -e .` 후 `from busstrike.planning import ...`로 가져온다.
