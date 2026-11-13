@@ -17,3 +17,7 @@
 - `main`에 직접 push, `push --force`, 이미 올린 이력 수정
 - 원시 교통카드 자료(TAIMS, `VW_KSCC_*.csv`), 카드 식별자(`TRCR_ID`), 인증키를 코드·로그·테스트·커밋에 넣기
 - 데이터 파일(`raw/`, `data/processed/`, `*.zip`) 커밋
+
+## 구조
+
+코드는 `src/busstrike/<모듈>/`, 테스트는 `tests/<모듈>/`에 둡니다. 모듈은 M00 계약의 M01–M10을 따릅니다.

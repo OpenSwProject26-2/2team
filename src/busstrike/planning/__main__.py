@@ -1,4 +1,4 @@
-"""python3 -m opt --input opt/examples/synthetic.json"""
+"""python3 -m busstrike.planning --input tests/fixtures/planning/synthetic.json"""
 
 import argparse
 from dataclasses import asdict
