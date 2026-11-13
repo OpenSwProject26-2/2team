@@ -8,7 +8,7 @@
 - 커밋·PR 제목: `<type>(<scope>): <한국어 제목> (#이슈번호)`
   - type: `feat` `fix` `test` `docs` `refactor` `perf` `build` `ci` `chore` `revert`
   - 이슈가 없으면 `(#번호)` 생략
-- PR 본문: `## 무엇을` / `## 확인` / `## 연결` 세 칸
+- PR 본문: `## 변경 내용` / `## 테스트` / `## 관련 이슈` 세 칸
 
 자세한 예시는 [CONTRIBUTING.md](CONTRIBUTING.md)를 봅니다.
 
