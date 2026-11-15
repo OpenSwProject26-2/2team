@@ -241,6 +241,7 @@ unserved 승객마다 배타적 우선순위로 정한다. 근거: `evaluation/m
 | I6 | 운행편 하나 = 출발 거점에서 출발해 거점으로 돌아오는 영업 구간 하나 | 영업 leg가 두 개 이상인 노선(두 역 연결형)은 V16 "같은 출발 거점" 때문에 이 형식으로 쓸 수 없다. 엔진은 `OUT_OF_SCOPE`로 막는다(사용자 결정, §7 D2) | `evaluation/guards.py:153-158`, spec:65 |
 | I7 | `spec.capacity` | 시나리오 차량 정원이 모두 같을 때만 쓴다. 섞이면 생략한다(R11 미검증) | 검증기는 값 하나와만 비교한다(`evaluation/guards.py:127-134`) |
 | I8 | 생성기 base 읽기 (B) | 엔진도 (B)로 구현한다 | 검증기 README가 명세 보완을 요청한 상태다(`evaluation/README.md:122-125`) |
+| I10 | `independently_verified` 부여 | M07 보고서 `pass`(실패 0)를 C `Assessment.independently_verified`로 쓴다. `fully_verified`는 V16 때문에 늘 false라 쓰지 않는다 | 검증기 CAVEATS가 "부여는 M07 절차가 정한다(명세 §7)"라고 적었으나(`evaluation/report.py:21-23`) 명세 §7에 그 절차가 없다 |
 | I9 | 승객 OD | 정류장 1개 → 정류장 1개. 정류장 집합 OD는 표현하지 못한다(사용자 결정으로 단일 정류장만 받음, §7 D1) | §2.2, `evaluation/recompute.py:150-153` |
 
 ## 7. 새 엔진과의 의미 차이
@@ -262,7 +263,7 @@ unserved 승객마다 배타적 우선순위로 정한다. 근거: `evaluation/m
 | D11 | 사건 로그 | `seq`·`t`·`type`(arrive·board·alight·denied·depart·cancel·no_service·abandon·left_waiting), 공차 정차 포함 | §2.4 | M07 형식으로 바꿨다. 공차 leg는 방문이 아니어서 로그에 없다(`return_s`·`distance_m`에만 반영) | — |
 | D12 | 지표 | `passengers.*`, `wait_s`, `in_vehicle_s`, `vehicles[]`, `trips[]`, `routes[]` … | M1·M2·M3·M5·M6·G.R12(§2.6) | M07 키로 바꿨다. 검증기가 보지 않는 보조 키는 `physical_at_drain`·`drain_s`·`label`·`scope_mode`만 둔다. 재차율·노선별 표는 뺐다(필요하면 사건 로그에서 다시 계산) | — |
 | D13 | 실행 기록 | `run.json`(M00 SimulationResult + 해시) | `measurement.json` | `run.json`을 없애고 그 필드(`run_id`·`plan_id`·`input_checksum`·`config_hash` …)를 `measurement.json`에 넣었다. `env`는 커밋·`dirty`만(§5) | 결정론 유지(같은 체크아웃에서 같은 값) |
-| D14 | 검증기 | 새 엔진 전용 V01–V15(`validator.py`) | M07 V1–V17 | 새 엔진 전용 검증기를 지우고 M07 검증기로 일원화했다. C `Assessment.independently_verified` = M07 `pass`(simulator.md §7.5) | — |
+| D14 | 검증기 | 새 엔진 전용 V01–V15(`validator.py`) | M07 V1–V17 | 새 엔진 전용 검증기를 지우고 M07 검증기로 일원화했다. C `Assessment.independently_verified` = M07 `pass`(사용자 결정 A, simulator.md §7.5). `pass`는 `fully_verified`가 아니다(V16 미검증). 부여 절차는 명세 §7에 없다(I10) | — |
 | D15 | M5 지역 | 없음 | `stop_area` | scenario에 선택 필드 `stop_area`를 추가했다. 없으면 `unknown` | — |
 | D16 | R12·M3 임계 | 없음 | `policy.max_headway_s`·`wait_threshold_s` | scenario policy에 선택 필드로 추가했다. 없으면 V15·V12가 `not_verified`(실패는 아님) | — |
 
