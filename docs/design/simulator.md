@@ -10,7 +10,7 @@
 
 ## 문서 상태
 
-- 상태: **설계 초안 · 팀 검토 대기 · 2단계(핵심 엔진, `feat/sim-core`)·3단계(독립 검증기, `feat/sim-validator`)·4단계(셔틀 GTFS, `feat/sim-gtfs-export`) 구현.** 5단계(C 연결)는 미착수. 이 문서의 값은 승인된 결정이 아니다(AGENTS.md §1). D02·D03·D06·D07은 §11의 권장값을 "가정"으로 쓰고, 승인 전에는 코드 상수로 박지 않고 Scenario 입력으로만 받는다.
+- 상태: **설계 초안 · 팀 검토 대기 · 2단계(핵심 엔진, `feat/sim-core`)·3단계(독립 검증기, `feat/sim-validator`)·4단계(셔틀 GTFS, `feat/sim-gtfs-export`)·5단계(C 연결, `feat/sim-planning-bridge`) 구현.** 이 문서의 값은 승인된 결정이 아니다(AGENTS.md §1). D02·D03·D06·D07은 §11의 권장값을 "가정"으로 쓰고, 승인 전에는 코드 상수로 박지 않고 Scenario 입력으로만 받는다.
 - 요구사항 원문: [simulator-brief.md](simulator-brief.md) · 진행 기록: [simulator-progress.md](simulator-progress.md)
 - 관련 모듈: M05(시뮬레이터), M07(독립 검증), M04 연결부, M00 v0.1 계약. 공용 계약(`docs/contracts`, `src/busstrike/contracts`)은 바꾸지 않는다. 아래 스키마는 모두 M00이 "module-owned"로 남긴 영역의 M05 소유 형식이다.
 - 시뮬레이션 결과는 실제 운행 성능·승인 근거가 아니다.
@@ -846,6 +846,38 @@ route_clusters(routes, ctx) -> [[route_id]]
 - 근거: 이벤트당 수 µs 수준의 `heapq`+dict 연산. 참고로 기존 SimPy 기반 Draft PR이 합성 90만 명을 41–46초로 측정했다(독립 검증 전 잠정값, 5만 명 환산 약 2.5초).
 - 2단계에서 합성 5만 명 입력을 테스트 안에서 생성해 측정하고 결과를 진행 기록에 남긴다. 목표를 못 맞추면 §4.2의 하위 줄 최적화를 먼저 적용한다.
 - 2단계 실측(`tests/sim/test_determinism.py::SpeedMeasurementTests`, 합성 5만 명·30노선·62대·영업+공차 trip 810개·이벤트 약 9.8만 줄, Python 3.14, WSL2 단일 프로세스): 시간표+준비 0.08초, 엔진 0.31초, 로그 직렬화+지표 0.50초, 파일 읽기·쓰기를 포함한 `run()` 1.41초. 목표 안이라 하위 줄 최적화는 넣지 않았다. 이벤트 수가 추정(15만–25만)보다 적은 것은 합성 입력이 과부하(대당 수요가 많아 대기 한도 초과가 많음)이기 때문이다.
+- 5단계 실측(`tests/sim/test_planning_bridge.py::GuroScaleTimingTests`, C 형식 합성 입력 `planning_cases.guro_scale()`: 노선 30·차량 60(정원 45)·승객 47,709명·06:00–10:30, 기준안 균등 배분 20노선×3대, 이벤트 약 9.3만 줄, Python 3.14, WSL2 `/mnt/c`): 어댑터 0.13–0.16초, C `evaluate()` 0.5–0.6초, `run_plan`(입력 파일 쓰기 + `run()`) 1.8–2.7초, 검증기 3.0–7.2초(4회 측정, 파일 시스템 편차가 큼). **1회 전체(어댑터→시뮬→검증→지표) 약 5–10초**. 검증을 빼면 2–3초로 목표 2초 근처다(입력 파일 쓰기 포함). 곡선: 노선 30개 × n 0–15 시뮬만 12.2초(목표 1분 안). 같은 표에 C 근사를 함께 내는 `curve_report`는 130초이고 그중 약 117초가 C `evaluate()` 480회다.
+
+### 7.5 C 연결 어댑터(5단계 구현에서 정한 세부)
+
+`sim/adapters/planning_bridge.py`. C 코드(`busstrike.planning`)는 import만 하고 바꾸지 않는다. 어댑터는 타입 변환만 하고 규칙을 더하지 않는다.
+
+| C `Inputs` | M05 입력 | 비고 |
+| --- | --- | --- |
+| `policy.start_s/end_s` | `operating_window` | |
+| `policy.dwell_s`, `turnaround_s` | `dwell_base_s`, `turnaround_s` | 1인당 정차 0, `cycle_rest_s` 0(C에 없음) |
+| `policy.max_wait_s`, `max_travel_s` | `max_wait_s`, `max_journey_s` | |
+| `fleet[]` | `fleet.vehicles[]` | `seat_capacity = capacity`, 입석 0, `initial_stop_id = initial_stop`, `end_stop_id = return_stop`, 차급 `planning-uniform` |
+| `segments[]` | `travel_times.json` | `(origin, destination)`별 시간대 1개 `[[0, travel_s]]`. 같은 정류장쌍에 값이 다른 구간이 둘 이상이면 `INPUT_INVALID`(M05 구간 키가 정류장쌍이라 구분 불가) |
+| `routes[].outbound`, `return_segments` | 영업 leg, 공차 leg | §0.3 |
+| `demands[]`(정수 묶음) | `arrivals.jsonl` 1명씩 | ID `c{수요 순번:06d}-{k:05d}`(수요 순번 = `demand_id` 정렬 순). 같은 도착 시각에서 줄 순서가 C의 `(arrival_s, demand_id)`와 같다. 접두어 → `demand_id` 표는 `demand_index.json`. `kind`는 모두 `access`(C 수요에 구분 없음). 운영시간 밖 도착은 `INPUT_INVALID` |
+| — | `run_inputs.json` | `arrival_method = "precomputed"`, `seed = "none"`, `bin_length_s = 1`(실현기를 거치지 않았다는 기록값) |
+| `Plan` | `plan.json` | `Plan.to_service_plan()`(C의 배분 검사 포함)의 키를 그대로 두고 `routes`만 leg 형식으로 바꾼다. 0대 노선은 C처럼 빠진다 |
+
+- `EvaluationPort`(`evaluation_port`, `make_evaluation_port`): 실행 디렉터리 하나에 입력·출력·`validation.json`을 모두 둔다. `served = satisfied`, `total = generated`(C `total_demand`와 다르면 오류), `p90_wait_s = wait_s.p90`(탑승 승객 기준), `distance_m = fleet.total_m`, `independently_verified = verified`, `violations = failed_checks`. `PLAN_INFEASIBLE`은 `schedule_feasible=False`로 돌려주고 그 밖의 `SimError`는 던진다(C 규약: B 예외를 숨기지 않음).
+- `fleet_curve`: 포화(eligible 전원 충족) 뒤의 n은 실행하지 않고 인원만 이어 쓰며 `simulated=False`, 대기·거리는 `null`이다(설계의 "같은 값으로 채움"에서 거리를 복사하지 않도록 바꿈. 차량이 늘면 거리도 늘기 때문). `stop_when_saturated=False`면 모두 실행한다. `n=0`도 실행한다(전원 `no_service`).
+- `curve_report`: C `candidates()`가 받아들인 노선마다 `S_sim(n)`, `ΔS_sim`, 같은 단독 배분 `{r: n}`의 C `evaluate().served`(`S_est`), `β_r = Σ_{n≥1} S_sim / Σ_{n≥1} S_est`(분모 0이면 1), `overlap_ratio`, 클러스터를 낸다.
+- `compare_with_estimate` 반환은 `{rows, summary}`(설계의 `list[dict]`에서 요약을 붙임). `rank_est`는 C `Estimate.rank`, `rank_sim`은 C `rerank`와 같은 키 `(-충족, P90, 거리, 배분)`. 요약은 MAE·편향·최대 차이·스피어만(동률 평균 순위, 충족 인원 기준)·"근사 상위 3안에 시뮬 1위"·거리 불일치 수·미검증 수. **판정 기준은 두지 않는다**(§7.3의 4는 팀 결정).
+- `sim_mean_wait_s`는 탑승 승객 평균(`metrics.wait_s.mean`), C `mean_wait_s`는 충족 인원 가중 평균이다. `JOURNEY_EXCEEDED`가 0이면 둘의 대상이 같다.
+- 비교 대상 운행안(`comparison_plans`): 기준안 균등·비례, 탐색 상위 3, 조합 수 ≤ 200이면 차량 미사용 포함 전수 배분. 0대 노선을 뺀 배분이 같으면 처음 것만 둔다. 라벨은 만든 방법이고 운행안의 출처 필드는 읽지 않는다(§1.6, `test_fairness`의 AST 검사가 `sim/` 아래 전부에 적용된다).
+- CLI: `python -m busstrike.sim.adapters.planning_bridge --input C입력.json --out DIR [--n-max N] [--exhaustive-limit 200] [--no-validate] [--no-search]` → `curves.json`, `comparison.json`, `report.md`, `runs/<plan_id>/`. 입력 오류는 종료 코드 2.
+- 의존: `sim` 핵심 모듈은 `adapters`를 import하지 않는다. `adapters`는 `busstrike.planning`과 `busstrike.evaluation.validator`를 import한다(검증기는 여전히 `sim`을 import하지 않는다).
+
+5단계 측정에서 본 근사–시뮬 차이(합성 입력, 판정 아님)
+
+- C 합성 예제(`synthetic.json`, 승객 9명): 전수 배분 10개 모두 충족 인원·대기·거리가 같다(MAE 0). 정원 여유 조건(§7.3의 1) 테스트도 모든 배분에서 일치한다.
+- 구로 규모 합성(위 7.4): 운행안 5개에서 시뮬 충족이 근사보다 113–581명(0.7–2.7%) 적고, 평균 대기는 시뮬이 약 40% 짧다(근사 531–731초, 시뮬 313–463초). 거리는 모두 같고, 순위는 5개 안에서 같았다(스피어만 1.0). 노선 단독 곡선은 `β_r` 0.989–0.999, 점별 차이 −8.3%~+2.3%(최대 76명), 시뮬 한계효용이 음수인 점 38개/450개(위상 효과, §7.1).
+- 원인 추정: C는 수요를 **도착 시각 순으로 trip 전 구간 좌석을 미리 잡는다**. 시뮬은 **차가 지나가는 순서**(상류 정류장 먼저)로 태운다. 그래서 혼잡한 노선에서 하류 정류장 승객이 연달아 남겨지다 대기 한도에 걸린다. 균등 배분 실행에서 `FULL` 비율이 노선 위치를 따라 커졌다(차고 0.1% → 첫 정류장 8.7% → 다섯째 51% → 허브 48%). 탄 승객의 대기가 짧은 것은 오래 기다릴 승객이 포기로 빠지는 생존 편향으로 본다. 차이는 `FULL` 인원이 많은 안일수록 커졌다.
 
 ---
 
@@ -1277,12 +1309,22 @@ def export_gtfs(timetable: Timetable, service_date: str, out_dir: Path,
 
 # curve.py
 def route_clusters(routes: Sequence[RouteSpec], ctx: SimContext) -> list[list[str]]: ...
-def fleet_curve(route: RouteSpec, n_max: int, ctx: SimContext) -> list[CurvePoint]: ...
+def eligible_passengers(route: RouteSpec, ctx: SimContext) -> tuple[Passenger, ...]: ...
+def fleet_curve(route: RouteSpec, n_max: int, ctx: SimContext, *,
+                stop_when_saturated: bool = True) -> list[CurvePoint]: ...
+def marginal_gains(points: Sequence[CurvePoint]) -> list[int | None]: ...             # S(n) − S(n−1)
+def overlap_ratios(routes: Sequence[RouteSpec], ctx: SimContext) -> dict[str, float | None]: ...
 def cluster_eval(routes: Sequence[RouteSpec], allocation: Mapping[str, int], ctx: SimContext) -> CurvePoint: ...
 
 # adapters/planning_bridge.py
+def to_sim_inputs(inputs: Inputs) -> BridgeInputs: ...                             # 운행안과 무관한 입력
+def plan_dict(plan: Plan, inputs: Inputs) -> dict: ...                               # plan.json
+def run_plan(plan, inputs, out_dir, *, validate=True, bridge=None) -> BridgeRun: ...   # 파일 → run() → 검증기
 def evaluation_port(plan: "planning.models.Plan", inputs: "planning.models.Inputs") -> "planning.integration.Assessment": ...
-def compare_with_estimate(inputs, plans) -> list[dict]: ...
+def make_evaluation_port(work_dir: Path | None = None, *, validate: bool = True) -> EvaluationPort: ...
+def curve_report(inputs, *, n_max=None, stop_when_saturated=True, bridge=None) -> dict: ...
+def comparison_plans(inputs, *, exhaustive_limit=200, include_search=True) -> list[tuple[str, Plan]]: ...
+def compare_with_estimate(inputs, plans, *, work_dir=None, validate=True) -> dict: ...  # {rows, summary} (5단계에서 바꿈)
 
 # evaluation/validator.py
 def validate_run(run_dir: Path, *, scenario_path: Path | None = None, run_inputs_path: Path | None = None,
