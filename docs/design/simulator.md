@@ -4,13 +4,15 @@
 
 1. **2단계-a** `feat/sim-core`: `sim/models.py`·`io.py`·`traveltime.py` → `timetable.py`(§1). 테스트 T6·T7 시간표 표가 먼저 통과해야 한다.
 2. **2단계-b** 같은 브랜치: `arrivals.py`(§2) → `engine.py`(§3·§4) → `eventlog.py`·`metrics.py`·`run.py`(§6). 테스트 T1–T5, 결정론 테스트, 속도 측정.
-3. **3단계** `feat/sim-validator`: `evaluation/validator.py`(§8). `busstrike.sim`을 import하지 않고 입력 파일+로그만 읽는다. T1–T4 로그 통과 + 변조 로그 검출 테스트.
+3. **3단계** `feat/sim-validator`: `evaluation/validator.py`(§8). `busstrike.sim`을 import하지 않고 입력 파일+로그만 읽는다. T1–T4 로그 통과 + 변조 로그 검출 테스트. (6단계에서 M07 검증기로 대체하고 삭제)
 4. **4단계** `feat/sim-gtfs-export`: `sim/gtfs.py`(§6.4). `timetable.json` → routes·trips·stop_times·calendar.
 5. **5단계** `feat/sim-planning-bridge`: `sim/adapters/planning_bridge.py`(C `Plan`·`Inputs` → 시뮬 입력, `EvaluationPort` 구현), `sim/curve.py`(§7 S(n)), 근사–시뮬 비교 리포트.
+6. **6단계** `feat/sim-m07-output`: 출력·의미를 팀 공식 M07 검증기([m07-output-contract.md](m07-output-contract.md))에 맞추고 3단계 검증기를 없앤다.
 
 ## 문서 상태
 
-- 상태: **설계 초안 · 팀 검토 대기 · 2단계(핵심 엔진, `feat/sim-core`)·3단계(독립 검증기, `feat/sim-validator`)·4단계(셔틀 GTFS, `feat/sim-gtfs-export`)·5단계(C 연결, `feat/sim-planning-bridge`) 구현.** 이 문서의 값은 승인된 결정이 아니다(AGENTS.md §1). D02·D03·D06·D07은 §11의 권장값을 "가정"으로 쓰고, 승인 전에는 코드 상수로 박지 않고 Scenario 입력으로만 받는다.
+- 상태: **설계 초안 · 팀 검토 대기 · 2단계(핵심 엔진)·4단계(셔틀 GTFS)·5단계(C 연결)·6단계(M07 출력 형식 통일, `feat/sim-m07-output`) 구현.** 3단계 검증기(V01–V15)는 6단계에서 지우고 M07 검증기로 바꿨다.
+- **6단계 읽는 법**: 출력(§6)·검증(§8)·테스트(§9)는 새로 썼다. §0.3·§2·§3·§4의 6단계 이전 서술 가운데 M07에 맞춰 바뀐 곳에는 "6단계에서 바뀜" 표시를 달았다. 바뀐 항목 전체 표는 [m07-output-contract.md](m07-output-contract.md) §7(D1–D16)에 있다. 이 문서의 값은 승인된 결정이 아니다(AGENTS.md §1). D02·D03·D06·D07은 §11의 권장값을 "가정"으로 쓰고, 승인 전에는 코드 상수로 박지 않고 Scenario 입력으로만 받는다.
 - 요구사항 원문: [simulator-brief.md](simulator-brief.md) · 진행 기록: [simulator-progress.md](simulator-progress.md)
 - 관련 모듈: M05(시뮬레이터), M07(독립 검증), M04 연결부, M00 v0.1 계약. 공용 계약(`docs/contracts`, `src/busstrike/contracts`)은 바꾸지 않는다. 아래 스키마는 모두 M00이 "module-owned"로 남긴 영역의 M05 소유 형식이다.
 - 시뮬레이션 결과는 실제 운행 성능·승인 근거가 아니다.
@@ -44,9 +46,11 @@
 [실행 단계 — 운행안마다, 난수 없음]
  plan.json ──timetable.py──▶ timetable.json ──engine.py──▶ events.jsonl ──metrics.py──▶ metrics.json
                                    │                            │                         │
-                                   └──gtfs.py──▶ gtfs/          └────── validator.py(M07, 독립) ──▶ validation.json
-                                                                 run.json = SimulationResult + 해시
+                                   └──gtfs.py──▶ gtfs/          └── busstrike.evaluation.verify(M07, 독립) ──▶ verifier_report.json
+                                                                 measurement.json = 실행 기록 + 해시
 ```
+
+6단계: 준비 단계의 `arrivals.jsonl`은 `demand_bins.csv`(시간대별 정수 인원)로 바뀌었다. 실행 때 M07 생성기가 seed와 함께 승객을 만든다(§2). 실행 단계의 출력은 M07 폴더(`scenario/`·`run/`, §6)다.
 
 - 엔진은 `timetable.json`만 실행한다. 운행안의 출처(`source`)는 엔진·생성기·검증기 어디서도 읽지 않는다(공정성, §1.6).
 - 형식: 작은 구조 문서는 JSON(`sort_keys=True`), 행이 많은 것은 JSONL(키 순서 고정). 공통 직렬화 규칙은 `json.dumps(x, ensure_ascii=False, separators=(",", ":"))`, UTF-8, 줄 끝 `\n`(마지막 줄 포함). 해시는 파일 바이트의 SHA-256 hex. (C의 프로토타입과 같은 방식이며, 팀 전역 해시 채택을 주장하지 않는다.)
@@ -87,11 +91,16 @@
 | `allowed_transfers` | int | 엔진 | v1은 0만 허용, 아니면 `OUT_OF_SCOPE`(D06) |
 | `arrival_method` | string | 실현기 | v1은 `"systematic"`만(§2) |
 | `dwell_base_s` | int ≥ 0 | 생성기·엔진 | 정류장 기본 정차 |
-| `dwell_per_boarding_s` | int ≥ 0 | 엔진 | 승차 1인당 |
-| `dwell_per_alighting_s` | int ≥ 0 | 엔진 | 하차 1인당 |
+| `dwell_per_boarding_s` | int ≥ 0 | 엔진 | 승차 1인당. **6단계: 0만 받는다**(0이 아니면 `OUT_OF_SCOPE`, M07 고정 일정) |
+| `dwell_per_alighting_s` | int ≥ 0 | 엔진 | 하차 1인당. 위와 같음 |
 | `turnaround_s` | int ≥ 0 | 생성기·엔진 | 영업 leg 종점 회차 최소 시간 |
 | `cycle_rest_s` | int ≥ 0 | 생성기·엔진 | cycle 사이 anchor 휴식 최소 시간 |
 | `unknown_link` | string | 로더 | `"error"`만 허용. 없는 구간은 0초로 채우지 않는다 |
+| `drain_s` | int (선택, 6단계) | 엔진 | 관측 끝. 없으면 `W_e + max_journey_s`. 마지막 발생보다 이르면 `INPUT_INVALID` |
+| `max_headway_s` | int (선택, 6단계) | 지표 | R12 배차간격 상한(M07 G.R12). 없으면 R12를 싣지 않는다 |
+| `wait_threshold_s` | int (선택, 6단계) | 지표 | M3 대기 임계 |
+
+`scenario.json`의 선택 필드 `stop_area`(`{stop_id: 지역}`, 6단계)는 M07 M5 지역별 충족률에 쓴다.
 
 **`travel_times.json`** (`travel_time_realization_uri`가 가리키는 것)
 
@@ -105,7 +114,9 @@
 | `segments[].distance_m` | int ≥ 0 | 구간 거리 |
 | `segments[].profile` | `[[bin_start_s, travel_s], …]` | `bin_start_s` 오름차순, 첫 값 ≤ `valid_from_s`, `travel_s ≥ 1` |
 
-**`arrivals.jsonl`** (`arrival_realization_uri`) — 승객 1명당 1줄, `(arrival_s, passenger_id)` 오름차순
+**6단계에서 바뀜**: 아래 `arrivals.jsonl`·`run_inputs.json` 표는 6단계 이전 형식이다. 지금 엔진 입력은 M07 `demand_bins.csv`(계약 §2.2: `aggregate_id, origin, destination, bin_start_s, bin_width_s, passenger_count`)다. `run_inputs.json`은 `demand_bins_uri`, `arrival_meta = {method, generator: "uniform_bin_sha256_v1", passenger_count, sha256}`을 갖고, `checksum = sha256(canonical_json({"demand_bins", "seed", "travel_times", "scenario"}))`이다. 승객은 출발 정류장 1개 → 목적 정류장 1개다(계약 §7 D1).
+
+**`arrivals.jsonl`** (6단계 이전, `arrival_realization_uri`) — 승객 1명당 1줄, `(arrival_s, passenger_id)` 오름차순
 
 | 키(이 순서) | 형식 | 의미 |
 | --- | --- | --- |
@@ -305,6 +316,8 @@ normalize_plan(plan, scenario, tt) -> Timetable
 
 실현기는 시뮬레이터 실행 **전에** 한 번 돌아 `arrivals.jsonl`을 만든다. 운행안을 입력으로 받지 않으므로 모든 안이 같은 승객을 받는다. 엔진은 이 파일만 읽고 난수를 쓰지 않는다.
 
+> **6단계에서 바뀜**(계약 §7 D1·D4): 실현기(`realize_bins`)는 같은 체계적 반올림으로 시간대별 **인원**만 정해 `demand_bins.csv` 행을 만든다. 행 ID는 `od{OD 순번:06d}-t{bin_start_s:06d}`이다. 시간대 안의 **시각**과 승객 ID는 M07 생성기 `uniform_bin_sha256_v1`(SHA-256 결정 함수, 계약 §4.1)이 실행 때 seed로 만든다. 승객 ID는 `["행 ID",index]`다. 둘 다 운행안과 무관하고 난수 상태가 없다. OD는 정류장 1개 → 1개다. 입력 행은 `DemandFlow(kind, stop_id, station_stop_id, bin_start_s, flow)`이고, 역의 어느 정류장으로 붙일지는 상류(M03)가 운행안과 무관하게 정한다(가정 A25). 아래 §2.2의 `realize_od`는 인원 계산의 근거로 남는다. §2.3의 정류장 **집합**과 §2.4의 ID 규칙은 6단계 이전 설계다.
+
 ### 2.1 결정: 체계적 반올림(누적 유량 교차)
 
 OD 하나의 시간대별 유량을 누적해, 누적값이 `u, u+1, u+2, …`를 넘는 순간마다 승객 1명을 만든다. `u ∈ [0,1)`은 OD별로 seed에서 해시로 정한다.
@@ -381,6 +394,8 @@ realize_arrivals(rows, station_stops, policy, window, seed, bin_length_s) -> [Pa
 ---
 
 ## 3. 이벤트 모델
+
+> **6단계에서 바뀜**(계약 §7 D3·D8·D9·D11): 엔진은 **고정 일정 실행기**다. 차량은 `timetable.json` 예정 시각을 그대로 지킨다(정차 = `dwell_base_s` 고정, 1인당 정차 없음 → §3.3의 정차식·§3.4의 지연·`cancel`이 없다). 사건은 M07 종류(`vehicle_arrived`·`alighted`·`generated`·`boarded`·`departed`·`expired`)이고 처리 순서는 키 `(time_s, phase, stable_id)`다. 같은 초에는 모든 하차 → 승객 발생 → 승차(trip_id 순) → 출발 → 기한 만료 순서다. 방문 키·발생·기한을 정렬된 세 줄로 만들어 `heapq.merge`로 합친다. 아래 §3.1–§3.4는 6단계 이전 설계이며, 도착 스냅숏 승차(§3.3 첫 항목)와 구간 시간 조회(§3.5)는 그대로다.
 
 ### 3.1 이벤트 종류
 
@@ -563,6 +578,8 @@ board_fifo(t, v, trip, k) -> (boarders, left)
 
 ### 4.5 못 탄 원인
 
+> **6단계에서 바뀜**(계약 §7 D6·D9): 결과는 M07의 served·unserved·censored이고, unserved 사유는 `no_connection`(출발지 뒤에 목적지가 오는 운행편이 없음) · `service_end`(그런 운행편의 출발지 도착이 [발생, drain]에 없음) · `journey`·`wait`(결과를 정한 기한) 4가지다. 연결이 없는 승객도 줄에 섰다가 만료된다. 만차는 사유가 아니라 `refused` 횟수로 남는다. 여정 한도는 `t+J`에 미확정인 승객을 unserved(journey)로 정하는 기한이다(대기 중이어도 적용). 승차 자격에는 "여정 기한 전"이 더해진다. 아래 표는 6단계 이전 분류다.
+
 ```text
 static_cause(p) -> cause | None                 # 시간표의 영업 trip 패턴(정류장 순서열 집합)만으로 판정
     if 어떤 패턴도 p.origin 정류장을 마지막이 아닌 순번에 갖지 않음: return "NO_ROUTE_AT_STOP"
@@ -621,110 +638,47 @@ finalize_waiting():
 
 ## 6. 출력
 
-### 6.1 이벤트 로그 `events.jsonl`
-
-한 줄에 이벤트 하나. 키는 아래 표의 순서로 쓰고, **값이 없는 키는 생략**한다. 모든 값은 정수 또는 문자열이다.
-
-| 키(이 순서) | 형식 | 있는 이벤트 | 의미 |
-| --- | --- | --- | --- |
-| `seq` | int | 전부 | 0부터 1씩 증가 = 줄 번호 |
-| `t` | int | 전부 | 시각(초) |
-| `type` | string | 전부 | §3.1 |
-| `vehicle_id` | string | 차량·승하차·`denied`·`cancel` | |
-| `trip_id` | string | 위와 같음 | `cancel`은 취소된 cycle의 첫 trip |
-| `visit` | int | 위와 같음 | 차량별 정차 일련번호. `cancel`은 "다음에 받았을 번호" |
-| `stop_id` | string | `arrive` `depart` `alight` `board` `denied` | |
-| `stop_seq` | int | 위와 같음 | trip 안 정류장 순번 |
-| `passenger_id` | string | 승객 이벤트 전부 | |
-| `alighted` | int | `arrive` | 이 정차의 하차 수 |
-| `boarded` | int | `arrive` | 이 정차의 승차 수 |
-| `left_behind` | int | `arrive` | 만차로 남겨진 유효 승객 수 |
-| `load` | int | `arrive`(승하차 반영 후), `depart` | 차내 인원 |
-| `cause` | string | `cancel` `no_service` `abandon` `left_waiting` | §4.5, `cancel`은 `"LATE"` |
-
-정렬 키(로그 순서의 **정의**. 엔진의 처리 순서와 같지만, 구현은 마지막에 이 키로 정렬해 `seq`를 매긴다):
+> **6단계에서 바꿈.** 공식 출력은 팀 M07 검증기가 읽는 폴더 형식이다. 파일별 필드·의미·근거 줄은 [m07-output-contract.md](m07-output-contract.md)(이하 "계약")에 있고, 여기에는 엔진 쪽 결정만 적는다. 이전 형식(`seq`·`type` 로그, `run.json`, `passengers.*` 지표)은 없앴다. 차이 전체는 계약 §7.
 
 ```text
-key(e) = (t, phase, vehicle_id 또는 "", visit 또는 0, type_rank, order)
-  phase:      no_service=0 | 차량 묶음(arrive, alight, board, denied, depart, cancel)=1 | abandon=2 | left_waiting=3
-  type_rank:  arrive=0, alight=1, board=2, denied=3, depart=4, cancel=0
-  order:      alight → passenger_id
-              board, denied → (승객 arrival_s, passenger_id)   # 줄 선 순서
-              no_service, abandon, left_waiting → passenger_id
-              그 외 → 빈 값
+<out>/scenario/  network.json · demand_bins.csv · scenario_manifest.json
+<out>/run/       events.jsonl · passenger_outcomes.csv · metrics.json · measurement.json · realization.jsonl
+                 timetable.json   ← GTFS 내보내기용 보조 파일(검증기는 이름을 모르는 파일을 읽지 않는다, 계약 §1)
 ```
 
-- 공차 trip도 정류장마다 `arrive`/`depart`를 남긴다(구간 시간 검증용). 값은 `alighted=boarded=left_behind=load=0`.
-- 같은 `RunInputs`와 같은 `ServicePlan`이면 이 파일이 바이트 단위로 같다. 파일 해시를 `run.json`에 기록한다.
-- 버린 대안: CSV(이벤트마다 쓰는 열이 달라 빈 칸이 대부분), 모든 키를 null로 채운 JSONL(크기 약 2배), Parquet(외부 의존성).
+`python -m busstrike.sim run … --out <out>` 한 번이 이 폴더 전체를 쓴다. 검증은 `python -m busstrike.evaluation.verify <out>/run`이다(종료 코드 0 통과·1 실패·2 입력 오류).
 
-### 6.2 `run.json` (M00 `SimulationResult` + 추적 정보)
+### 6.1 `scenario/` — 운행편·수요
 
-| 필드 | 의미 |
-| --- | --- |
-| `run_id` | `"run-" + sha256(plan_sha256 + "|" + input_checksum + "|" + config_hash)[:20]` — 같은 실행은 같은 ID |
-| `plan_id`, `plan_revision`, `input_bundle_id` | M00 |
-| `metrics_uri`, `event_log_uri` | M00. 저장 위치는 호출자가 준 출력 디렉터리 기준 상대 경로 |
-| `config_hash` | 아래 |
-| `input_checksum`, `plan_sha256`, `timetable_sha256`, `event_log_sha256`, `metrics_sha256` | 추적용 해시 |
-| `timetable_origin` | `generated` / `provided` |
-| `sim_version` | 엔진 버전 문자열(2단계: `busstrike-sim/0.1.0`) |
-| `timetable_uri` | `timetable.json`(검증기 입력, 2단계에서 추가) |
+- `network.json`: 시간표의 cycle마다 M07 운행편 하나(계약 §2.1). `trip_id` = 영업 leg의 trip_id, `stops`·`arrivals` = 영업 leg 정류장과 예정 시각, `departures` = 도착 + `dwell_base_s`(마지막 정류장은 도착과 같다, 계약 I3), `return_s` = 뒤따르는 공차 leg의 마지막 예정 시각(공차가 없으면 마지막 도착, I1), `distance_m` = 영업 + 공차 구간 거리 합(I2), `capacity` = 좌석 + 입석. `route_of`는 trip → 노선, `stop_area`는 scenario 값 그대로이고, `spec`에는 운영창 `service_start_s`·`service_end_s`와 (정원이 하나일 때만) `capacity`가 들어간다(R11·R14, I7). trip은 `(vehicle_id, 첫 도착, trip_id)` 순서로 쓴다.
+- `demand_bins.csv`: 입력 `demand_bins.csv`의 바이트를 그대로 복사한다(해시가 `run_inputs.arrival_meta.sha256`과 같다).
+- `scenario_manifest.json`: 두 파일의 sha256, 행·승객·trip·방문·정류장 수, `scenario_id`·`plan_id`·`plan_revision`.
 
-**`config_hash`의 범위** = 엔진이 읽었지만 `RunInputs`·`ServicePlan`으로 식별되지 않는 것 전부:
+### 6.2 `run/` — 사건·결과·지표·기록
 
-```text
-config_hash = sha256(canonical_json({
-    "sim_version", "timetable_rule_version", "log_schema_version", "metrics_schema_version",
-    "policy": {dwell_base_s, dwell_per_boarding_s, dwell_per_alighting_s, turnaround_s, cycle_rest_s,
-               max_journey_s, allowed_transfers},
-    "operating_window": {start_s, end_s},
-    "fleet": [vehicle_id 순으로 Vehicle 전체 필드],
-}))
-```
-
-- 넣지 않는 것: 운행안 내용(`plan_sha256`), 승객·구간 시간(`input_checksum`), `max_wait_s`(승객 파일 안에 있음), 출력 경로, 실행 시각, 기계 정보.
-- 결과 하나는 `(plan_id, revision, plan_sha256) + (input_bundle_id, input_checksum) + config_hash`로 식별한다.
+- `events.jsonl`: M07 사건(계약 §2.4). 키 순서 `time_s, phase, stable_id, kind, passenger_id, vehicle_id, occupancy`. 값이 없으면 null로 쓰고, `separators=(",", ":")`, 줄 끝 `\n`이다. 줄 순서는 `(time_s, phase, stable_id)`이며, 같은 방문의 phase 0에서는 하차(승차 순)가 도착보다 먼저다. `drain_s` 이후 사건은 없다.
+- `passenger_outcomes.csv`: 승객마다 한 줄, `passenger_id` 문자열 순(계약 §2.5). 사유는 M2 사유이고, `vehicle_id`는 `physical=onboard`일 때만 쓴다(I4).
+- `realization.jsonl`: 생성기 메타 + 승객(aggregate_id·index 순, 계약 §2.8).
+- `metrics.json`: §6.3.
+- `measurement.json`: 계약 §2.7의 필드와, 예전 `run.json`이 맡던 추적 필드(`run_id`, `plan_id`, `plan_revision`, `input_bundle_id`, `input_checksum`, `plan_sha256`, `config_hash`, `timetable_sha256`, `timetable_origin`, `sim_version = "busstrike-sim/0.2.0"`)를 담는다. `run_id`·`config_hash` 정의는 이전과 같고, `config_hash`의 policy에 `max_wait_s`·`drain_s`·`max_headway_s`·`wait_threshold_s`를 더했다. `env`에는 엔진 저장소 커밋(`git rev-parse HEAD`)과 추적 파일 변경 여부(`dirty`)만 넣는다. M07 보고서가 이 값을 "엔진 커밋"으로 인용한다. 실행 시각·호스트·절대 경로는 넣지 않는다. 같은 체크아웃에서 두 번 실행하면 값이 같으므로 결정론이 유지된다.
+- 같은 `RunInputs`·`ServicePlan`이면 `<out>` 아래 모든 파일이 바이트 단위로 같다(§9.9).
 
 ### 6.3 지표 `metrics.json`
 
-지표는 엔진 안에서 세지 않고 **로그 + 입력에서 계산**한다(`metrics.py`). 검증기가 같은 값을 독립적으로 다시 계산할 수 있다(V13).
-
-정의
-- 대기 = `board.t − arrival_s`. 차내 = `alight.t − board.t`. 총 이동 = `alight.t − arrival_s`.
-- 수송(transported) = `alight`가 있는 승객. 충족(satisfied) = 수송 중 `총 이동 ≤ policy.max_journey_s`.
-- 백분위는 nearest-rank: 오름차순 N개 중 `ceil(p·N/100)`번째. 평균은 `round(x, 3)`, 비율은 `round(x, 6)`. 표본이 0이면 `null`(0으로 채우지 않는다).
+지표는 엔진 안에서 세지 않고 **사건 로그 + 입력(일정·승객)**에서 계산한다(`metrics.py`). 만차 거절 횟수만 엔진 결과에서 받는다(M07 로그에는 거절 사건이 없다). 키와 계산식은 계약 §2.6·§4.6–§4.8을 그대로 따르며, 검증기가 `==`로 비교하므로 실수도 같은 식으로 계산한다(`served / total`, `sum(waits) / len(waits)`).
 
 | 경로 | 내용 |
 | --- | --- |
-| `scope_mode` | `"single_bus_leg"` — 다른 scope와 같은 그래프에 섞지 않는다 |
-| `passengers.generated` / `.transported` / `.satisfied` | 인원 |
-| `passengers.abandoned` / `.no_service` / `.left_waiting` | 미수송 분류. 합이 `generated − transported` |
-| `passengers.transport_rate`, `.satisfaction_rate` | `/generated`. **충족률 = `satisfaction_rate`** |
-| `passengers.by_kind.{access,egress}` | 위 항목을 종류별로 |
-| `wait_s` | 탑승 승객: `count, mean, p50, p90, p95, max` |
-| `in_vehicle_s`, `journey_s` | 수송 승객: 같은 통계 |
-| `denied.boardings` | `left_behind` 합(남겨짐 연인원) |
-| `denied.passengers` | 한 번 이상 남겨진 승객 수 |
-| `unserved.by_cause` | cause별 인원(§4.5, `JOURNEY_EXCEEDED` 포함) |
-| `unserved.by_stop[]` | `{stop_id, cause, count}` — 승객의 `origin_stop_ids[0]` 기준, `(stop_id, cause)` 순 |
-| `vehicles[]` | `{vehicle_id, route_id, revenue_m, deadhead_m, first_s, last_s, span_s, revenue_s, deadhead_s, boardings, cycles_run, cycles_cancelled}` |
-| `fleet` | `vehicles_used, total_m, revenue_m, deadhead_m, total_span_s, boardings_per_vehicle`(=승차 합/사용 대수) |
-| `trips[]` | 영업 trip별 `{trip_id, route_id, vehicle_id, boardings, max_load, load_factor_seat, load_factor_total, start_delay_s, end_s}` |
-| `routes[]` | 노선별 `{route_id, vehicles, trips_run, boardings, satisfied, mean_wait_s, max_load_factor_total}` |
+| `M1` | `served`·`unserved`·`censored`·`total`·`rate`·`lower`·`upper` |
+| `M2` | `unserved_by_reason`(4사유), `refusal_events`, `passengers_refused_by_outcome` |
+| `M3` | `served`·`boarded` 대기 요약(`n, mean_s, p90_s, over_threshold_n, over_threshold_rate, threshold_s`), `not_boarded_unserved_by_reason`. `policy.wait_threshold_s`가 없으면 임계 칸은 null |
+| `M5` | `by_origin_area`, `min_served_rate`(`scenario.stop_area`, 없으면 `unknown`) |
+| `M6` | `vehicles[]`(운행편이 있는 차량), `empty_distance_m = null` |
+| `G.R12` | `policy.max_headway_s`가 있을 때만 싣는다 |
+| `physical_at_drain`, `drain_s`, `label`, `scope_mode`, `schema_version` | 검증기가 보지 않는 보조 값(`schema_version` 2) |
 
-- `revenue_s`·`deadhead_s`는 각 trip의 첫 `arrive`~마지막 `arrive` 시간의 합. `span_s = last_s − first_s`(대기 포함).
-- `load_factor_seat = max_load / seat_capacity`(1을 넘으면 입석), `load_factor_total = max_load / (seat+standing)`.
-- `start_delay_s = trip 첫 arrive.t − sched_s[0]`, `end_s = trip 마지막 arrive.t`. `cycles_cancelled`는 시간표에 있지만 실행되지 않은 cycle 수.
-- C의 `Assessment`로 옮길 때(5단계): `served = satisfied`, `total = generated`, `p90_wait_s = wait_s.p90`, `distance_m = fleet.total_m`.
-
-2단계 구현에서 정한 세부(검증기 V13이 같은 규칙으로 재계산해야 한다)
-- 최상위에 `schema_version`(1), `plan_id`, `plan_revision`을 둔다.
-- `unserved.by_cause`는 여섯 cause(`FULL`, `JOURNEY_EXCEEDED`, `NO_ROUTE_AT_STOP`, `NO_ROUTE_TO_DEST`, `SERVICE_ENDED`, `WAIT_EXCEEDED`)를 0까지 모두 싣는다. `by_stop`은 0이 아닌 칸만.
-- `vehicles[]`는 `timetable.routes[].vehicle_ids`에 배정된 차량 전부(`vehicle_id` 순). `first_s`·`last_s`는 그 차량의 `arrive`·`depart` 시각만 본다(`cancel` 제외). 한 번도 움직이지 않으면 `first_s`·`last_s`·`span_s`는 `null`. 거리는 실행된 정차마다 직전 정류장→그 정류장 구간의 `distance_m` 합. `cycles_run`은 trip이 하나라도 실행된 cycle 수.
-- `fleet.vehicles_used`는 이벤트가 있는 차량 수, `total_span_s`는 그 차량들의 `span_s` 합, `boardings_per_vehicle`은 `round(x, 3)`.
-- `trips[]`는 **실행된** 영업 trip만, `timetable.trips` 순서로 싣는다. `boardings`는 그 trip `arrive.boarded` 합, `max_load`는 `arrive.load` 최댓값.
-- `routes[]`는 `timetable.routes` 순서. `trips_run`은 실행된 영업 trip 수, `satisfied`·`mean_wait_s`는 그 노선 trip에서 탄 승객 기준. 값이 없으면 `null`.
+- 충족 인원 = `M1.served`(여정 기한 안에 목적지 하차). C `Assessment`로 옮길 때는 `served = M1.served`, `total = M1.total`, `p90_wait_s = M3.boarded.p90_s`, `distance_m = Σ M6.vehicles[].distance_m`이다(§7.5). drain 기본값에서는 모든 운행편이 완료되므로 이 합이 전체 운행거리와 같다.
+- 이전 지표의 재차율·노선별·trip별 표는 뺐다. 필요하면 사건 로그(`occupancy`)에서 다시 계산할 수 있다.
 
 ### 6.4 셔틀 GTFS
 
@@ -860,18 +814,18 @@ route_clusters(routes, ctx) -> [[route_id]]
 | `fleet[]` | `fleet.vehicles[]` | `seat_capacity = capacity`, 입석 0, `initial_stop_id = initial_stop`, `end_stop_id = return_stop`, 차급 `planning-uniform` |
 | `segments[]` | `travel_times.json` | `(origin, destination)`별 시간대 1개 `[[0, travel_s]]`. 같은 정류장쌍에 값이 다른 구간이 둘 이상이면 `INPUT_INVALID`(M05 구간 키가 정류장쌍이라 구분 불가) |
 | `routes[].outbound`, `return_segments` | 영업 leg, 공차 leg | §0.3 |
-| `demands[]`(정수 묶음) | `arrivals.jsonl` 1명씩 | ID `c{수요 순번:06d}-{k:05d}`(수요 순번 = `demand_id` 정렬 순). 같은 도착 시각에서 줄 순서가 C의 `(arrival_s, demand_id)`와 같다. 접두어 → `demand_id` 표는 `demand_index.json`. `kind`는 모두 `access`(C 수요에 구분 없음). 운영시간 밖 도착은 `INPUT_INVALID` |
-| — | `run_inputs.json` | `arrival_method = "precomputed"`, `seed = "none"`, `bin_length_s = 1`(실현기를 거치지 않았다는 기록값) |
+| `demands[]`(정수 묶음) | `demand_bins.csv` 행(6단계) | 행 ID `c{수요 순번:06d}`(수요 순번 = `demand_id` 정렬 순), `bin_start_s = arrival_s`, 폭 1초, 인원 그대로. 승객 ID는 `["c000001",k]`이고 폭 1이라 발생 시각 = `arrival_s`다. 같은 도착 시각에서 줄 순서가 C의 `(arrival_s, demand_id)`와 같다. 행 ID → `demand_id` 표는 `demand_index.json`. 운영시간 밖 도착은 `INPUT_INVALID` |
+| — | `run_inputs.json` | `arrival_meta.method = "precomputed"`, `seed = "none"`(폭 1초라 seed는 결과에 영향이 없다) |
 | `Plan` | `plan.json` | `Plan.to_service_plan()`(C의 배분 검사 포함)의 키를 그대로 두고 `routes`만 leg 형식으로 바꾼다. 0대 노선은 C처럼 빠진다 |
 
-- `EvaluationPort`(`evaluation_port`, `make_evaluation_port`): 실행 디렉터리 하나에 입력·출력·`validation.json`을 모두 둔다. `served = satisfied`, `total = generated`(C `total_demand`와 다르면 오류), `p90_wait_s = wait_s.p90`(탑승 승객 기준), `distance_m = fleet.total_m`, `independently_verified = verified`, `violations = failed_checks`. `PLAN_INFEASIBLE`은 `schedule_feasible=False`로 돌려주고 그 밖의 `SimError`는 던진다(C 규약: B 예외를 숨기지 않음).
-- `fleet_curve`: 포화(eligible 전원 충족) 뒤의 n은 실행하지 않고 인원만 이어 쓰며 `simulated=False`, 대기·거리는 `null`이다(설계의 "같은 값으로 채움"에서 거리를 복사하지 않도록 바꿈. 차량이 늘면 거리도 늘기 때문). `stop_when_saturated=False`면 모두 실행한다. `n=0`도 실행한다(전원 `no_service`).
+- `EvaluationPort`(`evaluation_port`, `make_evaluation_port`): 실행 디렉터리 하나에 `inputs/`(시뮬 입력 + `plan.json`) · `scenario/` · `run/`(M07 폴더 + `verifier_report.json`)을 둔다(6단계). `served = M1.served`, `total = M1.total`(C `total_demand`와 다르면 오류), `p90_wait_s = M3.boarded.p90_s`(탑승 승객 기준), `distance_m = Σ M6.vehicles[].distance_m`, `independently_verified` = M07 보고서 `pass`(실패 검사 0. `fully_verified`가 아니다, V16은 늘 미검증), `violations` = M07 `failed_checks`. `PLAN_INFEASIBLE`은 `schedule_feasible=False`로 돌려주고 그 밖의 `SimError`는 던진다(C 규약: B 예외를 숨기지 않음).
+- `fleet_curve`: 포화(eligible 전원 충족) 뒤의 n은 실행하지 않고 인원만 이어 쓰며 `simulated=False`, 대기·거리는 `null`이다(설계의 "같은 값으로 채움"에서 거리를 복사하지 않도록 바꿈. 차량이 늘면 거리도 늘기 때문). `stop_when_saturated=False`면 모두 실행한다. `n=0`도 실행한다(운행편이 없어 전원 unserved `no_connection`).
 - `curve_report`: C `candidates()`가 받아들인 노선마다 `S_sim(n)`, `ΔS_sim`, 같은 단독 배분 `{r: n}`의 C `evaluate().served`(`S_est`), `β_r = Σ_{n≥1} S_sim / Σ_{n≥1} S_est`(분모 0이면 1), `overlap_ratio`, 클러스터를 낸다.
 - `compare_with_estimate` 반환은 `{rows, summary}`(설계의 `list[dict]`에서 요약을 붙임). `rank_est`는 C `Estimate.rank`, `rank_sim`은 C `rerank`와 같은 키 `(-충족, P90, 거리, 배분)`. 요약은 MAE·편향·최대 차이·스피어만(동률 평균 순위, 충족 인원 기준)·"근사 상위 3안에 시뮬 1위"·거리 불일치 수·미검증 수. **판정 기준은 두지 않는다**(§7.3의 4는 팀 결정).
-- `sim_mean_wait_s`는 탑승 승객 평균(`metrics.wait_s.mean`), C `mean_wait_s`는 충족 인원 가중 평균이다. `JOURNEY_EXCEEDED`가 0이면 둘의 대상이 같다.
+- `sim_mean_wait_s`는 탑승 승객 평균(`M3.boarded.mean_s`, 소수 셋째 자리 반올림), C `mean_wait_s`는 충족 인원 가중 평균이다. 탑승 후 여정 기한을 넘긴 승객이 0이면 둘의 대상이 같다. 비교표의 미충족 칸은 M07 사유(`sim_unserved_by_reason`), 만차 칸은 거절 경험 승객 수(`sim_refused_passengers`)다.
 - 비교 대상 운행안(`comparison_plans`): 기준안 균등·비례, 탐색 상위 3, 조합 수 ≤ 200이면 차량 미사용 포함 전수 배분. 0대 노선을 뺀 배분이 같으면 처음 것만 둔다. 라벨은 만든 방법이고 운행안의 출처 필드는 읽지 않는다(§1.6, `test_fairness`의 AST 검사가 `sim/` 아래 전부에 적용된다).
 - CLI: `python -m busstrike.sim.adapters.planning_bridge --input C입력.json --out DIR [--n-max N] [--exhaustive-limit 200] [--no-validate] [--no-search]` → `curves.json`, `comparison.json`, `report.md`, `runs/<plan_id>/`. 입력 오류는 종료 코드 2.
-- 의존: `sim` 핵심 모듈은 `adapters`를 import하지 않는다. `adapters`는 `busstrike.planning`과 `busstrike.evaluation.validator`를 import한다(검증기는 여전히 `sim`을 import하지 않는다).
+- 의존: `sim` 핵심 모듈은 `adapters`를 import하지 않는다. `adapters`는 `busstrike.planning`과 M07 검증기 공개 함수 `busstrike.evaluation.verify.verify`를 import한다(검증기는 여전히 `sim`을 import하지 않는다).
 
 5단계 측정에서 본 근사–시뮬 차이(합성 입력, 판정 아님)
 
@@ -883,343 +837,229 @@ route_clusters(routes, ctx) -> [[route_id]]
 
 ## 8. 독립 검증기
 
+> **6단계에서 바꿈.** 3단계의 새 엔진 전용 검증기(V01–V15, `evaluation/validator.py`)는 지웠다. 독립 검증은 팀 공식 M07 검증기(`src/busstrike/evaluation/`, giho999 작성, V1–V17) 하나로 한다. 엔진은 그 검증기가 읽는 형식([m07-output-contract.md](m07-output-contract.md))으로 출력한다.
+
 ### 8.1 원칙
 
-- 위치 `src/busstrike/evaluation/validator.py`. `busstrike.sim`을 import하지 않는다(테스트가 AST로 검사). 파일 파서·구간 시간 조회·정차 계산을 **이 문서를 보고 따로** 구현한다.
-- 입력: `scenario.json`, `run_inputs.json`, `arrivals.jsonl`, `travel_times.json`, `plan.json`, `timetable.json`, `events.jsonl`, `metrics.json`, `run.json`.
-- `timetable.json`은 엔진의 입력이므로 검증기도 입력으로 받는다. 대신 시간표 자체를 `plan.json`·fleet·정책에 비춰 검사한다(V14). 생성 규칙(P 계산)을 다시 구현하지는 않는다.
-- 로그에서 재구성하는 것: 차량별 정차 순서·차내 인원, 승객별 결과, 정류장별 대기 집합.
+- 검증기는 `busstrike.sim`을 import하지 않는다(검증기 쪽 `tests/evaluation/test_import_independence.py`가 검사). 엔진도 검증기 코드를 import하거나 복사하지 않는다. 생성기 `uniform_bin_sha256_v1`은 계약 §4.1의 글로 따로 구현했고, 같은 값이 나오는지는 테스트(`tests/sim/test_arrivals.py`)에서만 대조한다.
+- 검증기 코드와 `tests/evaluation/`은 고치지 않는다. 검증기가 틀렸거나 모호해 보이면 재현 사례와 함께 보고한다.
+- 실행: `python -m busstrike.evaluation.verify <out>/run [--out 보고서]`, 공개 함수 `busstrike.evaluation.verify.verify(run_dir)`. 보고서 `pass`는 "실패 검사 0"이다. V16이 늘 `not_verified`이므로 `fully_verified`는 항상 false다. 승객이 10,000명을 넘으면 재계산 oracle 검사(V6·V7·V9–V14)가 `not_run`이 되는데, 이것은 정상이다.
 
-### 8.2 불변식
+### 8.2 엔진이 M07 검사에 맞추는 방법
 
-| ID | 이름 | 검사 |
-| --- | --- | --- |
-| V01 | 로그 형식 | 알려진 type, type별 필수 키, `seq`가 0부터 연속, §6.1 정렬 키가 비감소 |
-| V02 | 인원 보존 | 입력 승객마다 최종 결과가 정확히 1개(`alight` / `abandon` / `no_service` / `left_waiting`). 모르는 `passenger_id` 없음. `board` 수 = `alight` 수. `발생 = 수송 + 포기 + 종료 시 대기` |
-| V03 | 정원 | `board`/`alight`로 재구성한 차내 인원이 항상 `0 ≤ load ≤ seat+standing`. `arrive`·`depart`의 `load`, `alighted`, `boarded`가 재구성값과 같음. trip 종료 시 0 |
-| V04 | 차량 일정 | 차량별 `visit`가 0부터 연속. 정차마다 `arrive` 뒤 `depart`(trip 마지막 정류장 제외). 정차 순서가 `timetable.json`의 duty·정류장 순서와 일치(취소된 cycle 이후는 없어야 함). 한 차량이 두 trip에 동시에 있지 않음 |
-| V05 | 시간 단조 | 차량별·승객별 이벤트 시각 비감소. `arrive.t ≤ depart.t ≤ 다음 arrive.t` |
-| V06 | 승차 전 도착 | `board.t ≥ arrival_s`, `board.t ≤ arrival_s + max_wait_s`, `stop_id ∈ origin_stop_ids`, 같은 `(vehicle_id, visit)`의 `arrive`와 시각·정류장 일치, 영업 trip, 마지막 정류장 아님. 승객당 `board` 최대 1회 |
-| V07 | 하차는 승차 뒤 | 같은 차량·같은 trip, `stop_seq(alight) > stop_seq(board)`, `stop_id ∈ dest_stop_ids`, 그 사이에 허용 목적지를 지나치지 않음(가장 이른 허용 정류장), `arrive`와 시각 일치 |
-| V08 | 구간 시간 | 연속 정차에서 `다음 arrive.t − depart.t == travel_times[(a,b)]`의 `depart.t` 시간대 값 |
-| V09 | 정차·회차 | `depart.t − arrive.t ==` §3.3의 정차식. trip 사이: `다음 trip 첫 arrive.t == max(sched_s, 앞 trip 종점 arrive.t + 하차 정차 + turnaround(영업 뒤) + cycle_rest(새 cycle))`. `cancel`이 있으면 §3.4의 취소 조건이 실제로 성립하고, 없으면 성립하지 않음 |
-| V10 | 운영시간 | 차량 이벤트(`cancel` 제외) 시각이 모두 `[max(W_s, available_start_s), min(W_e, available_end_s)]` 안 |
-| V11 | 탑승 규칙 | 정차마다 대기 집합을 재구성해: ① 남겨진 유효 승객이 있으면 그 차는 만차로 떠났다 ② 탄 승객보다 줄 앞에 있던 유효 승객이 남겨지지 않았다 ③ `left_behind`가 재구성값과 같다 ④ 승객의 첫 남겨짐에 `denied`가 있고 그 외에는 없다 |
-| V12 | 미수송 처리 | `abandon.t == arrival_s + max_wait_s ≤ W_e`. `left_waiting.t == W_e < arrival_s + max_wait_s`. `no_service.t == arrival_s`. cause가 §4.5 규칙과 일치(`FULL` ⇔ 남겨진 적 있음, `NO_ROUTE_*` ⇔ 시간표 패턴으로 정적 판정) |
-| V13 | 지표 재계산 | `metrics.json`의 인원·비율·대기/차내/총 이동 통계·차량 거리·trip 재차율이 로그에서 다시 계산한 값과 같음 |
-| V14 | 시간표 | `plan.json`의 노선·대수와 일치(노선별 차량 수, leg 정류장열). 차량이 fleet에 있고 노선당 중복 없음. 예정 시각이 차량 유효 창 안, trip끼리 겹치지 않고 이어짐. `origin=="generated"`면 `cycle_index=0` trip의 anchor 예정 시각이 `start + floor(k·period_s/n)`(k = 노선 안 차량 순번)이고, cycle m의 anchor 예정 시각이 `start + floor(k·period_s/n) + m·period_s` 이상(3단계에서 고침, §8.3 아래) |
-| V15 | 식별·해시 | `run.json`의 `plan_id`·`revision`·`input_bundle_id`가 입력과 같고, 기록된 SHA-256이 실제 파일과 같음. `run_inputs.checksum` 재계산 일치 |
+| M07 검사 | 엔진 쪽 |
+| --- | --- |
+| V1 발생 재현 | `demand_bins.csv` + seed → `arrivals.generate`. `realization.jsonl`·checksum을 같이 쓴다 |
+| V2 사건 순서 | 사건을 `(time_s, phase, stable_id)` 순서로 만든다(정렬 단계가 없다) |
+| V3 일정 일치 | 고정 일정 실행. 방문마다 `vehicle_arrived`·`departed`를 일정 시각에 쓴다(drain 안) |
+| V4 승객 생애 | 승객당 `generated` 1건, 승차·하차는 각각 최대 1건, 하차는 같은 trip의 첫 목적지 방문 |
+| V5 정원 | `occupancy` = 사건 직후 그 차량의 인원(차내 만료 사건 포함) |
+| V6 FIFO·비유휴 | 정류장별 대기열을 `(time_s, passenger_id)` 순서로 두고, 자격 없는 승객은 건너뛰고 만석까지 태운다 |
+| V7 기한 | `t+J`(journey)·`t+W`(wait) 만료를 사건 키 순서로 처리하고, 결과를 확정한 첫 만료만 쓴다 |
+| V8 결과 | `passenger_outcomes`를 사건에서 다시 정한다 |
+| V9–V14 지표 | §6.3(계약의 식 그대로) |
+| V15 R12 | `G.R12` = 노선·정류장별 출발 간격(정책에 상한이 있을 때) |
+| V16 운행 제약 | 운행편이 모두 노선 anchor에서 출발한다(영업 leg 1개만, §1.4 D03). `return_s` ≤ 다음 운행편 첫 도착 |
+| V17 체크섬 | `scenario_manifest.sha256`, `measurement.*_sha256`·`*_bytes`, `realization_checksum` |
 
-재구성 의사코드(V03·V06·V07·V11이 공유)
+### 8.3 버린 대안
 
-```text
-visits = 로그의 arrive를 (vehicle_id, visit)로 색인;  각 visit에 board/alight/denied 목록을 붙임
-pattern(trip_id) = timetable.json의 stop_times
-for visit in 로그 순서(= 시간순):
-    t, stop, k, trip = visit
-    # 이 순간의 대기 집합: 정적으로 서비스 가능하고, arrival_s ≤ t ≤ arrival_s + max_wait_s 이며,
-    # stop ∈ origin_stop_ids 이고, 아직 board 기록이 없는(또는 이 visit에서 board한) 승객
-    waiting  = 위 조건의 승객을 (arrival_s, passenger_id)로 정렬
-    eligible = [p for p in waiting if pattern(trip)에서 k 뒤에 p의 dest가 있음]      # 영업 trip, k < last 일 때만
-    room     = capacity − (이 visit 하차 반영 후 load)
-    expected_board = eligible[:room];  expected_left = eligible[room:]
-    check: 로그의 board 목록 == expected_board (순서 포함)                          # V11 ①②
-    check: left_behind == len(expected_left)                                        # V11 ③
-    check: denied 목록 == [p for p in expected_left if p가 처음 남겨짐]              # V11 ④
-    남겨진 횟수[p] += 1 for p in expected_left                                       # V12의 FULL 판정에 사용
-```
-
-요구사항 대응: 인원 보존 V02 · 정원 초과 없음 V03 · 차량 일정 중복 없음 V04 · 시간 단조성 V05 · 승차 전 도착 V06 · 하차 정류장이 승차 이후 V07 · 구간 시간 일치 V08 · 운영시간 준수 V10 · 그 밖은 규칙 구현 오류를 잡기 위한 추가 검사.
-
-### 8.3 위반 리포트 `validation.json`
-
-| 필드 | 형식 | 의미 |
-| --- | --- | --- |
-| `validator_version` | string | |
-| `run_id`, `plan_id`, `plan_revision`, `input_bundle_id` | | 대상 |
-| `verified` | bool | 모든 검사가 `pass`일 때만 true |
-| `checks[]` | `{id, name, status, violations}` | `status`: `pass` / `fail` / `skipped`(앞 검사 실패로 재구성 불가). `violations`는 건수. V01→V15 순 |
-| `violations[]` | 아래 | `(check_id, seq, passenger_id, vehicle_id)` 순. 검사당 최대 100건만 싣고 건수는 `checks[].violations`에 전부 |
-| `truncated` | bool | 100건 제한에 걸렸는지 |
-
-`violations[]` 항목: `{check_id, message, seq, t, vehicle_id, trip_id, stop_id, passenger_id, expected, actual}` — 해당 없는 키는 생략. `seq`는 문제가 된 로그 줄.
-
-- `independently_verified`(C `Assessment`) = `verified`. `violations`(C) = 실패한 `check_id` 목록.
-- V01이 실패하면 나머지는 `skipped`로 두고 끝낸다(깨진 로그로 다른 결론을 내지 않는다).
-- CLI: `python -m busstrike.evaluation.validator --run-dir <dir>` → `validation.json` 쓰고, 위반이 있으면 종료 코드 1.
-
-3단계 구현에서 정한 세부
-- **입력 위치**: `run.json`·`timetable.json`·`events.jsonl`·`metrics.json`은 `--run-dir`에서 읽는다(뒤의 셋은 `run.json`의 `*_uri`). `scenario.json`·`run_inputs.json`·`plan.json`은 `run.json`에 경로가 없으므로(§0.2 절대 경로 금지) 기본은 같은 디렉터리이고, 다르면 `--scenario`·`--run-inputs`·`--plan`으로 준다. `arrivals.jsonl`·`travel_times.json`은 `run_inputs.json`의 URI를 따른다. `--out`으로 리포트 경로를 바꿀 수 있다. 공개 함수는 `validate_run(run_dir, *, scenario_path=None, run_inputs_path=None, plan_path=None) -> dict`(파일은 쓰지 않음)와 `write_report`·`failed_checks`.
-- **입력을 읽을 수 없을 때**(파일 없음, 로그 외 입력 문서의 JSON·필드 형식 오류): 위반이 아니라 `ValidatorInputError`, CLI 종료 코드 **2**. 이벤트 로그의 형식 오류만 V01 위반이다.
-- `validator_version = "busstrike-validator/0.1.0"`. `plan_id`·`plan_revision`은 `plan.json`, `run_id`는 `run.json`, `input_bundle_id`는 `run_inputs.json`에서 가져온다. 리포트는 §0.2 구조 문서 규칙(정렬 키 JSON + `\n`)으로 쓰고, 실행 시각 등은 넣지 않아 같은 입력이면 바이트가 같다.
-- `violations[]` 정렬은 `(check_id, seq, passenger_id, vehicle_id)`이고 키가 없으면 `seq=-1`·빈 문자열로 앞에 둔다. 같으면 `message`, `expected/actual/trip_id/t`로 끊는다. 100건 제한은 이 정렬 뒤 앞에서부터.
-- 검사가 깨진 입력 조합 때문에 예외로 멈추면 그 검사는 `fail`이고 위반 `check aborted: …` 한 건을 남긴다(결론을 "통과"로 두지 않는다).
-- **V01** 세부: type별 키 집합이 §6.1 표와 정확히 같음(없는 키·남는 키 모두 위반), 정수 키는 bool 아닌 int, 문자열 키는 빈 문자열 아님, 키 순서 = §6.1, 줄이 `json.dumps(…, ensure_ascii=False, separators=(",", ":"))` 결과와 같음, 마지막 줄 `\n`. 정렬 키의 `arrival_s`는 입력에 없는 승객이면 -1로 두고 V02가 따로 보고한다.
-- **검사 분담**(같은 문제를 여러 검사가 중복 보고하지 않게): `board`의 `t`·`stop_id`·`stop_seq`·`trip_id`가 그 `arrive`와 다르면 V06, `alight`이면 V07, `depart`·`denied`면 V04. 같은 `(vehicle_id, visit)`의 `arrive`가 없는 하위 이벤트는 V04. 최종 결과가 없거나 둘 이상인 승객은 V02만 보고하고, V12는 있는 결과 이벤트의 시각·cause만 본다.
-- **V04** "한 차량이 두 trip에 동시에 있지 않음"은 visit 순서로 trip이 바뀔 때 새 trip의 첫 `arrive.t`가 앞 trip의 마지막 이벤트 시각 이상인지로 본다. duty가 있는데 이벤트가 없거나 중간에 끊겼고 `cancel`도 없으면 위반이다.
-- **V09**: 차량의 첫 visit은 첫 trip `sched_s[0]`에 와야 한다. 첫 cycle은 엔진이 취소 판정 없이 시작하므로(§3.4는 "다음" cycle 판단) 취소 조건을 보지 않는다.
-- **V10**에서 `cancel`은 뺀다. 이동이 아니라 판단 기록이고 `t = ready`라, 영업 leg 회차 뒤에는 `W_e`를 넘을 수 있다(§3.4). `cancel`의 시각은 V09가 §3.4 식으로 본다.
-- **V11**의 "아직 board 기록이 없는" 승객은 "로그 순서로 앞서 처리한 visit에서 탄 적이 없는" 승객이다(승차 시각이 아니라 승차가 속한 visit 기준). 그래서 `board.t`만 바꾼 변조는 V11이 아니라 V06이 잡는다. 정적 판정으로 `no_service`인 승객은 대기 집합에 넣지 않는다.
-- **V13**은 §6.3과 위의 "2단계 구현에서 정한 세부"를 따로 구현해 `metrics.json` 전체를 잎(leaf) 경로 단위로 비교한다(`passengers.satisfied` 등). 수치는 같은 반올림 뒤 `==`.
-- **V14 고침**: 1단계 표의 "같은 차량의 연속 cycle 간격이 `period_s` 이상"은 §1.3과 맞지 않았다. 생성기는 `s = max(start + floor(k·P/n) + m·P, prev_ready)`라, 직전 cycle이 시간대 경계에 걸려 계획 순환시간이 P보다 길면 그 cycle만 밀리고 다음 cycle은 슬롯으로 돌아온다(간격 < P). 합성 실행에서 실제로 나왔다. 검사를 "cycle m의 anchor ≥ 슬롯 `start + floor(k·P/n) + m·P`, `cycle_index`는 0부터 연속"으로 바꿨다. `prev_ready` 자체는 P 계산을 다시 구현해야 알 수 있어(§8.4) 보지 않는다. 나머지 V14 항목은 §1.5의 `validate_timetable` 목록과 같다.
-- 속도(합성 5만 명·30노선·62대·이벤트 약 9.8만 줄, Python 3.14, WSL2): `validate_run` 4.75초(엔진 `run()` 1.48초).
-
-### 8.4 버린 대안
-
-- 검증기가 `sim`의 파서·모델을 재사용: 같은 버그를 같이 갖게 되어 독립성이 없어진다.
-- 검증기가 시간표 생성 규칙(P 계산)까지 다시 구현: 생성기를 두 번 만드는 셈이다. 시간표는 입력으로 받고 제약만 검사한다.
-- 엔진을 한 번 더 돌려 로그를 비교: 결정론 테스트일 뿐 규칙이 맞는지는 확인하지 못한다.
-- 위반을 전부 싣기: 과부하 로그에서 리포트가 로그보다 커진다.
+- 새 엔진 전용 검증기를 남겨 두고 M07 검증기와 함께 돌리기: 같은 실행의 판정이 두 개가 되고, 팀 공식 판정이 흐려진다.
+- 엔진 형식을 그대로 두고 M07 형식으로 바꾸는 변환기를 따로 두기: 변환 단계가 의미를 바꿀 수 있어서(정차·여정 한도·사유) 검증이 엔진을 보지 못한다. 엔진 의미 자체를 M07에 맞췄다.
 
 ---
 
 ## 9. 테스트
 
-`tests/sim/`, `tests/evaluation/`, fixture는 `tests/fixtures/sim/`(합성만). 실행: `python3 -m unittest discover -s tests -t . -v`.
+`tests/sim/`, fixture는 `tests/fixtures/sim/`(합성만). 실행: `PYTHONPATH=src:. python3 -m unittest discover -s tests -t . -v`.
 
-아래 기대값은 손으로 계산한 것이고, 문서 작성 때 임시 스크립트로 한 번 더 맞춰 봤다(레포에 없음). **표가 기준**이다. 로그 SHA-256은 참고값이며, 다르면 표와 로그를 줄 단위로 비교해 어느 쪽이 설계와 다른지 확인한다.
+아래 기대값은 손으로 계산했다. **표가 기준**이다. 6단계에서 M07 의미(계약 §7)로 바꾸면서 T1–T5를 다시 손계산했다. 고정 정차(1인당 정차 0), 여정 기한 = 결과를 정하는 기한, 사유 4개, `drain_s = W_e + max_journey_s`가 반영돼 있다. 모든 사례의 출력이 M07 검증기에서 `pass=true`, 종료 코드 0이어야 한다(`tests/sim/test_scenarios.py`). 승객은 폭 1초 집계 행으로 주어 발생 시각을 고정한다. ID는 `["p1",0]`처럼 쓰고, 표에서는 `p1`로 줄인다.
 
 ### 9.1 공통 fixture F1
 
 - 정류장 A, B, S(역). 구간(시간대 1개, `bin_start_s=0`): A→B 120초/1000m, B→S 180초/1500m, S→B 180초/1500m, B→A 120초/1000m.
 - 노선 R1: leg0 영업 `[A, B, S]`, leg1 공차 `[S, B, A]`.
-- 정책: `dwell_base_s=10`, `dwell_per_boarding_s=2`, `dwell_per_alighting_s=1`, `turnaround_s=60`, `cycle_rest_s=0`.
+- 정책: `dwell_base_s=10`, `dwell_per_boarding_s=0`, `dwell_per_alighting_s=0`(6단계: M07 고정 일정), `turnaround_s=60`, `cycle_rest_s=0`.
 - 운영시간 `[0, 1500]`, 차량 가용 `[0, 1500]`, 입석 0.
 
-계획 순환시간(t0=0): A 0 → 출발 10 → B 130 → 출발 140 → S 320 → 회차 60 → S 380 → B 560 → A 680. `P = 680`.
+계획 순환시간(t0=0): A 0 → 출발 10 → B 130 → 출발 140 → S 320 → 회차 60 → S 380 → B 560 → A 680. `P = 680`. 1인당 정차가 0이므로 `allow = 0`이다.
 
 ### 9.2 T1 — 정류장 3·차량 1·승객 5 (기본 흐름)
 
-차량 V1(좌석 3), R1에 1대. `max_wait_s=600`, `max_journey_s=1200`. 승하차 여유 `allow = (2+1)×3×1 = 9`.
+차량 V1(좌석 3), R1에 1대. `max_wait_s=600`, `max_journey_s=1200`, `drain_s = 1500 + 1200 = 2700`, 임계 60, R12 상한 900.
 
-시간표: cycle 0 `0+680+9 ≤ 1500` ✔, cycle 1 `680+680+9=1369 ≤ 1500` ✔, cycle 2 `1360+680+9 > 1500` ✘.
+M07 운행편(`network.json`). cycle 2는 `1360 + 680 > 1500`이라 편성되지 않는다.
 
-| trip | 영업 | 예정 시각 |
-| --- | --- | --- |
-| `R1-V1-000-0` | ✔ | A 0, B 130, S 320 |
-| `R1-V1-000-1` | 공차 | S 380, B 560, A 680 |
-| `R1-V1-001-0` | ✔ | A 680, B 810, S 1000 |
-| `R1-V1-001-1` | 공차 | S 1060, B 1240, A 1360 |
-
-승객
-
-| ID | 출발 | 목적지 | 도착 |
-| --- | --- | --- | --- |
-| p1 | A | {S} | 0 |
-| p2 | A | {B} | 0 |
-| p3 | A | {S} | 5 |
-| p4 | B | {S} | 100 |
-| p5 | B | {S} | 700 |
-
-차량 진행
-
-| visit | trip | 정류장 | arrive | 하차 | 승차 | 정차 | depart |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 0 | 000-0 | A | 0 | – | p1, p2 | 10+2·2=14 | 14 |
-| 1 | 000-0 | B | 134 | p2 | p4 | 10+2+1=13 | 147 |
-| 2 | 000-0 | S | 327 | p1, p4 | – | 1·2=2 | (종점) |
-| 3 | 000-1 | S | 389 = max(380, 327+2+60) | | | 0 | 389 |
-| 4 | 000-1 | B | 569 | | | 0 | 569 |
-| 5 | 000-1 | A | 689 | | | 0 | (종점) |
-| 6 | 001-0 | A | 689 = max(680, 689), 검사 689+680+9=1378 ≤ 1500 | – | – (p3는 605에 만료) | 10 | 699 |
-| 7 | 001-0 | B | 819 | – | p5 | 12 | 831 |
-| 8 | 001-0 | S | 1011 | p5 | – | 1 | (종점) |
-| 9 | 001-1 | S | 1072 = max(1060, 1011+1+60) | | | 0 | 1072 |
-| 10 | 001-1 | B | 1252 | | | 0 | 1252 |
-| 11 | 001-1 | A | 1372 | | | 0 | (종점) |
-
-승객 결과
-
-| ID | 결과 | 승차 | 대기 | 하차 | 차내 | 총 | 비고 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| p1 | served | 0 | 0 | 327 | 327 | 327 | |
-| p2 | served | 0 | 0 | 134 | 134 | 134 | 중간 하차 |
-| p3 | abandon @605 | | | | | | `WAIT_EXCEEDED` (5초 늦어 첫 차를 놓침) |
-| p4 | served | 134 | 34 | 327 | 193 | 227 | |
-| p5 | served | 819 | 119 | 1011 | 192 | 311 | |
-
-지표: generated 5, transported 4, satisfied 4, abandoned 1, no_service 0, left_waiting 0, `transport_rate = satisfaction_rate = 0.8`. 대기 `[0,0,34,119]` → mean 38.25, p50 0, p90 119, max 119. 차내 mean 211.5. 총 이동 mean 249.75, p90 327. V1: revenue 5000m, deadhead 5000m, `first_s=0`, `last_s=1372`. trip `000-0`: 승차 3, 최대 재차 2, 좌석 재차율 0.666667, 지연 0. trip `001-0`: 승차 1, 최대 재차 1, 0.333333, 지연 9. 남겨짐 0.
-
-기대 로그 전체(29줄, 4093바이트, SHA-256 `796c7b6a88ec8a1379a1e80ebe3726b7e3b20e20cdc0ccde4e0b504ad3b05a78`):
-
-```json
-{"seq":0,"t":0,"type":"arrive","vehicle_id":"V1","trip_id":"R1-V1-000-0","visit":0,"stop_id":"A","stop_seq":0,"alighted":0,"boarded":2,"left_behind":0,"load":2}
-{"seq":1,"t":0,"type":"board","vehicle_id":"V1","trip_id":"R1-V1-000-0","visit":0,"stop_id":"A","stop_seq":0,"passenger_id":"p1"}
-{"seq":2,"t":0,"type":"board","vehicle_id":"V1","trip_id":"R1-V1-000-0","visit":0,"stop_id":"A","stop_seq":0,"passenger_id":"p2"}
-{"seq":3,"t":14,"type":"depart","vehicle_id":"V1","trip_id":"R1-V1-000-0","visit":0,"stop_id":"A","stop_seq":0,"load":2}
-{"seq":4,"t":134,"type":"arrive","vehicle_id":"V1","trip_id":"R1-V1-000-0","visit":1,"stop_id":"B","stop_seq":1,"alighted":1,"boarded":1,"left_behind":0,"load":2}
-{"seq":5,"t":134,"type":"alight","vehicle_id":"V1","trip_id":"R1-V1-000-0","visit":1,"stop_id":"B","stop_seq":1,"passenger_id":"p2"}
-{"seq":6,"t":134,"type":"board","vehicle_id":"V1","trip_id":"R1-V1-000-0","visit":1,"stop_id":"B","stop_seq":1,"passenger_id":"p4"}
-{"seq":7,"t":147,"type":"depart","vehicle_id":"V1","trip_id":"R1-V1-000-0","visit":1,"stop_id":"B","stop_seq":1,"load":2}
-{"seq":8,"t":327,"type":"arrive","vehicle_id":"V1","trip_id":"R1-V1-000-0","visit":2,"stop_id":"S","stop_seq":2,"alighted":2,"boarded":0,"left_behind":0,"load":0}
-{"seq":9,"t":327,"type":"alight","vehicle_id":"V1","trip_id":"R1-V1-000-0","visit":2,"stop_id":"S","stop_seq":2,"passenger_id":"p1"}
-{"seq":10,"t":327,"type":"alight","vehicle_id":"V1","trip_id":"R1-V1-000-0","visit":2,"stop_id":"S","stop_seq":2,"passenger_id":"p4"}
-{"seq":11,"t":389,"type":"arrive","vehicle_id":"V1","trip_id":"R1-V1-000-1","visit":3,"stop_id":"S","stop_seq":0,"alighted":0,"boarded":0,"left_behind":0,"load":0}
-{"seq":12,"t":389,"type":"depart","vehicle_id":"V1","trip_id":"R1-V1-000-1","visit":3,"stop_id":"S","stop_seq":0,"load":0}
-{"seq":13,"t":569,"type":"arrive","vehicle_id":"V1","trip_id":"R1-V1-000-1","visit":4,"stop_id":"B","stop_seq":1,"alighted":0,"boarded":0,"left_behind":0,"load":0}
-{"seq":14,"t":569,"type":"depart","vehicle_id":"V1","trip_id":"R1-V1-000-1","visit":4,"stop_id":"B","stop_seq":1,"load":0}
-{"seq":15,"t":605,"type":"abandon","passenger_id":"p3","cause":"WAIT_EXCEEDED"}
-{"seq":16,"t":689,"type":"arrive","vehicle_id":"V1","trip_id":"R1-V1-000-1","visit":5,"stop_id":"A","stop_seq":2,"alighted":0,"boarded":0,"left_behind":0,"load":0}
-{"seq":17,"t":689,"type":"arrive","vehicle_id":"V1","trip_id":"R1-V1-001-0","visit":6,"stop_id":"A","stop_seq":0,"alighted":0,"boarded":0,"left_behind":0,"load":0}
-{"seq":18,"t":699,"type":"depart","vehicle_id":"V1","trip_id":"R1-V1-001-0","visit":6,"stop_id":"A","stop_seq":0,"load":0}
-{"seq":19,"t":819,"type":"arrive","vehicle_id":"V1","trip_id":"R1-V1-001-0","visit":7,"stop_id":"B","stop_seq":1,"alighted":0,"boarded":1,"left_behind":0,"load":1}
-{"seq":20,"t":819,"type":"board","vehicle_id":"V1","trip_id":"R1-V1-001-0","visit":7,"stop_id":"B","stop_seq":1,"passenger_id":"p5"}
-{"seq":21,"t":831,"type":"depart","vehicle_id":"V1","trip_id":"R1-V1-001-0","visit":7,"stop_id":"B","stop_seq":1,"load":1}
-{"seq":22,"t":1011,"type":"arrive","vehicle_id":"V1","trip_id":"R1-V1-001-0","visit":8,"stop_id":"S","stop_seq":2,"alighted":1,"boarded":0,"left_behind":0,"load":0}
-{"seq":23,"t":1011,"type":"alight","vehicle_id":"V1","trip_id":"R1-V1-001-0","visit":8,"stop_id":"S","stop_seq":2,"passenger_id":"p5"}
-{"seq":24,"t":1072,"type":"arrive","vehicle_id":"V1","trip_id":"R1-V1-001-1","visit":9,"stop_id":"S","stop_seq":0,"alighted":0,"boarded":0,"left_behind":0,"load":0}
-{"seq":25,"t":1072,"type":"depart","vehicle_id":"V1","trip_id":"R1-V1-001-1","visit":9,"stop_id":"S","stop_seq":0,"load":0}
-{"seq":26,"t":1252,"type":"arrive","vehicle_id":"V1","trip_id":"R1-V1-001-1","visit":10,"stop_id":"B","stop_seq":1,"alighted":0,"boarded":0,"left_behind":0,"load":0}
-{"seq":27,"t":1252,"type":"depart","vehicle_id":"V1","trip_id":"R1-V1-001-1","visit":10,"stop_id":"B","stop_seq":1,"load":0}
-{"seq":28,"t":1372,"type":"arrive","vehicle_id":"V1","trip_id":"R1-V1-001-1","visit":11,"stop_id":"A","stop_seq":2,"alighted":0,"boarded":0,"left_behind":0,"load":0}
-```
-
-### 9.3 T2 — 만차·FIFO·충족 한도
-
-F1, 차량 V1(좌석 **2**), `max_wait_s=900`, `max_journey_s=1000`. `allow = 3×2×1 = 6`. 시간표는 T1과 같다.
-
-승객: q1·q2·q3 = A→{S}, 도착 0. q4·q5 = B→{S}, 도착 100.
-
-| visit | 정류장 | arrive | 승차 | 남겨짐(`left_behind`) | 정차 | depart |
-| --- | --- | --- | --- | --- | --- | --- |
-| 0 | A | 0 | q1, q2 | q3 (1) — 첫 `denied` | 14 | 14 |
-| 1 | B | 134 | – | q4, q5 (2) — 첫 `denied` 둘 | 10 | 144 |
-| 2 | S | 324 | (q1, q2 하차) | | 2 | |
-| 3–5 | 공차 | S 386, B 566, A 686 | | | | |
-| 6 | A | 686, 검사 686+680+6=1372 ≤ 1500 | q3 | 0 | 12 | 698 |
-| 7 | B | 818 | q4 | q5 (1) — `denied` 재기록 없음 | 12 | 830 |
-| 8 | S | 1010 | (q3, q4 하차) | | 2 | |
-| 9–11 | 공차 | S 1072, B 1252, A 1372 | | | | |
-
-| ID | 결과 | 대기 | 총 | 남겨진 횟수 | 충족 |
+| trip | stops | arrivals | departures | return_s | distance_m |
 | --- | --- | --- | --- | --- | --- |
-| q1, q2 | served, 하차 324 | 0 | 324 | 0 | ✔ |
-| q3 | served, 승차 686, 하차 1010 | 686 | 1010 | 1 | ✘ `JOURNEY_EXCEEDED` |
-| q4 | served, 승차 818, 하차 1010 | 718 | 910 | 1 | ✔ |
-| q5 | abandon @1000 | | | 2 | `FULL` |
+| `R1-V1-000-0` | A, B, S | 0, 130, 320 | 10, 140, 320 | 680 | 5000 |
+| `R1-V1-001-0` | A, B, S | 680, 810, 1000 | 690, 820, 1000 | 1360 | 5000 |
 
-지표: generated 5, transported 4, **satisfied 3**, abandoned 1. `denied.boardings = 4`, `denied.passengers = 3`. 대기 mean 351.0, p90 718. 로그 32줄, SHA-256 `167c8484a4b4cc79fffc88203410c1c9d9f66b95309814ccbc51eb3afe50a4f0`.
+승객과 결과
 
-**T2b — 지연으로 cycle 취소**: T2에서 운영시간·가용 종료만 **1370**으로 줄인다. 시간표에는 cycle 1이 있다(`680+680+6=1366 ≤ 1370`). 실행에서는 `686+680+6=1372 > 1370`이라 취소된다.
+| ID | 출발→목적 | 발생 | 결과 | 승차 | 하차 | 비고 |
+| --- | --- | --- | --- | --- | --- | --- |
+| p1 | A→S | 0 | served | 0 | 320 | |
+| p2 | A→B | 0 | served | 0 | 130 | 중간 하차 |
+| p3 | A→S | 5 | unserved(**wait**) | | | 도착 스냅숏 0초를 5초 늦게 놓침. 다음 A 방문 680 > 605 → 605에 만료. 연결 운행편의 A 도착 680이 [5, 2700] 안이라 사유는 `wait`다 |
+| p4 | B→S | 100 | served | 130 | 320 | 대기 30 |
+| p5 | B→S | 700 | served | 810 | 1000 | 대기 110 |
 
-- `{"t":686,"type":"cancel","vehicle_id":"V1","trip_id":"R1-V1-001-0","visit":6,"cause":"LATE"}` (seq 17).
-- q3 abandon @900 `FULL`, q4·q5 abandon @1000 `FULL`. transported 2, satisfied 2, abandoned 3. V1 `last_s=686`, revenue 2500m, deadhead 2500m, `cycles_cancelled=1`.
-- 로그 21줄, SHA-256 `fbcf73f559c6967af8e082d01701bc7d80cf26633e7d828b253bc8c8e86674e9`.
+지표: M1 served 4·unserved 1·rate 0.8. M2 wait 1, 거절 0. M3 boarded 대기 `[0,0,30,110]` → n 4, 평균 35.0, P90 110(⌈3.6⌉=4번째), 임계 60 초과 1(0.25). M6 V1: 완료 2, 운행시간 `680 + 680 = 1360`, 거리 10000, 공차시간 = 회송 `(680−320) + (1360−1000) = 720` + 탑승 0으로 출발한 001-0 A→B 구간 `810 − 690 = 120` = **840**. R12 R1 최대 간격 680(A·B·S 모두 680), 위반 0.
 
-### 9.4 T3 — 정류장 공유·목적지 집합·동시각·노선 없음
+기대 로그 전체(26줄, 3532바이트, SHA-256 `72cc7ed185605cb7ea60cf583516bab31baeba7450e4638a65accfd9b86848a9`, `tests/fixtures/sim/t1_events.jsonl`). 키 `time_s, phase, stable_id, kind, passenger_id, vehicle_id, occupancy`를 줄여 적는다. `X0` = `R1-V1-000-0:0000000k`, `X1` = `R1-V1-001-0:…`이다.
+
+| time_s | 사건 |
+| --- | --- |
+| 0 | `vehicle_arrived X0:0 occ 0` · `generated p1` · `generated p2` · `boarded X0:0 p1 occ 1` · `boarded X0:0 p2 occ 2` |
+| 5 | `generated p3` |
+| 10 | `departed X0:0 occ 2` |
+| 100 | `generated p4` |
+| 130 | `alighted X0:1 p2 occ 1` · `vehicle_arrived X0:1 occ 1` · `boarded X0:1 p4 occ 2` |
+| 140 | `departed X0:1 occ 2` |
+| 320 | `alighted X0:2 p1 occ 1` · `alighted X0:2 p4 occ 0` · `vehicle_arrived X0:2 occ 0` · `departed X0:2 occ 0` |
+| 605 | `expired wait:p3` |
+| 680 · 690 | `vehicle_arrived X1:0 occ 0` · `departed X1:0 occ 0` |
+| 700 | `generated p5` |
+| 810 · 820 | `vehicle_arrived X1:1 occ 0` · `boarded X1:1 p5 occ 1` · `departed X1:1 occ 1` |
+| 1000 | `alighted X1:2 p5 occ 0` · `vehicle_arrived X1:2 occ 0` · `departed X1:2 occ 0` |
+
+이미 확정된 승객의 기한(p1·p2 600, p4 700 …)은 사건을 남기지 않는다.
+
+### 9.3 T2 — 만차·FIFO·여정 기한 경계
+
+F1, 차량 V1(좌석 **2**), `max_wait_s=900`, `max_journey_s=1000`, 임계 600. 시간표는 T1과 같다.
+
+승객: q1·q2·q3 = A→S, 발생 0. q4·q5 = B→S, 발생 100.
+
+| 방문 | 시각 | 하차 | 승차 | 만차 거절 |
+| --- | --- | --- | --- | --- |
+| 000-0 A | 0 | | q1, q2 | q3 (1) |
+| 000-0 B | 130 | | – (만석) | q4, q5 (각 1) |
+| 000-0 S | 320 | q1, q2 | | |
+| 001-0 A | 680 | | q3 (대기 680) | |
+| 001-0 B | 810 | | q4 (대기 710) | q5 (2) |
+| 001-0 S | 1000 | q3, q4 | | |
+
+| ID | 결과 | 비고 |
+| --- | --- | --- |
+| q1, q2 | served, 하차 320 | |
+| q3 | **served**, 하차 1000 | 여정 기한 `0 + 1000 = 1000` 당일 하차. phase 0(하차)이 phase 4(만료)보다 먼저라 served다(기한 포함). 6단계 이전에는 1인당 정차로 1010에 내려 `JOURNEY_EXCEEDED`였다 |
+| q4 | served, 하차 1000 | 기한 1100 |
+| q5 | unserved(wait) @1000 | `100 + 900`. 거절 2회 |
+
+지표: served 4, unserved 1, `refusal_events = 4`, 거절 경험 served 2 · unserved 1. boarded 대기 `[0,0,680,710]` → 평균 347.5, P90 710, 임계 600 초과 2(0.5). M6 공차시간 720(빈 차로 출발한 구간 없음). 로그 26줄.
+
+**T2b — 차내 여정 만료**(6단계에서 새로 만듦. 예전 T2b "지연으로 cycle 취소"는 고정 일정이라 일어나지 않아 뺐다): T2에서 `max_journey_s`만 **999**로 줄인다.
+
+- q3은 999에 차 안에서 만료된다: `expired journey:q3 vehicle V1 occupancy 2`(q3·q4가 타고 있다). 1000의 하차는 그대로 남아 `physical=arrived`, `arrival_s=1000`, 결과는 unserved(journey)다.
+- q4는 기한 1099라 served. q5는 1000에 wait 만료.
+- served 3, unserved 2(journey 1, wait 1). 거절 경험 served 1(q4) · unserved 2(q3·q5). V1 탑승 4·served 하차 3. 로그 27줄.
+
+### 9.4 T3 — 정류장 공유·동시각·연결 없음
 
 정류장 A, B, S1, S2, X. 구간: B→S1 180초/1500m, S1→B 180/1500, B→S2 100초/800m, S2→B 100/800. 정책은 F1과 같다. 운영시간 `[0, 450]`.
 
-- R1: 영업 `[B, S1]`, 공차 `[S1, B]`. R2: 영업 `[B, S2]`, 공차 `[S2, B]`. 각 1대.
-- 차량 V1·V2(좌석 1). 배정 규칙(§1.4)으로 R1←V1, R2←V2.
-- 계획: R1 B 0 → S1 190 → 공차 S1 250 → B 430 (`P=430`). R2 B 0 → S2 110 → 공차 S2 170 → B 270 (`P=270`). `allow=3`. 두 노선 모두 cycle 0만 편성(R2 cycle 1: `270+270+3=543 > 450`).
+- R1: 영업 `[B, S1]`, 공차 `[S1, B]`. R2: 영업 `[B, S2]`, 공차 `[S2, B]`. 각 1대. 차량 V1·V2(좌석 1). 배정 규칙(§1.4)으로 R1←V1, R2←V2.
+- 운행편: `R1-V1-000-0` B 0/10 → S1 190, return 430(`190+60+180`), 3000 m. `R2-V2-000-0` B 0/10 → S2 110, return 270, 1600 m. 두 노선 모두 cycle 0만 들어간다.
 
-승객(모두 도착 0, `max_wait_s=600`, `max_journey_s=1200`)
+승객(모두 발생 0, `max_wait_s=600`, `max_journey_s=1200`, D1 결정에 따라 목적지는 하나)
 
-| ID | 출발 | 목적지 | 기대 |
+| ID | 출발→목적 | 기대 |
+| --- | --- | --- |
+| w1 | B→S2 | R2에 승차 → S2 하차 110 |
+| w2 | B→S2 | R2 만석(정원 1)으로 거절 1회 → 600 wait 만료, 사유 `wait` |
+| w3 | B→S1 | 줄 셋째지만 앞의 w1·w2는 S1로 가지 않아 건너뛴다 → R1 승차, S1 하차 190 |
+| w4 | B→A | `no_connection`(어떤 운행편도 B 뒤에 A가 없다). 600에 만료 |
+| w5 | X→S1 | `no_connection` |
+| w6 | S1→B | `no_connection`(S1은 R1 영업 leg의 마지막 정류장, B는 그 앞) |
+
+t=0의 로그 순서: `vehicle_arrived R1…:0` → `vehicle_arrived R2…:0` → `generated` w1…w6 → `boarded R1…:0 w3` → `boarded R2…:0 w1`. 같은 초 같은 정류장의 두 차량은 **stable_id(trip_id) 순서**로 태운다(6단계 이전에는 vehicle_id 순, 가정 A22).
+
+지표: served 2, unserved 4(no_connection 3, wait 1), 거절 1. V1 운행시간 430·공차 240, V2 운행시간 270·공차 160. 로그 22줄.
+
+클러스터 성질(§7.2): 목적지가 하나뿐이라 R1(B→S1)과 R2(B→S2)는 공통 승객이 없고, 단독 실행 합이 함께 실행한 결과와 같다(w1→S1, w2→S2, w3→S1로 바꾸면 2 + 0 = 2, `test_disjoint_routes_add_up`). 공통 승객이 있는 클러스터는 R1과 같은 leg의 R1b를 더한 사례로 본다(`test_curve.py`).
+
+### 9.5 T4 — 시간대별 구간 시간·운행 종료
+
+F1에서 A→B만 `profile = [[0,120],[600,240]]`. 운영시간 `[0, 1700]`. V1(좌석 3), `max_wait_s=600`, `max_journey_s=1200`, `drain_s = 2900`.
+
+- `lookup(A,B,599)=120`, `lookup(A,B,600)=240`. `P = max(cycle(0)=680, cycle(600)=800) = 800`.
+- 운행편: `R1-V1-000-0` A 0/10, B 130/140, S 320, return 680. `R1-V1-001-0` A 800/810 → B 1050(A→B 240초)/1060 → S 1240, return `1240+60+180+120 = 1600`. cycle 2(1600)는 들어가지 않는다.
+
+| ID | 출발→목적 | 발생 | 기대 |
 | --- | --- | --- | --- |
-| w1 | B | {S1, S2} | V1(ID가 앞선 차)에 승차 → S1 하차 192 |
-| w2 | B | {S1, S2} | V1에서 만차로 남겨짐(`denied` 1회) → 같은 초 V2에 승차 → S2 하차 112 |
-| w3 | B | {A} | `no_service` @0 `NO_ROUTE_TO_DEST` |
-| w4 | X | {S1} | `no_service` @0 `NO_ROUTE_AT_STOP` |
-| w5 | S1 | {B} | `no_service` @0 `NO_ROUTE_AT_STOP` (S1은 영업 leg의 종점과 공차 leg로만 방문) |
+| x1 | A→S | 790 | 승차 800(대기 10), 하차 1240 → served |
+| x2 | A→S | 801 | 1초 차이로 놓침. A의 마지막 방문이 800이라 [801, 2900]에 연결 도착이 없다 → 1401 wait 만료, 사유 **`service_end`** |
+| x3 | B→S | 1500 | B의 마지막 영업 방문이 1050 → 2100 wait 만료, 사유 `service_end`(6단계 이전에는 1700에 `left_waiting`) |
 
-t=0의 로그 순서: `no_service` w3, w4, w5 → V1 `arrive`(boarded 1, left_behind 1), `board` w1, `denied` w2 → V2 `arrive`(boarded 1, left_behind 0), `board` w2 → t=12 V1 `depart`, V2 `depart`.
+M6 V1: 완료 2, 운행시간 `680 + 800 = 1480`, 거리 10000, 공차시간 = 회송 720 + 000-0의 빈 차 구간 `(130−10) + (320−140) = 300` = 1020. 로그 19줄.
 
-차량: V1 B 0 → 출발 12 → S1 192(하차 정차 1) → 공차 S1 253 → B 433. V2 B 0 → 출발 12 → S2 112 → 공차 S2 173 → B 273.
-
-지표: generated 5, transported 2, satisfied 2, no_service 3(`NO_ROUTE_AT_STOP` 2, `NO_ROUTE_TO_DEST` 1), 대기 모두 0, `denied.boardings=1`, `denied.passengers=1`. V1 revenue 1500m/deadhead 1500m, V2 800m/800m. 로그 20줄, SHA-256 `caee12748b596343cdd1d9e1cacfa8f702e17e5878467da7f0d0da6c025b662d`.
-
-클러스터 테스트(§7.2): w1·w2가 두 노선 모두에 유효하므로 `route_clusters = [["R1","R2"]]`. w1·w2의 목적지를 각각 {S1}, {S2}로 바꾸면 `[["R1"],["R2"]]`이고 단독 실행 결과의 합이 함께 돌린 결과와 같다. (2단계는 `curve.py`가 없으므로 "단독 실행 합 = 함께 실행" 성질만 엔진으로 검사한다. `route_clusters` 자체의 기대값 검사는 5단계.)
-
-### 9.5 T4 — 시간대별 구간 시간·종료 시 대기
-
-F1에서 A→B만 `profile = [[0,120],[600,240]]`. 운영시간 `[0, 1700]`. V1(좌석 3), `max_wait_s=600`, `max_journey_s=1200`.
-
-- `lookup(A,B,599)=120`, `lookup(A,B,600)=240`.
-- `P = max(cycle(0)=680, cycle(600)=800) = 800`. cycle(600): A 600 → 출발 610(240초) → B 850 → 출발 860 → S 1040 → 1100 → B 1280 → A 1400.
-- 시간표: cycle 0은 T1과 같음(A 0 … A 680). cycle 1: A 800, B 1050, S 1240 / 공차 S 1300, B 1480, A 1600 (`800+800+9 ≤ 1700`). cycle 2 없음.
-
-| ID | 출발→목적지 | 도착 | 기대 |
-| --- | --- | --- | --- |
-| x1 | A→{S} | 790 | 승차 800(대기 10), 출발 812, B 1052(A→B 240초 적용), 출발 1062, S 1242 하차. 차내 442, 총 452 |
-| x2 | A→{S} | 801 | 1초 차이로 놓침 → abandon @1401 `WAIT_EXCEEDED` |
-| x3 | B→{S} | 1500 | 한도 2100 > 1700 → left_waiting @1700 `SERVICE_ENDED` |
-
-차량: cycle 0은 승객 없이 예정대로(A 0/10, B 130/140, S 320, 공차 380·560·680). cycle 1: A 800 … S 1242, 공차 S 1303 = max(1300, 1242+1+60), B 1483, A 1603.
-
-지표: generated 3, transported 1, satisfied 1, abandoned 1, left_waiting 1. 로그 24줄, SHA-256 `4de62ffa4f405121a74f4b3891239d474cf049c519e01b43a9f669806ab1651f`.
-
-### 9.6 T5 — 승객 발생 실현기
+### 9.6 T5 — 승객 발생
 
 시간대 길이 600초, 시작 `[0, 600, 1200]`, 유량 `[2.5, 0, 1.2]`명 → `flows_micro = [2_500_000, 0, 1_200_000]`(합 3.7명).
 
-| `u` (micro) | 인원 | 도착 시각 |
-| --- | --- | --- |
-| 0 | 4 | 0, 240, 480, 1450 |
-| 500 000 | 4 | 120, 360, 1200, 1700 |
-| 699 999 | 4 | 167, 407, 1299, 1799 |
-| 700 000 | 3 | 168, 408, 1300 |
-| 800 000 | 3 | 192, 432, 1350 |
+**1) 시간대별 인원**(체계적 반올림): 문턱 `u + k·MICRO`가 시간대의 누적 구간 `[cum, cum+f)`에 드는 개수.
 
-- 계산 예(`u=500 000`): 문턱 0.5M, 1.5M, 2.5M, 3.5M. 0.5M → `0 + 500000·600//2500000 = 120`. 2.5M은 첫 시간대 `[0, 2.5M)`에 속하지 않고, 유량 0인 둘째를 건너뛰어 셋째 `[2.5M, 3.7M)`의 시작 → 1200. 3.5M → `1200 + 1000000·600//1200000 = 1700`.
+| `u` (micro) | 문턱 교차 시각(`realize_od`) | 시간대별 인원(`bin_counts`) |
+| --- | --- | --- |
+| 0 | 0, 240, 480, 1450 | 3, 0, 1 |
+| 500 000 | 120, 360, 1200, 1700 | 2, 0, 2 |
+| 699 999 | 167, 407, 1299, 1799 | 2, 0, 2 |
+| 700 000 | 168, 408, 1300 | 2, 0, 1 |
+| 800 000 | 192, 432, 1350 | 2, 0, 1 |
+
+- 계산 예(`u=500 000`): 문턱 0.5M, 1.5M, 2.5M, 3.5M. 첫 시간대 `[0, 2.5M)`에 둘, 셋째 `[2.5M, 3.7M)`에 둘.
 - `u < 700 000`이면 4명, 아니면 3명 → 기댓값 3.7명.
-- `u_micro` 고정 벡터 3개(§2.2).
-- 유량 문자열 `"0.1"`×10개 시간대의 합이 정확히 1 000 000 micro인지(float 누적 오차 없음).
-- OD 행의 입력 순서를 섞어도 `arrivals.jsonl`이 바이트 단위로 같은지.
+- `u_micro` 고정 벡터 3개(§2.2), `"0.1"`×10의 합이 정확히 1 000 000 micro, 입력 행 순서를 섞어도 `demand_bins.csv` 바이트가 같다.
+
+**2) 시간대 안 시각**(M07 생성기, 계약 §4.1): `bin_start_s + offset`, offset ∈ `[0, bin_width_s)`. 폭 1이면 offset은 늘 0이다. 무작위 집계 행 60개 × seed 3개에서 엔진 구현이 검증기 구현과 승객·source checksum·realization checksum까지 같다.
 
 ### 9.7 T6 — 시간표 생성기(대수별)
 
-F1, 좌석 3(`allow=9`), 운영시간 `[0, 1500]`, `P=680`.
+F1, 좌석 3, 운영시간 `[0, 1500]`, `P=680`. 6단계부터 1인당 정차가 0이라 `allow=0`이다. 편성 결과는 `allow=9`이던 때와 같다(경계 사례가 없다).
 
 | n | 차량 | 오프셋 `floor(k·680/n)` | 편성된 cycle의 A 출발 | 편성 안 된 첫 cycle |
 | --- | --- | --- | --- | --- |
-| 1 | V1 | 0 | 0, 680 | 1360 (`1360+689 > 1500`) |
-| 2 | V1 / V2 | 0 / 340 | V1: 0, 680 · V2: 340 | V2 1020 (`1020+689=1709`) |
-| 3 | V1 / V2 / V3 | 0 / 226 / 453 | V1: 0, 680 · V2: 226 · V3: 453 | V2 906 (`1595`), V3 1133 (`1822`) |
+| 1 | V1 | 0 | 0, 680 | 1360 (`1360+680 > 1500`) |
+| 2 | V1 / V2 | 0 / 340 | V1: 0, 680 · V2: 340 | V2 1020 (`1020+680=1700`) |
+| 3 | V1 / V2 / V3 | 0 / 226 / 453 | V1: 0, 680 · V2: 226 · V3: 453 | V2 906 (`1586`), V3 1133 (`1813`) |
 | 0 | – | – | trip 없음 | – |
 
 n=2의 V2: 영업 A 340, B 470, S 660 / 공차 S 720, B 900, A 1020. n=3의 V2: A 226, B 356, S 546 / S 606, B 786, A 906. V3: A 453, B 583, S 773 / S 833, B 1013, A 1133.
 
-추가 검사: 대수 합이 가용 대수 초과 → `PLAN_INFEASIBLE` · leg가 이어지지 않음 → `PLAN_INFEASIBLE` · `initial_stop_id`가 anchor가 아님 → `PLAN_INFEASIBLE`(`DEADHEAD_DATA_REQUIRED`) · 구간 누락 → `DATA_INCOMPLETE` · 순환형 `[A,B,S,A]`와 두 역 연결형 `[S1…S2],[S2…S1]`이 같은 함수로 편성됨.
+추가 검사: 대수 합이 가용 대수 초과 → `PLAN_INFEASIBLE` · leg가 이어지지 않음 → `PLAN_INFEASIBLE` · `initial_stop_id`가 anchor가 아님 → `PLAN_INFEASIBLE`(`DEADHEAD_DATA_REQUIRED`) · 구간 누락 → `DATA_INCOMPLETE` · 순환형 `[A,B,S,A]`와 두 역 연결형 `[S1…S2],[S2…S1]`이 같은 함수로 편성됨(두 역 연결형은 시간표·GTFS까지만 지원하고 M07 실행은 `OUT_OF_SCOPE`, 가정 A26).
 
 ### 9.8 T7 — 노선+대수만 있는 지자체안 재현, 공정성
 
 1. `plan.json`에 `routes=[R1, vehicle_count=1]`만 있고 `trips=[]`인 안(지자체안 형태)을 T1 조건으로 실행 → 시간표가 §9.2 표와 같고 로그가 T1 기대 로그와 **바이트 단위로 같다**.
-2. 같은 안의 `source`만 `"municipal"` / `"general_ai"` / `"optimizer"`로 바꿔 세 번 실행 → `timetable.json`의 trips·duties와 `events.jsonl`이 모두 같다(`plan_id`가 들어가는 필드만 다름).
+2. 같은 안의 `source`만 `"municipal"` / `"general_ai"` / `"optimizer"`로 바꿔 세 번 실행 → M07 폴더에서 `measurement.json`(`plan.json` 해시를 담음)을 뺀 모든 파일이 바이트 단위로 같다.
 3. 1에서 만들어진 trips를 `plan.json`에 그대로 넣은 안(`origin="provided"`) → 로그가 1과 같다.
 4. `busstrike/sim/` 소스에 `source` 값을 읽는 코드가 없음을 AST 검사로 확인한다.
 
 ### 9.9 결정론 테스트
 
-- 같은 입력으로 두 번 실행 → `events.jsonl`, `metrics.json`, `timetable.json`, `run.json` 바이트 동일.
-- `PYTHONHASHSEED=0`과 `=12345`로 각각 하위 프로세스 실행 → 동일(set·dict 순서 의존 검출).
-- `plan.json`의 routes 순서, fleet의 vehicles 순서, 메모리에 올린 승객 리스트 순서를 섞어도 로그 동일.
-- `sim/engine.py`·`timetable.py`·`eventlog.py`·`metrics.py`가 `random`, `time`, `datetime`, `uuid`, `os.urandom`을 import하지 않음(AST 검사).
-- 무작위 합성 입력 수십 개(테스트 코드 안에서 고정 seed로 생성, 실현기와 무관)로 엔진을 돌린 뒤 검증기 통과 — 3단계에서 추가.
+- 같은 입력으로 두 번 실행하면 M07 폴더의 **모든 파일**(`scenario/` 3개, `run/` 6개)이 바이트 단위로 같다(T1·T2b·T3·합성). 검증기 보고서는 엔진 출력이 아니어서 비교에서 뺀다(생성 시각이 들어간다).
+- `PYTHONHASHSEED=0`과 `=12345`로 각각 하위 프로세스를 실행해도 같다(set·dict 순서 의존 검출).
+- `plan.json`의 routes 순서, fleet의 vehicles 순서, 메모리에 올린 승객 리스트 순서를 섞어도 로그가 같다.
+- `sim/` 전체가 `random`, `time`, `datetime`, `uuid`, `secrets`, `os.urandom`을 import하지 않는다(AST 검사).
 
-### 9.10 검증기 테스트(3단계)
+### 9.10 검증기 테스트
 
-T1–T4 기대 로그는 `verified=true`. T1 로그를 한 군데씩 고쳐 해당 검사만 실패하는지 본다.
+- 3단계의 새 엔진 전용 검증기 테스트(`test_validator.py`·`test_tamper.py`·`test_independence.py`·`runs.py`)는 검증기와 함께 지웠다.
+- M07 검증기 자체의 테스트(`tests/evaluation/`, T1–T20 변조 검출 포함)는 giho999 소유이고 그대로 통과해야 한다.
+- 새 엔진 쪽에서는 T1–T4·T2b·합성 실행 출력이 M07 검증기에서 `pass=true`·종료 코드 0인지 본다(`test_scenarios.py`, CLI 포함).
 
-| 변조 | 실패해야 하는 검사 |
-| --- | --- |
-| `alight` p5 줄 삭제 | V02 (V03도 실패 가능) |
-| `board` 한 줄 복제해 정원 초과 | V03 |
-| visit 4·5 순서 바꿈 | V01 |
-| `depart` t=147 → 146 | V08, V09 |
-| `board` p4의 t=134 → 90 | V06 |
-| `alight` p2의 `stop_seq` 1 → 0 | V07 |
-| 마지막 `arrive` t=1372 → 1501 | V08, V10 |
-| `abandon` p3의 cause → `FULL` | V12 |
-| T2에서 `board` q2를 q3로 교체(새치기) | V11 |
-| `metrics.json`의 `satisfied` +1 | V13 |
+### 9.11 교차 검증 — giho999 fixture F1·F2
 
-3단계 구현에서 정한 것(`tests/evaluation/test_tamper.py`)
-- 위 표는 "반드시 실패할" 최소 집합이다. 테스트는 실패하는 검사 집합을 **정확히** 고정한다. 로그를 바꾸면 지표가 로그와 어긋나 V13이 함께 실패하고, 승하차 수가 바뀌면 V09(정차식)·V03(재차 인원)이 함께 실패하는 연쇄를 그대로 둔다. 예: `board` p4 t→90은 {V06, V13}, `abandon` p3 cause→`FULL`은 {V12, V13}, 마지막 `arrive` t→1501은 {V08, V10, V13}.
-- 의미 검사를 보려는 변조는 로그를 §6.1 키로 다시 정렬하고 출력 해시를 `run.json`에 다시 적는다(그래야 V01·V15가 아니라 해당 검사가 잡는다). 해시를 다시 적지 않으면 V15가 더해진다.
-- "board 한 줄 복제해 정원 초과"는 T1(좌석 3)에서는 정원을 넘지 않는다. 그래서 정원 초과는 T2(좌석 2) visit 0의 `denied` q3를 `board`로 바꾼 변조로 본다(V03 `capacity exceeded`, load 3 > 2). 복제 변조도 남겨 둔다.
-- 요구사항 완료 기준에 맞춰 더한 변조: 인원 누락(`abandon` 줄 삭제 → {V02, V13}, 모르는 승객 `no_service` 추가 → {V02}), 차량 일정 중복(T3에서 V2의 정차를 V1로 → V04 "trip starts before the previous trip…", 시간표에서 cycle 1 trip을 앞 trip과 겹치게 → V14), 시간 역행(공차 `depart` t 569→700 → V05), 승차 전 하차(p4 하차를 승차 전 visit 0으로 → V05·V07).
+`tests/sim/test_m07_cross.py`. M07 fixture(`tests/evaluation/fixtures/`)의 scenario 입력(F1과 변형 4개, F2, F2-headway599)을 새 엔진 입력으로 옮겨(`tests/sim/m07_fixture_cases.py`) 실행한다. 비교 기준은 `handcalc/f1_expected.json`·`f2_expected.json`(명세 §5를 사람이 옮긴 값)이다.
+
+- 옮기는 규칙: `network.json`의 운행편을 운행안이 준 시간표(`provided`)로 넣어 trip_id까지 같게 한다. 구간 시간·거리는 fixture 일정이 그대로 나오게 손으로 정했다. F1은 A→B·B→A 5초·0 m, 정차 0. F2는 정차 10, A→B 90초, B→C는 출발 시각 시간대별 90/490/90초, r1 복귀 C→A 100초·800 m, r2 복귀는 공차 경유지 Y를 거쳐 25+25초·150+150 m라서 t1·t2 1000 m, t3 500 m가 된다. 수요는 fixture `demand_bins.csv`와 `measurement.arrival_seed`를 그대로 쓴다.
+- 결과: 7개 모두 M07 검증기 `pass=true`(실패 0, 미실행 0, 미검증 V16 하나)다. 손계산 표와 승객 단위(결과·사유·physical·승차·하차·대기·거절)와 지표 단위(M1 하한·상한 2/9·3/9, M2 사유·거절, M3, M5, M6 차량별, R12 600/599)에서 모두 같다. 참고로 예전 엔진 산출물과도 `passenger_outcomes.csv` 바이트와 운행편이 같다.
+
+### 9.12 구로 규모 합성 실행
+
+`tests/sim/test_planning_bridge.py::GuroScaleTimingTests`(C 형식 합성 `planning_cases.guro_scale()`: 노선 30·차량 60·승객 47,709명, 균등 기준안). M07 검증기 `pass=true`, 실패 0이다. 승객이 10,000명을 넘어 V6·V7·V9–V14는 `not_run`(정상, 검증기 명세 §4)이고 V16은 미검증이다. 시간은 진행 기록 6단계에 있다.
 
 ---
 
@@ -1229,25 +1069,23 @@ T1–T4 기대 로그는 `verified=true`. T1 로그를 한 군데씩 고쳐 해�
 src/busstrike/sim/
   __init__.py        공개 API 재노출
   models.py          불변 dataclass: Vehicle, Policy, Window, Leg, RouteSpec, PlanSpec, StopTime, Trip, Duty,
-                     Timetable, Passenger, Event, SimError
-  io.py              JSON·JSONL 읽기/쓰기, canonical_json, sha256_bytes/file, 입력 검증(§0.3·§0.4)
+                     Timetable, Passenger, BinRow, DemandFlow, ServiceTrip, Event(M07), SimError
+  io.py              JSON·JSONL·CSV 읽기/쓰기, canonical_json, sha256, 입력 검증(§0.3·§0.4), demand_bins.csv
   traveltime.py      TravelTimeTable(lookup, distance, bin_starts)
   timetable.py       planned_cycle, assign_vehicles, build_timetable, validate_timetable, normalize_plan
-  arrivals.py        u_micro, realize_od, realize_arrivals, write_arrivals, build_run_inputs
-  engine.py          SimContext, prepare, simulate (파일 입출력·난수·시계 없음)
-  eventlog.py        canonical_key, canonical_sort, dumps_events, write_events
-  metrics.py         compute_metrics
-  run.py             config_hash, run (디렉터리 단위 실행)
+  arrivals.py        u_micro, realize_od, bin_counts, realize_bins(인원) · generate(M07 생성기) ·
+                     source/realization checksum, build_run_inputs                        (6단계)
+  engine.py          SimContext, prepare, service_schedule(시간표 → M07 운행편), simulate(고정 일정, M07 사건)
+  eventlog.py        dumps_events, outcomes_bytes (M07 직렬화)
+  metrics.py         passenger_outcomes, compute_metrics (M07 M1–M6·G.R12)
+  run.py             config_hash, write_m07, run (디렉터리 단위 실행 → M07 폴더)
   __main__.py        CLI `python -m busstrike.sim run --scenario S --run-inputs R --plan P --out DIR` (SimError면 종료 코드 2)
   gtfs.py            export_gtfs                                         (4단계)
   curve.py           eligible_passengers, route_clusters, fleet_curve, cluster_eval   (5단계)
   adapters/planning_bridge.py   C Inputs·Plan → 시뮬 입력, evaluation_port, compare_with_estimate   (5단계)
-src/busstrike/evaluation/
-  __init__.py        설명만. CLI 경고를 피하려고 하위 모듈을 미리 import하지 않는다
-  validator.py       validate_run, write_report, failed_checks, CLI       (3단계)
-  _inputs.py         검증기 자체 파서·구간 시간 조회·해시 (sim import 금지)
-  _checks.py         V01–V15, 로그 색인, 지표 재계산
-tests/sim/, tests/evaluation/, tests/fixtures/sim/
+src/busstrike/evaluation/   팀 공식 M07 검증기(giho999, main). 6단계에서 3단계 검증기 파일은 지웠다
+  verify.py          verify(run_dir), CLI `python -m busstrike.evaluation.verify <run>`
+tests/sim/, tests/evaluation/(M07 검증기 테스트), tests/fixtures/sim/
 ```
 
 의존 규칙
@@ -1277,31 +1115,34 @@ def validate_timetable(timetable: Timetable, plan: PlanSpec, vehicles: Sequence[
 def normalize_plan(plan: PlanSpec, vehicles: Sequence[Vehicle], window: Window,
                    policy: Policy, tt: TravelTimeTable) -> Timetable: ...
 
-# arrivals.py
+# arrivals.py  (6단계)
 def u_micro(seed: int | str, kind: str, origin_stop_ids: Sequence[str], dest_stop_ids: Sequence[str]) -> int: ...
 def realize_od(flows_micro: Sequence[int], bin_starts: Sequence[int], bin_length_s: int, u: int) -> list[int]: ...
-def realize_arrivals(rows: Iterable[DemandFlow], station_stops: Mapping[str, Sequence[str]], policy: Policy,
-                     window: Window, seed: int | str, bin_length_s: int) -> list[Passenger]: ...
-def write_arrivals(passengers: Sequence[Passenger], path: Path) -> str: ...        # sha256
+def bin_counts(flows_micro: Sequence[int], u: int) -> list[int]: ...
+def realize_bins(rows: Iterable[DemandFlow], policy: Policy, window: Window, seed: int | str,
+                 bin_length_s: int) -> list[BinRow]: ...
+def generate(rows: Sequence[BinRow], seed) -> list[Passenger]: ...                 # uniform_bin_sha256_v1
+def build_run_inputs(input_bundle_id, scenario_path, demand_bins_path, travel_times_path, seed, out_path,
+                     method="systematic") -> dict: ...
 
 # engine.py
 def prepare(passengers: Sequence[Passenger], vehicles: Sequence[Vehicle], window: Window,
             policy: Policy, tt: TravelTimeTable) -> SimContext: ...
-def simulate(ctx: SimContext, timetable: Timetable,
-             passengers: Sequence[Passenger] | None = None) -> list[Event]: ...   # 정렬·seq 부여까지 끝난 목록
+def service_schedule(timetable: Timetable, ctx: SimContext) -> tuple[ServiceTrip, ...]: ...   # M07 운행편
+def simulate(ctx: SimContext, schedule: Sequence[ServiceTrip],
+             passengers: Sequence[Passenger] | None = None) -> SimResult: ...    # events·refused·refusal_events
 
 # eventlog.py
-def canonical_key(event: Event, arrival_s_by_passenger: Mapping[str, int]) -> tuple: ...
 def dumps_events(events: Sequence[Event]) -> bytes: ...
-def write_events(events: Sequence[Event], path: Path) -> str: ...                  # sha256
+def outcomes_bytes(rows: Iterable[Outcome]) -> bytes: ...
 
 # metrics.py
-def compute_metrics(events: Sequence[Event], passengers: Sequence[Passenger], timetable: Timetable,
-                    vehicles: Sequence[Vehicle], policy: Policy, tt: TravelTimeTable) -> dict: ...
+def passenger_outcomes(result: SimResult, schedule: Sequence[ServiceTrip]) -> list[Outcome]: ...
+def compute_metrics(result, outcomes, schedule, *, stop_area, wait_threshold_s, max_headway_s) -> dict: ...
 
 # run.py
 def config_hash(policy: Policy, window: Window, vehicles: Sequence[Vehicle]) -> str: ...
-def run(scenario_path: Path, run_inputs_path: Path, plan_path: Path, out_dir: Path) -> dict: ...   # run.json 내용
+def run(scenario_path: Path, run_inputs_path: Path, plan_path: Path, out_dir: Path) -> dict: ...   # measurement.json 내용
 
 # gtfs.py
 def export_gtfs(timetable: Timetable, service_date: str, out_dir: Path,
@@ -1326,11 +1167,8 @@ def curve_report(inputs, *, n_max=None, stop_when_saturated=True, bridge=None) -
 def comparison_plans(inputs, *, exhaustive_limit=200, include_search=True) -> list[tuple[str, Plan]]: ...
 def compare_with_estimate(inputs, plans, *, work_dir=None, validate=True) -> dict: ...  # {rows, summary} (5단계에서 바꿈)
 
-# evaluation/validator.py
-def validate_run(run_dir: Path, *, scenario_path: Path | None = None, run_inputs_path: Path | None = None,
-                 plan_path: Path | None = None) -> dict: ...                       # validation.json 내용(쓰지 않음)
-def write_report(report: dict, path: Path) -> None: ...
-def failed_checks(report: dict) -> list[str]: ...                                   # C Assessment.violations
+# evaluation/verify.py  (M07, giho999 — 엔진 쪽에서 고치지 않는다)
+def verify(run_dir, scenario_dir=None, *, recompute_limit=10_000, scan="full") -> Report: ...   # Report.payload = 보고서
 ```
 
 ---
@@ -1344,11 +1182,11 @@ def failed_checks(report: dict) -> list[str]: ...                               
 | **D02** 평가 단위 | `single_bus_leg` | 수요 벡터가 access·egress 한 구간 단위이고, C도 `single_bus_leg`만 받는다. `full_journey`는 M00이 "환승 연결과 중복 집계 검증 뒤"로 조건을 달았는데 그 검증이 없다. 엔진도 환승이 없다(§4.4) | `full_journey`는 §4.4 확장(승객 leg 목록)과 지하철 구간 시간 입력이 필요하다. 두 scope의 충족률을 한 그래프에 섞지 않는다 |
 | **D03** 가용 차량·초기 위치 | ① 차량 수 = 지자체가 실제 투입한 대수(세 안 공통 상한) ② 모두 같은 차급 ③ 초기 위치 = 배정 노선의 anchor(`initial_stop_id=null`), 공차 출고 0 ④ 종료 = anchor 복귀 ⑤ 가용 시각 = 운영시간과 같게 | 전세버스 차고지 위치와 차고지–기점 구간 시간이 자료에 없다. 지어내면 M00 §2.2 위반이다. 세 안에 같은 가정이라 비교는 공정하다. C의 첫 버전 제약(동일 조건 차량, 동일 거점 복귀)과도 맞는다 | 차고지를 넣으려면 운행안이 출고·입고 정류장열을 주고 `travel_times.json`이 그 구간을 포함해야 한다(§1.4 확장) |
 | **D06** 환승·도보·정상 수단 | 환승 0회, 도보 0(자기 정류장에서만 타고, 역에 딸린 정류장끼리는 0초), 정상 수단(지하철·비파업 버스)은 시뮬레이터 밖 | 승객이 "역 정류장에 내리면 성공"이라 지하철 구간은 필요 없다. 비파업 버스는 §5대로 3단계 잔여 수요에서 처리한다. 도보를 넣으면 정류장 선택 모형이 필요해 결정론·설명 가능성 부담이 커진다 | 도보 허용은 실현기에서 `origin_stop_ids`를 넓히는 것으로 일부 표현할 수 있다(도보 시간은 여전히 0) |
-| **D07** 최대 대기·총 이동시간 | `max_wait_s = 1200`(20분), `max_journey_s = 3600`(60분). 민감도는 대기 600·900·1800으로 | 대기 한도는 대기열 동작을 바꾸므로 **실행 전에 고정**해야 하고, 배차간격(대수가 적은 노선은 10–20분)보다 짧으면 한 대만 놓쳐도 전부 포기가 된다. 총 이동 한도는 **사후 판정**이라 같은 로그로 값을 바꿔 다시 계산할 수 있으니 넉넉히 잡고 분포를 같이 보고한다. 값 자체는 기존 Draft PR이 제안한 가정과 같다 | 대기 한도를 바꾸면 `arrivals.jsonl`을 다시 만들어야 한다(새 `input_bundle_id`). `single_bus_leg`에서 "누적 대기"는 정류장 한 곳의 대기다 |
+| **D07** 최대 대기·총 이동시간 | `max_wait_s = 1200`(20분), `max_journey_s = 3600`(60분). 민감도는 대기 600·900·1800으로 | 대기 한도는 대기열 동작을 바꾸므로 **실행 전에 고정**해야 하고, 배차간격(대수가 적은 노선은 10–20분)보다 짧으면 한 대만 놓쳐도 전부 포기가 된다. 총 이동 한도는 6단계 이전에는 사후 판정이었으나, 6단계부터는 M07처럼 결과를 정하는 기한이다(`t+J`에 미확정이면 unserved, 계약 §7 D6). 그래서 바꾸면 다시 실행해야 한다. 값 자체는 기존 Draft PR이 제안한 가정과 같다 | 대기 한도를 바꾸면 `arrivals.jsonl`을 다시 만들어야 한다(새 `input_bundle_id`). `single_bus_leg`에서 "누적 대기"는 정류장 한 곳의 대기다 |
 
 함께 정해야 하는 것(D 번호는 없지만 결과에 영향)
 
-- `W_e`: 수요 창은 06–10시다. `W_e=10:00`이면 09:40 이후 승객은 대부분 `left_waiting`이 된다. **권장 `W_e = 10:30`**(차량 가용도 같이). 세 안에 같은 값이어야 한다.
+- `W_e`: 수요 창은 06–10시다. `W_e=10:00`이면 09:40 이후 승객은 대부분 미충족(6단계부터 `service_end`·`wait`, 이전에는 `left_waiting`)이 된다. **권장 `W_e = 10:30`**(차량 가용도 같이). 세 안에 같은 값이어야 한다.
 - 정차·회차 값(가정 A5·A6): 권장 `dwell_base_s=10`, `dwell_per_boarding_s=3`, `dwell_per_alighting_s=2`, `turnaround_s=180`, `cycle_rest_s=0`. 근거 자료가 없는 추정이며 현장값으로 바꿔야 한다. 운수종사자 휴게시간 규정 적용 여부는 확인이 필요하다.
 - 차량 정원: 전세버스라면 좌석 45·입석 0, 시내버스형이라면 좌석+입석. 지자체 실제 투입 차종 확인 필요.
 
@@ -1364,11 +1202,11 @@ def failed_checks(report: dict) -> list[str]: ...                               
 | A2 | 모든 차량 이동이 `W_e` 안에 끝나야 한다(마지막 cycle 통째로 제외) | 나쁘게 | `W_e`를 수요 종료보다 늦추면 완화 |
 | A3 | cycle 편성·시작 때 만차 1회분 승하차 여유(`allow`)를 뺀다 | 나쁘게(약함) | 마지막 cycle 하나가 빠질 수 있다 |
 | A4 | 정차 중 도착한 승객은 그 차를 못 탄다(도착 스냅숏) | 나쁘게(약함) | 기점에서 대기 중인 차에 늦게 온 승객도 못 탄다 |
-| A5 | 정차 = 기본 + 승차·하차 1인당 합(문 하나, 동시 승하차 없음), 값은 추정 | 나쁘게 | 값이 클수록 나빠진다. 현장값 필요 |
+| A5 | 정차 = 기본 정차 고정(6단계: M07 고정 일정이라 1인당 정차는 0만 받는다). 값은 추정 | 좋게 | 승하차가 많은 정류장의 지연이 빠진다. 1인당 정차를 넣으려면 M07 일정 형식(고정 일정) 확장이 필요하다 |
 | A6 | 회차 `turnaround_s`만 두고 운전자 휴게(`cycle_rest_s`)는 0 | 좋게 | 휴게 규정을 적용하면 순환시간이 늘어난다 |
 | A7 | 구간 시간은 평시 TPSS·버스 GTFS 값이고 계획 = 실현(변동 없음) | 좋게 | 파업일 도로 혼잡, 일별 변동, 전세버스의 낯선 노선 주행을 반영하지 않는다 |
 | A8 | 구간 시간은 출발 시각의 시간대 값을 구간 끝까지 쓴다 | 중립 | 시간대 경계 근처에서만 차이 |
-| A9 | 승객은 시간대 안에서 고르게 도착한다(체계적 반올림) | 좋게(약함) | 실제의 몰림·열차 도착에 따른 egress 뭉침이 없다 |
+| A9 | 시간대별 인원은 체계적 반올림, 시간대 안 시각은 M07 생성기(SHA-256 균등)다 | 중립 | 6단계 이전(고르게 퍼진 시각)보다 seed에 따른 흔들림이 조금 커진다. 실제의 몰림·열차 도착에 따른 egress 뭉침은 여전히 없다 |
 | A10 | 수요의 시간대 = 정류장 도착 시각 | 중립 | 실제 자료는 승차 태그 기준이라 진짜 도착은 더 이르다. egress는 §2.3의 확인 사항 |
 | A11 | 수요는 고정이다(셔틀이 좋아져도 늘지 않고, 나빠도 다른 수단으로 가지 않는다) | 중립 | 요구사항의 전제. `abandon`은 평가 절단 |
 | A12 | 비파업 노선의 흡수는 3단계에서 끝났고 셔틀과 상호작용하지 않는다 | 중립 | 셔틀 만차 승객이 마을버스로 가는 경우 누락(나쁘게), 마을버스가 이미 꽉 찬 경우 누락(좋게) |
@@ -1381,6 +1219,9 @@ def failed_checks(report: dict) -> list[str]: ...                               
 | A19 | 차량 고장·결행·운전자 교대 없음 | 좋게 | |
 | A20 | 시간표는 고정 주기·균등 오프셋이다. 수요가 몰리는 시간에 차를 더 넣지 않는다 | 나쁘게 | 시간표를 직접 주는 안은 이 제약이 없다 → 비교 실험은 세 안 모두 생성기 사용 권장(§1.6) |
 | A21 | 차급이 섞였을 때 명시 배정이 없으면 ID 순으로 노선에 배정 | 중립 | v1 권장은 동일 차급(D03) |
-| A22 | 같은 초에 같은 정류장에 선 차량은 `vehicle_id` 순으로 태운다 | 중립 | 결정론을 위한 임의 규칙 |
+| A22 | 같은 초에 같은 정류장에 선 차량은 M07 stable_id(trip_id) 순으로 태운다(6단계, 이전에는 `vehicle_id` 순) | 중립 | 결정론을 위한 임의 규칙(M07 사건 키) |
 | A23 | 순환형에서 승객은 기점(anchor)을 넘어 계속 타지 못한다 | 나쁘게 | anchor를 주요 역에 두면 영향이 없다 |
 | A24 | 속도 목표(전체 1회 2초)는 추정이다 | — | 2단계에서 실측 |
+| A25 | (6단계, 사용자 결정) 승객 OD는 정류장 1개 → 1개다. 역에 딸린 정류장이 여럿이어도 상류(M03)가 운행안과 무관하게 하나를 정한다 | 나쁘게 | **공정성 손실**: 셔틀이 역의 다른 정류장에 서는 안은 그 수요를 못 태운다(정한 정류장에 서는 안이 유리하다) → **순위 영향 가능**. M07 검증기가 정류장 집합 OD를 표현하지 못해서다(계약 §7 D1) |
+| A26 | (6단계, 사용자 결정) M07 출력은 cycle당 영업 leg가 첫 leg 하나인 노선(피더형·순환형)만 받는다. 두 역 연결형은 `OUT_OF_SCOPE`다 | 중립 | M07 V16이 "같은 차량의 운행편은 같은 출발 거점"을 요구한다(계약 §7 D2). 양방향 영업 셔틀안은 지금 평가할 수 없다. 시간표 생성·GTFS 내보내기는 지원한다 |
+| A27 | (6단계) 관측 끝 `drain_s` 기본값은 `W_e + max_journey_s`이고, 모든 승객이 이 안에 기한을 맞는다 | 중립 | censored가 0이다. 운행 종료 뒤 남은 승객은 unserved(`service_end` 또는 `wait`)가 된다 |
