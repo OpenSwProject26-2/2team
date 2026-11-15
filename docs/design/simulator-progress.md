@@ -123,7 +123,7 @@
 
 ## 5단계 — C와 연결(어댑터·S(n)·근사–시뮬 비교)
 
-- PR: (PR 생성 후 추가) (base `feat/sim-gtfs-export`, 스택 PR, 브랜치 `feat/sim-planning-bridge`)
+- PR: https://github.com/OpenSwProject26-2/2team/pull/36 (Draft, base `feat/sim-gtfs-export`, 스택 PR, 브랜치 `feat/sim-planning-bridge`)
 - 한 일
   - `src/busstrike/sim/adapters/planning_bridge.py`: C `Inputs`·`Plan` → `scenario.json`·`travel_times.json`·`arrivals.jsonl`·`run_inputs.json`·`plan.json` 어댑터, `run_plan`(어댑터 → `run()` → 검증기 → 지표), C `EvaluationPort` 구현(`evaluation_port`·`make_evaluation_port`), `curve_report`(S(n) 표 + C 근사), `compare_with_estimate`(근사–시뮬 비교표), Markdown 렌더링, CLI `python -m busstrike.sim.adapters.planning_bridge`.
   - `src/busstrike/sim/curve.py`: `eligible_passengers`·`fleet_curve`·`marginal_gains`·`route_clusters`·`overlap_ratios`·`cluster_eval`. 파일 없이 `normalize_plan → simulate → compute_metrics`를 반복한다.
