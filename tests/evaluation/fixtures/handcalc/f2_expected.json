@@ -1,0 +1,67 @@
+{
+  "_source": "docs/verifier_spec.md §5 F2 (명세 커밋 ca643f6, 엔진 브랜치 HEAD d18ee1e)",
+  "_transcribed_by": "giho999 (M07)",
+  "_transcription_rule": [
+    "명세 §5 본문 표에서 사람이 손으로 옮긴 값이다. 엔진 산출물에서 복사하지 않았다.",
+    "명세가 말하지 않은 값은 넣지 않는다. 비어 있는 항목은 '검증 대상이 아님'이 아니라 '명세 미기재'다.",
+    "검증기는 이 파일을 정답으로 쓰고, 엔진 출력을 정답으로 쓰지 않는다."
+  ],
+  "_scenario": [
+    "t1 v1 정원 2: A(100/110)→B(200/210)→C(300), return 400, 1000 m",
+    "t2 v1 정원 2: A(700/710)→B(800/810)→C(900), return 1000, 1000 m",
+    "t3 v2 정원 5: A(400/410)→B(500/510)→C(1000), return 1050, 500 m",
+    "W=300, J=600, drain 1100. 지역 A·B=dong-1, C·D=dong-2. 노선 t1·t2=r1, t3=r2"
+  ],
+  "config": {"max_wait_s": 300, "max_journey_s": 600, "drain_s": 1100,
+             "wait_threshold_s": 60, "max_headway_s": 600},
+  "passengers": {
+    "[\"a\",0]": {"origin": "A", "destination": "C", "time_s": 0, "outcome": "served",
+                 "reason": null, "arrival_s": 300, "wait_s": 100, "refused": 0},
+    "[\"a\",1]": {"origin": "A", "destination": "C", "time_s": 0, "outcome": "served",
+                 "reason": null, "arrival_s": 300, "wait_s": 100, "refused": 0},
+    "[\"a\",2]": {"origin": "A", "destination": "C", "time_s": 0, "outcome": "unserved",
+                 "reason": "wait", "_spec_note": "300 만료", "refused": 1},
+    "[\"b\",0]": {"origin": "B", "destination": "C", "time_s": 150, "outcome": "unserved",
+                 "reason": "wait", "_spec_note": "450 만료, t3 B=500", "refused": 1},
+    "[\"c\",0]": {"origin": "A", "destination": "D", "time_s": 0, "outcome": "unserved",
+                 "reason": "no_connection", "refused": 0},
+    "[\"d\",0]": {"origin": "C", "destination": "A", "time_s": 50, "outcome": "unserved",
+                 "reason": "no_connection", "refused": 0},
+    "[\"e\",0]": {"origin": "A", "destination": "B", "time_s": 750, "outcome": "unserved",
+                 "reason": "service_end", "_spec_note": "A 마지막 방문 700, 1050 만료", "refused": 0},
+    "[\"f\",0]": {"origin": "B", "destination": "C", "time_s": 820, "outcome": "censored",
+                 "reason": null, "physical": "waiting", "refused": 0},
+    "[\"g\",0]": {"origin": "A", "destination": "C", "time_s": 380, "outcome": "unserved",
+                 "reason": "journey", "_spec_note": "980 만료, 1000 도착 보존",
+                 "arrival_s": 1000, "wait_s": 20, "refused": 0}
+  },
+  "metrics": {
+    "M1.rate": null,
+    "M1.lower": [2, 9],
+    "M1.upper": [3, 9],
+    "M2.unserved_by_reason": {"no_connection": 2, "service_end": 1, "journey": 1, "wait": 2},
+    "M2.refusal_events": 2,
+    "M2.passengers_refused_by_outcome.unserved": 2,
+    "M3.served": {"n": 2, "mean_s": 100, "p90_s": 100, "over_threshold_n": 2, "over_threshold_rate": 1.0},
+    "M3.boarded": {"n": 3, "mean_s": [220, 3], "p90_s": 100, "over_threshold_n": 2},
+    "M3.not_boarded_unserved_by_reason": {"no_connection": 2, "service_end": 1, "wait": 2},
+    "M5.by_origin_area": {
+      "dong-1": {"total": 8, "served": 2, "unserved": 5, "censored": 1, "served_rate": 0.25},
+      "dong-2": {"total": 1, "served_rate": 0.0}
+    },
+    "M5.min_served_rate.area": "dong-2",
+    "M6.vehicles": {
+      "v1": {"trips_completed": 2, "boarded": 2, "served_alighted": 2,
+             "service_time_s": 600, "distance_m": 2000, "empty_time_s": 380,
+             "_spec_note": "공차 380 = 100+90+90+100"},
+      "v2": {"trips_completed": 1, "boarded": 1, "served_alighted": 0,
+             "service_time_s": 650, "distance_m": 500, "empty_time_s": 50}
+    },
+    "G.R12.max_gap_by_route_s": {"r1": 600},
+    "_R12_variants": {
+      "max_headway_s=600": {"pass": true},
+      "max_headway_s=599": {"pass": false, "violation_count": 3,
+                            "_spec_note": "A·B·C 3건 위반", "stops": ["A", "B", "C"], "route": "r1"}
+    }
+  }
+}

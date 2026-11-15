@@ -1,0 +1,3 @@
+# 합성 complex 산출물은 크다(1천 명 events.jsonl 14 MB). make_complex.sh로 재생성한다.
+scenario-complex-*/
+run-complex-*/

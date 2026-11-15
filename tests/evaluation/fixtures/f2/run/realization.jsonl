@@ -1,0 +1,10 @@
+{"checksum":"a233008038d093c6d742c9ad1b9698aa644a4bf452ee74f41ddc946134e6656c","generator":"uniform_bin_sha256_v1","passenger_count":9,"rows":[{"aggregate_id":"a","bin_start_s":0,"bin_width_s":1,"destination":"C","origin":"A","passenger_count":3},{"aggregate_id":"b","bin_start_s":150,"bin_width_s":1,"destination":"C","origin":"B","passenger_count":1},{"aggregate_id":"c","bin_start_s":0,"bin_width_s":1,"destination":"D","origin":"A","passenger_count":1},{"aggregate_id":"d","bin_start_s":50,"bin_width_s":1,"destination":"A","origin":"C","passenger_count":1},{"aggregate_id":"e","bin_start_s":750,"bin_width_s":1,"destination":"B","origin":"A","passenger_count":1},{"aggregate_id":"f","bin_start_s":820,"bin_width_s":1,"destination":"C","origin":"B","passenger_count":1},{"aggregate_id":"g","bin_start_s":380,"bin_width_s":1,"destination":"C","origin":"A","passenger_count":1}],"seed":"f2","source_checksum":"8586844ed69743cc88a103da97c1dc418b8a268129044f04a12c185ec8591e4d"}
+["[\"a\",0]","A","C",0]
+["[\"a\",1]","A","C",0]
+["[\"a\",2]","A","C",0]
+["[\"b\",0]","B","C",150]
+["[\"c\",0]","A","D",0]
+["[\"d\",0]","C","A",50]
+["[\"e\",0]","A","B",750]
+["[\"f\",0]","B","C",820]
+["[\"g\",0]","A","C",380]

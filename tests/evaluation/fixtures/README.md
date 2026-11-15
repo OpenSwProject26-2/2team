@@ -1,0 +1,73 @@
+# tests/evaluation/fixtures — 검증기 입력 fixture
+
+검증기(`src/busstrike/evaluation/`)는 **파일만** 읽는다. 여기 있는 것은 그 입력과,
+명세 §5 손계산 기대표다.
+
+## 디렉터리
+
+| 경로 | 내용 | 저장소 추적 |
+| --- | --- | --- |
+| `handcalc/f1_expected.json`, `handcalc/f2_expected.json` | `docs/verifier_spec.md` §5 표를 **사람이 손으로 옮긴** 기대값. 검증기의 정답 출처 | 추적 |
+| `f1/`, `f1-w9/`, `f1-j14/`, `f1-drain12/`, `f1-wj9/`, `f2/`, `f2-headway599/` | F1·F2 엔진 산출물(각 `scenario/` + `run/`). 작아서 커밋 | 추적 |
+| `make_fixtures.py` | 위 F1·F2를 만드는 **엔진 호출 스크립트**. `sim`을 import하는 유일한 파일 | 추적 |
+| `make_complex.sh` | 합성 complex 실행 결과 생성(harness CLI 호출) | 추적 |
+| complex 산출물 | `events.jsonl` 14 MB(1천 명, 사건 89,703건) → **커밋하지 않는다** | 미추적 |
+
+## 독립성 (`docs/verifier_spec.md` §1)
+
+`make_fixtures.py`는 `sim`을 import한다. 이 파일은 **검증기 패키지 밖**(`tests/`)에 있고
+검증기는 이것을 import하지 않는다. `src/busstrike/evaluation/` 의 `sim`·`opt` import 0건은
+`tests/evaluation/test_import_independence.py`가 정적으로 검사한다.
+
+## 재생성
+
+B 엔진이 필요하다. 내 작업 브랜치에 B 코드를 섞지 않으므로 **별도 worktree**를 쓴다.
+
+```sh
+# 0) 이 저장소(검증기 브랜치) 루트에서 시작한다
+REPO="$PWD"
+
+# 1) B 엔진 worktree와 venv. 내 작업 브랜치에 B 코드를 섞지 않는다
+git worktree add ../sim-engine origin/feat/5-simulation-core --detach
+cd ../sim-engine
+python3 -m venv .venv && .venv/bin/pip install -r sim/requirements.txt   # SimPy 4.1.2
+
+# 2) F1·F2 (엔진 커밋 d18ee1e 기준)
+PYTHONPATH="$PWD" .venv/bin/python "$REPO/tests/evaluation/fixtures/make_fixtures.py" \
+    --out "$REPO/tests/evaluation/fixtures"
+
+# 3) 합성 complex (저장소 밖으로 쓴다)
+SIM_WORKTREE="$PWD" OUT=../verifier-fixtures PASSENGERS=1k \
+    sh "$REPO/tests/evaluation/fixtures/make_complex.sh"
+
+# 4) 검증기로 돌린다 (저장소 루트에서)
+cd "$REPO" && python -m busstrike.evaluation.verify ../verifier-fixtures/run-complex-1k
+```
+
+`make_fixtures.py`가 `sim.harness run` 대신 엔진을 직접 호출하는 이유: 하네스의 정책은
+`proposed-v0.2`(W=1200·J=3600) 하나뿐이고 drain은 `window_end_s + max_journey_s` 고정이라
+F1(W=10·J=15·drain=20)·F2(W=300·J=600·drain=1100)를 CLI로 만들 수 없다. 출력 writer는
+하네스와 같은 것을 쓰므로 파일 형식은 실제 실행과 같다.
+
+## 검증기를 돌려 본 실행 구성
+
+아래는 전부 `pass=true`(실패 0 · 미검증 1 = V16)였다. 산출물은 크므로 저장소에 넣지 않았고
+명령만 남긴다.
+
+| 구성 | 규모 | 사건 | 확인한 것 |
+| --- | --- | --- | --- |
+| `complex` + `--write-realization` | 1천 명 | 89,703 | 승객 1,000명 전원 일치 |
+| `complex` + `--write-realization` | 1만 명 | 117,127 | 승객 10,000명 전원 일치 (명세 §4 재계산 상한) |
+| `complex` (realization 없음) | 1천 명 | 89,703 | `demand_bins.csv`+seed로 발생 재생성 경로 |
+| `complex` + `--stream-outcomes` | 1천 명 | 89,703 | 결과 CSV가 확정 순서일 때(`outcome_order=finalization`) |
+| `simple` 망 | 1천 명 | 3,167 | 노선 1·정류장 2·운행편 184의 다른 망 모양 |
+| F1·F2 손계산 fixture 7종 | 3·9 명 | 14–39 | 명세 §5 표와 승객·지표 단위 일치 |
+
+`--sink null` 실행은 `events.jsonl`이 없어 검증할 수 없다(검증기는 사건 로그가 필요하다).
+
+## 생성 당시 기록
+
+- 엔진 커밋 `d18ee1e` (`origin/feat/5-simulation-core`, PR #6 Draft)
+- 명세 커밋 `ca643f6` (`docs/verifier_spec.md`)
+- Python 3.14.3 / macOS(darwin) / SimPy 4.1.2
+- complex 1천 명: 운행편 5,632 · 정류장 방문 168,960 · 수요 행 496 · 사건 89,703 · drain 36,000초
