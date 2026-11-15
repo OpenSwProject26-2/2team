@@ -182,7 +182,7 @@
 
 ## 6단계 — M07 출력 형식 통일
 
-- PR: (PR을 연 뒤 링크 추가) (Draft, base `main`, 브랜치 `feat/sim-m07-output`). #28·#32·#33·#34·#36을 대체한다.
+- PR: 미개설(사용자 검토 대기). 브랜치 `feat/sim-m07-output`(로컬 커밋만, push 안 함), 열면 base `main`. #28·#32·#33·#34·#36을 대체한다.
 - 한 일
   - 최신 `main`에서 `feat/sim-m07-output`을 따고 `pr/36`(5단계까지의 스택)을 병합했다. `evaluation/__init__.py` 충돌은 main(giho999) 버전을 그대로 썼다.
   - 3단계 검증기(`evaluation/validator.py`·`_checks.py`·`_inputs.py`, `tests/evaluation/test_validator.py`·`test_tamper.py`·`test_independence.py`·`runs.py`)를 지웠다. giho999 파일과 이름이 겹치는 것은 없었다.
@@ -223,4 +223,12 @@
   - 멈춘 지점: 코디네이터에게 세 번 물었다. ① D1 정류장 집합 OD(공정성) ② D2 두 역 연결형과 V16 ③ `independently_verified`에 넣을 M07 필드. 셋 다 사용자가 A를 골랐고, 그대로 구현했다.
   - 1인당 정차·양방향 영업 노선·정류장 집합 OD를 다시 쓰려면 M07 형식 확장(검증기 쪽 결정)이 먼저다.
 - 테스트 실행 명령과 결과
-  - `PYTHONPATH=src:. python3 -m unittest discover -s tests -t .` → (최종 결과는 PR 본문 "## 확인")
+  - `PYTHONPATH=src:. python3 -m unittest discover -s tests -t . -v` → 214개 실행, 208개 통과, 6개 건너뜀, 실패 0(Python 3.14.4, WSL2 `/mnt/c`, 약 3–5분). 건너뛴 6개는 모두 환경변수가 필요한 선택 실행이다. 검증기 쪽 complex 5개(`BUSSTRIKE_COMPLEX_RUN`·`_10K`, 예전 엔진 `make_complex.sh` 산출물 필요)와 구로 규모 전체 곡선 1개(`BUSSTRIKE_SCALE_CURVES=1`)다.
+    - giho999 검증기 테스트 `tests/evaluation/` 54개 통과(+5 건너뜀). `src/busstrike/evaluation/`·`tests/evaluation/`은 main 대비 변경 0.
+    - 손계산 시나리오 T1·T2·T2b·T3·T4: 표와 승객·지표 단위로 일치. M07 검증기 `pass=true`, CLI 종료 코드 0(`test_scenarios.py`). T1 로그는 26줄·SHA-256 `72cc7ed1…`.
+    - 교차 검증 F1·F1-w9·F1-j14·F1-drain12·F1-wj9·F2·F2-headway599: 7개 모두 handcalc와 승객·지표 단위로 일치하고 M07 `pass=true`(실패 0·미실행 0). 예전 엔진 fixture와 `passenger_outcomes.csv` 바이트·운행편도 같다(`test_m07_cross.py`).
+    - 결정론: 같은 입력 2회 실행에서 M07 폴더 9개 파일이 바이트 단위로 같다(T1·T2b·T3·합성). `PYTHONHASHSEED` 0/12345, 입력 순서를 섞어도 같다(`test_determinism.py`).
+    - 구로 규모 합성(노선 30·차량 60·승객 47,709명·사건 120,154줄, 균등 기준안): M07 `pass=true`, 실패 0. oracle 검사 V6·V7·V9–V14는 N > 10,000이라 `not_run`(정상)이다. 시간은 3회 측정에서 어댑터 0.5–1.2초, `run_plan`(입력 파일 + 실행 + M07 폴더) 2.6–8.0초, M07 검증 6.3–22.6초였다(WSL2 `/mnt/c` 파일 시스템 편차가 크다). 충족은 C 근사 19,444명, 시뮬 19,080명(5단계 값과 같다).
+    - 합성 5만 명 속도(`SpeedMeasurementTests`): 시간표+준비 0.07초, 엔진 0.30–0.32초, 로그+지표 0.85–1.01초, `run()` 3.1–4.0초.
+  - `PYTHONPATH=src python3 -m busstrike.sim.adapters.planning_bridge --input tests/fixtures/planning/synthetic.json --out <임시>` → 종료 코드 0. 비교 10안 모두 M07 pass, MAE 0, 스피어만 1.0.
+  - 린트·타입 검사는 저장소에 명령이 없어 실행하지 않았다.
