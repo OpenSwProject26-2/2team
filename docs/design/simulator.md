@@ -10,7 +10,7 @@
 
 ## 문서 상태
 
-- 상태: **설계 초안 · 팀 검토 대기 · 2단계(핵심 엔진, `feat/sim-core`) 구현.** 3–5단계(검증기·GTFS·C 연결)는 미착수. 이 문서의 값은 승인된 결정이 아니다(AGENTS.md §1). D02·D03·D06·D07은 §11의 권장값을 "가정"으로 쓰고, 승인 전에는 코드 상수로 박지 않고 Scenario 입력으로만 받는다.
+- 상태: **설계 초안 · 팀 검토 대기 · 2단계(핵심 엔진, `feat/sim-core`)·3단계(독립 검증기, `feat/sim-validator`) 구현.** 4–5단계(GTFS·C 연결)는 미착수. 이 문서의 값은 승인된 결정이 아니다(AGENTS.md §1). D02·D03·D06·D07은 §11의 권장값을 "가정"으로 쓰고, 승인 전에는 코드 상수로 박지 않고 Scenario 입력으로만 받는다.
 - 요구사항 원문: [simulator-brief.md](simulator-brief.md) · 진행 기록: [simulator-progress.md](simulator-progress.md)
 - 관련 모듈: M05(시뮬레이터), M07(독립 검증), M04 연결부, M00 v0.1 계약. 공용 계약(`docs/contracts`, `src/busstrike/contracts`)은 바꾸지 않는다. 아래 스키마는 모두 M00이 "module-owned"로 남긴 영역의 M05 소유 형식이다.
 - 시뮬레이션 결과는 실제 운행 성능·승인 근거가 아니다.
@@ -864,11 +864,11 @@ route_clusters(routes, ctx) -> [[route_id]]
 | V07 | 하차는 승차 뒤 | 같은 차량·같은 trip, `stop_seq(alight) > stop_seq(board)`, `stop_id ∈ dest_stop_ids`, 그 사이에 허용 목적지를 지나치지 않음(가장 이른 허용 정류장), `arrive`와 시각 일치 |
 | V08 | 구간 시간 | 연속 정차에서 `다음 arrive.t − depart.t == travel_times[(a,b)]`의 `depart.t` 시간대 값 |
 | V09 | 정차·회차 | `depart.t − arrive.t ==` §3.3의 정차식. trip 사이: `다음 trip 첫 arrive.t == max(sched_s, 앞 trip 종점 arrive.t + 하차 정차 + turnaround(영업 뒤) + cycle_rest(새 cycle))`. `cancel`이 있으면 §3.4의 취소 조건이 실제로 성립하고, 없으면 성립하지 않음 |
-| V10 | 운영시간 | 차량 이벤트 시각이 모두 `[max(W_s, available_start_s), min(W_e, available_end_s)]` 안 |
+| V10 | 운영시간 | 차량 이벤트(`cancel` 제외) 시각이 모두 `[max(W_s, available_start_s), min(W_e, available_end_s)]` 안 |
 | V11 | 탑승 규칙 | 정차마다 대기 집합을 재구성해: ① 남겨진 유효 승객이 있으면 그 차는 만차로 떠났다 ② 탄 승객보다 줄 앞에 있던 유효 승객이 남겨지지 않았다 ③ `left_behind`가 재구성값과 같다 ④ 승객의 첫 남겨짐에 `denied`가 있고 그 외에는 없다 |
 | V12 | 미수송 처리 | `abandon.t == arrival_s + max_wait_s ≤ W_e`. `left_waiting.t == W_e < arrival_s + max_wait_s`. `no_service.t == arrival_s`. cause가 §4.5 규칙과 일치(`FULL` ⇔ 남겨진 적 있음, `NO_ROUTE_*` ⇔ 시간표 패턴으로 정적 판정) |
 | V13 | 지표 재계산 | `metrics.json`의 인원·비율·대기/차내/총 이동 통계·차량 거리·trip 재차율이 로그에서 다시 계산한 값과 같음 |
-| V14 | 시간표 | `plan.json`의 노선·대수와 일치(노선별 차량 수, leg 정류장열). 차량이 fleet에 있고 노선당 중복 없음. 예정 시각이 차량 유효 창 안, trip끼리 겹치지 않고 이어짐. `origin=="generated"`면 `cycle_index=0` trip의 anchor 예정 시각이 `start + floor(k·period_s/n)`(k = 노선 안 차량 순번)이고 같은 차량의 연속 cycle 간격이 `period_s` 이상 |
+| V14 | 시간표 | `plan.json`의 노선·대수와 일치(노선별 차량 수, leg 정류장열). 차량이 fleet에 있고 노선당 중복 없음. 예정 시각이 차량 유효 창 안, trip끼리 겹치지 않고 이어짐. `origin=="generated"`면 `cycle_index=0` trip의 anchor 예정 시각이 `start + floor(k·period_s/n)`(k = 노선 안 차량 순번)이고, cycle m의 anchor 예정 시각이 `start + floor(k·period_s/n) + m·period_s` 이상(3단계에서 고침, §8.3 아래) |
 | V15 | 식별·해시 | `run.json`의 `plan_id`·`revision`·`input_bundle_id`가 입력과 같고, 기록된 SHA-256이 실제 파일과 같음. `run_inputs.checksum` 재계산 일치 |
 
 재구성 의사코드(V03·V06·V07·V11이 공유)
@@ -908,6 +908,22 @@ for visit in 로그 순서(= 시간순):
 - `independently_verified`(C `Assessment`) = `verified`. `violations`(C) = 실패한 `check_id` 목록.
 - V01이 실패하면 나머지는 `skipped`로 두고 끝낸다(깨진 로그로 다른 결론을 내지 않는다).
 - CLI: `python -m busstrike.evaluation.validator --run-dir <dir>` → `validation.json` 쓰고, 위반이 있으면 종료 코드 1.
+
+3단계 구현에서 정한 세부
+- **입력 위치**: `run.json`·`timetable.json`·`events.jsonl`·`metrics.json`은 `--run-dir`에서 읽는다(뒤의 셋은 `run.json`의 `*_uri`). `scenario.json`·`run_inputs.json`·`plan.json`은 `run.json`에 경로가 없으므로(§0.2 절대 경로 금지) 기본은 같은 디렉터리이고, 다르면 `--scenario`·`--run-inputs`·`--plan`으로 준다. `arrivals.jsonl`·`travel_times.json`은 `run_inputs.json`의 URI를 따른다. `--out`으로 리포트 경로를 바꿀 수 있다. 공개 함수는 `validate_run(run_dir, *, scenario_path=None, run_inputs_path=None, plan_path=None) -> dict`(파일은 쓰지 않음)와 `write_report`·`failed_checks`.
+- **입력을 읽을 수 없을 때**(파일 없음, 로그 외 입력 문서의 JSON·필드 형식 오류): 위반이 아니라 `ValidatorInputError`, CLI 종료 코드 **2**. 이벤트 로그의 형식 오류만 V01 위반이다.
+- `validator_version = "busstrike-validator/0.1.0"`. `plan_id`·`plan_revision`은 `plan.json`, `run_id`는 `run.json`, `input_bundle_id`는 `run_inputs.json`에서 가져온다. 리포트는 §0.2 구조 문서 규칙(정렬 키 JSON + `\n`)으로 쓰고, 실행 시각 등은 넣지 않아 같은 입력이면 바이트가 같다.
+- `violations[]` 정렬은 `(check_id, seq, passenger_id, vehicle_id)`이고 키가 없으면 `seq=-1`·빈 문자열로 앞에 둔다. 같으면 `message`, `expected/actual/trip_id/t`로 끊는다. 100건 제한은 이 정렬 뒤 앞에서부터.
+- 검사가 깨진 입력 조합 때문에 예외로 멈추면 그 검사는 `fail`이고 위반 `check aborted: …` 한 건을 남긴다(결론을 "통과"로 두지 않는다).
+- **V01** 세부: type별 키 집합이 §6.1 표와 정확히 같음(없는 키·남는 키 모두 위반), 정수 키는 bool 아닌 int, 문자열 키는 빈 문자열 아님, 키 순서 = §6.1, 줄이 `json.dumps(…, ensure_ascii=False, separators=(",", ":"))` 결과와 같음, 마지막 줄 `\n`. 정렬 키의 `arrival_s`는 입력에 없는 승객이면 -1로 두고 V02가 따로 보고한다.
+- **검사 분담**(같은 문제를 여러 검사가 중복 보고하지 않게): `board`의 `t`·`stop_id`·`stop_seq`·`trip_id`가 그 `arrive`와 다르면 V06, `alight`이면 V07, `depart`·`denied`면 V04. 같은 `(vehicle_id, visit)`의 `arrive`가 없는 하위 이벤트는 V04. 최종 결과가 없거나 둘 이상인 승객은 V02만 보고하고, V12는 있는 결과 이벤트의 시각·cause만 본다.
+- **V04** "한 차량이 두 trip에 동시에 있지 않음"은 visit 순서로 trip이 바뀔 때 새 trip의 첫 `arrive.t`가 앞 trip의 마지막 이벤트 시각 이상인지로 본다. duty가 있는데 이벤트가 없거나 중간에 끊겼고 `cancel`도 없으면 위반이다.
+- **V09**: 차량의 첫 visit은 첫 trip `sched_s[0]`에 와야 한다. 첫 cycle은 엔진이 취소 판정 없이 시작하므로(§3.4는 "다음" cycle 판단) 취소 조건을 보지 않는다.
+- **V10**에서 `cancel`은 뺀다. 이동이 아니라 판단 기록이고 `t = ready`라, 영업 leg 회차 뒤에는 `W_e`를 넘을 수 있다(§3.4). `cancel`의 시각은 V09가 §3.4 식으로 본다.
+- **V11**의 "아직 board 기록이 없는" 승객은 "로그 순서로 앞서 처리한 visit에서 탄 적이 없는" 승객이다(승차 시각이 아니라 승차가 속한 visit 기준). 그래서 `board.t`만 바꾼 변조는 V11이 아니라 V06이 잡는다. 정적 판정으로 `no_service`인 승객은 대기 집합에 넣지 않는다.
+- **V13**은 §6.3과 위의 "2단계 구현에서 정한 세부"를 따로 구현해 `metrics.json` 전체를 잎(leaf) 경로 단위로 비교한다(`passengers.satisfied` 등). 수치는 같은 반올림 뒤 `==`.
+- **V14 고침**: 1단계 표의 "같은 차량의 연속 cycle 간격이 `period_s` 이상"은 §1.3과 맞지 않았다. 생성기는 `s = max(start + floor(k·P/n) + m·P, prev_ready)`라, 직전 cycle이 시간대 경계에 걸려 계획 순환시간이 P보다 길면 그 cycle만 밀리고 다음 cycle은 슬롯으로 돌아온다(간격 < P). 합성 실행에서 실제로 나왔다. 검사를 "cycle m의 anchor ≥ 슬롯 `start + floor(k·P/n) + m·P`, `cycle_index`는 0부터 연속"으로 바꿨다. `prev_ready` 자체는 P 계산을 다시 구현해야 알 수 있어(§8.4) 보지 않는다. 나머지 V14 항목은 §1.5의 `validate_timetable` 목록과 같다.
+- 속도(합성 5만 명·30노선·62대·이벤트 약 9.8만 줄, Python 3.14, WSL2): `validate_run` 4.75초(엔진 `run()` 1.48초).
 
 ### 8.4 버린 대안
 
@@ -1160,6 +1176,12 @@ T1–T4 기대 로그는 `verified=true`. T1 로그를 한 군데씩 고쳐 해�
 | T2에서 `board` q2를 q3로 교체(새치기) | V11 |
 | `metrics.json`의 `satisfied` +1 | V13 |
 
+3단계 구현에서 정한 것(`tests/evaluation/test_tamper.py`)
+- 위 표는 "반드시 실패할" 최소 집합이다. 테스트는 실패하는 검사 집합을 **정확히** 고정한다. 로그를 바꾸면 지표가 로그와 어긋나 V13이 함께 실패하고, 승하차 수가 바뀌면 V09(정차식)·V03(재차 인원)이 함께 실패하는 연쇄를 그대로 둔다. 예: `board` p4 t→90은 {V06, V13}, `abandon` p3 cause→`FULL`은 {V12, V13}, 마지막 `arrive` t→1501은 {V08, V10, V13}.
+- 의미 검사를 보려는 변조는 로그를 §6.1 키로 다시 정렬하고 출력 해시를 `run.json`에 다시 적는다(그래야 V01·V15가 아니라 해당 검사가 잡는다). 해시를 다시 적지 않으면 V15가 더해진다.
+- "board 한 줄 복제해 정원 초과"는 T1(좌석 3)에서는 정원을 넘지 않는다. 그래서 정원 초과는 T2(좌석 2) visit 0의 `denied` q3를 `board`로 바꾼 변조로 본다(V03 `capacity exceeded`, load 3 > 2). 복제 변조도 남겨 둔다.
+- 요구사항 완료 기준에 맞춰 더한 변조: 인원 누락(`abandon` 줄 삭제 → {V02, V13}, 모르는 승객 `no_service` 추가 → {V02}), 차량 일정 중복(T3에서 V2의 정차를 V1로 → V04 "trip starts before the previous trip…", 시간표에서 cycle 1 trip을 앞 trip과 겹치게 → V14), 시간 역행(공차 `depart` t 569→700 → V05), 승차 전 하차(p4 하차를 승차 전 visit 0으로 → V05·V07).
+
 ---
 
 ## 10. 모듈 구조
@@ -1182,9 +1204,10 @@ src/busstrike/sim/
   curve.py           eligible_passengers, route_clusters, fleet_curve, cluster_eval   (5단계)
   adapters/planning_bridge.py   C Inputs·Plan → 시뮬 입력, evaluation_port, compare_with_estimate   (5단계)
 src/busstrike/evaluation/
-  validator.py       validate_run, CLI                                   (3단계)
-  _inputs.py         검증기 자체 파서·구간 시간 조회 (sim import 금지)
-  _checks.py         V01–V15
+  __init__.py        설명만. CLI 경고를 피하려고 하위 모듈을 미리 import하지 않는다
+  validator.py       validate_run, write_report, failed_checks, CLI       (3단계)
+  _inputs.py         검증기 자체 파서·구간 시간 조회·해시 (sim import 금지)
+  _checks.py         V01–V15, 로그 색인, 지표 재계산
 tests/sim/, tests/evaluation/, tests/fixtures/sim/
 ```
 
@@ -1255,7 +1278,10 @@ def evaluation_port(plan: "planning.models.Plan", inputs: "planning.models.Input
 def compare_with_estimate(inputs, plans) -> list[dict]: ...
 
 # evaluation/validator.py
-def validate_run(run_dir: Path) -> dict: ...                                       # validation.json 내용
+def validate_run(run_dir: Path, *, scenario_path: Path | None = None, run_inputs_path: Path | None = None,
+                 plan_path: Path | None = None) -> dict: ...                       # validation.json 내용(쓰지 않음)
+def write_report(report: dict, path: Path) -> None: ...
+def failed_checks(report: dict) -> list[str]: ...                                   # C Assessment.violations
 ```
 
 ---
