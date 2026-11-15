@@ -42,6 +42,22 @@ SIM_WORKTREE="$PWD" PASSENGERS=1k sh ../claude/tests/evaluation/fixtures/make_co
 F1(W=10·J=15·drain=20)·F2(W=300·J=600·drain=1100)를 CLI로 만들 수 없다. 출력 writer는
 하네스와 같은 것을 쓰므로 파일 형식은 실제 실행과 같다.
 
+## 검증기를 돌려 본 실행 구성
+
+아래는 전부 `pass=true`(실패 0 · 미검증 1 = V16)였다. 산출물은 크므로 저장소에 넣지 않았고
+명령만 남긴다.
+
+| 구성 | 규모 | 사건 | 확인한 것 |
+| --- | --- | --- | --- |
+| `complex` + `--write-realization` | 1천 명 | 89,703 | 승객 1,000명 전원 일치 |
+| `complex` + `--write-realization` | 1만 명 | 117,127 | 승객 10,000명 전원 일치 (명세 §4 재계산 상한) |
+| `complex` (realization 없음) | 1천 명 | 89,703 | `demand_bins.csv`+seed로 발생 재생성 경로 |
+| `complex` + `--stream-outcomes` | 1천 명 | 89,703 | 결과 CSV가 확정 순서일 때(`outcome_order=finalization`) |
+| `simple` 망 | 1천 명 | 3,167 | 노선 1·정류장 2·운행편 184의 다른 망 모양 |
+| F1·F2 손계산 fixture 7종 | 3·9 명 | 14–39 | 명세 §5 표와 승객·지표 단위 일치 |
+
+`--sink null` 실행은 `events.jsonl`이 없어 검증할 수 없다(검증기는 사건 로그가 필요하다).
+
 ## 생성 당시 기록
 
 - 엔진 커밋 `d18ee1e` (`origin/feat/5-simulation-core`, PR #6 Draft)
