@@ -7,8 +7,34 @@
 
 ```sh
 pip install -e .
-python -m busstrike.evaluation.verify <실행 결과 폴더>    # 5단계에서 추가
+python -m busstrike.evaluation.verify <실행 결과 폴더>
 ```
+
+| 옵션 | 뜻 |
+| --- | --- |
+| `--scenario DIR` | 시나리오 폴더. 생략하면 run 옆·상위에서 찾는다 |
+| `--out PATH` | 보고서 경로. 기본 `<run>/verifier_report.json`, `-`는 표준출력 |
+| `--max-recompute N` | 재계산 oracle 승객 상한 (기본 10,000, 명세 §4) |
+| `--scan {full,index}` | 승차 자격 탐색 방식. `full`이 명세 문장 그대로다 |
+| `--quiet` | 요약 표를 찍지 않는다 |
+
+종료 코드: 0 통과 · 1 검사 실패 · 2 입력 오류.
+
+`--write-realization` 없이 실행한 결과도 검증한다. `realization.jsonl`이 없으면
+`demand_bins.csv`와 seed로 발생을 다시 만들어 `passenger_outcomes.csv`와 비교한다
+(명세 §2의 (b) 경로이며 독립성이 더 높다). 다만 checksum 대조는 하지 못한다.
+
+### 보고서
+
+`verifier_report.json`에 검사 ID별 상태·검사 대상 수·위반 수·앞 20건 위반 예, 입력 파일
+sha256, 검증기 커밋·작성자, 엔진 커밋을 담는다. 엔진 커밋은 `measurement.json`의 기록을
+**인용**한 값이며 검증기가 확인한 값이 아니다.
+
+`pass`와 `fully_verified`를 따로 둔다.
+
+- `pass` — 실패한 검사가 하나도 없다. 하나라도 실패하면 `false`다.
+- `fully_verified` — 실패도 미실행도 미검증도 없다. V16이 영구히 `not_verified`이므로
+  현재 구조에서는 **항상 `false`**다. `pass=true`를 "전부 검증했다"로 읽으면 안 된다.
 
 ### 독립성 (명세 §1)
 
@@ -36,6 +62,8 @@ python -m busstrike.evaluation.verify <실행 결과 폴더>    # 5단계에서 
 | `recompute.py` | 명세 §4 brute-force oracle. 대기열 없이 사건 키를 전부 만들어 한 번 정렬하고 선형 탐색으로 승차자를 고른다 |
 | `metrics_ref.py` | `summarize()`로 M1·M2·M3·M5·M6를 재계산하고 V9–V14로 metrics.json과 비교 |
 | `guards.py` | V15 R12 배차간격 · V16 G 기타 · V17 체크섬 |
+| `report.py` | `verifier_report.json` 작성. `pass`와 `fully_verified`를 구분한다 |
+| `verify.py` | CLI 진입점 |
 
 `not_verified`는 통과가 아니다. 자료가 없어 검증할 수 없는 항목(명세 V16 R13 등)에 쓴다.
 
@@ -53,7 +81,7 @@ python -m busstrike.evaluation.verify <실행 결과 폴더>    # 5단계에서 
 | V15 R12 배차간격 · V17 체크섬 | 구현 |
 | V16 G 기타 | 부분 구현 — **통과 불가**(R10 가용 fleet·R13 방향별 구간 자료 없음) |
 | T1–T20 변조 검출 전체 | 구현 (`tests/evaluation/test_tamper_t1_t20.py`) |
-| `verify.py` CLI · `verifier_report.json` | 미구현 (5단계) |
+| `verify.py` CLI · `verifier_report.json` | 구현 |
 
 ### 재계산 oracle
 
@@ -103,3 +131,6 @@ T1–T20을 표로 두고 각 사례가 명세가 적은 검사에 걸리는지 
   R14 운영창·차량 duty 비중첩·출발 거점 일치에 위반이 없어도 상태는 `not_verified`다.
 - **V14 하차 순서**: 한 방문에서 여러 명이 내릴 때의 순서를 명세가 정하지 않았다. 재계산은
   승차 순서로 내린다. 지표에는 영향이 없으나 로그 바이트 비교에는 영향이 있다.
+- **명세 §4 규모 상한**: 명세는 1만 명 초과에도 V11(만차 거절)을 적용한다고 적었으나,
+  V11은 재계산 oracle 없이는 판정할 수 없다(§4가 oracle을 N ≤ 10,000으로 한정한다).
+  상한을 넘으면 V6·V7·V9–V14를 `not_run`으로 남긴다. V11도 거기 포함된다.

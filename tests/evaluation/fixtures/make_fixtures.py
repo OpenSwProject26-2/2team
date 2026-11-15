@@ -25,7 +25,7 @@ import sys
 
 from sim.arrivals import BinRow, generate, write_realization
 from sim.engine import simulate
-from sim.harness import HashingJsonlSink, OutcomeWriter, write_scenario
+from sim.harness import HashingJsonlSink, OutcomeWriter, env_manifest, write_scenario
 from sim.metrics import check_max_headway, summarize
 from sim.models import Config, Trip
 from sim.run_inputs import RunInputs
@@ -148,6 +148,7 @@ def build(name, network_fn, rows_fn, max_wait_s, max_journey_s, drain_s, max_hea
         'outcome_order': 'passenger_id', 'note': note,
         'metrics_sha256': hashlib.sha256((run_dir / 'metrics.json').read_bytes()).hexdigest(),
         'realization_sha256': hashlib.sha256((run_dir / 'realization.jsonl').read_bytes()).hexdigest(),
+        'env': env_manifest(),  # 엔진 커밋·작업 트리 상태. verifier_report가 인용한다.
     }
     (run_dir / 'measurement.json').write_text(json.dumps(measurement, indent=2, sort_keys=True))
     return {'name': name, 'passengers': result.total, 'events': result.event_count,

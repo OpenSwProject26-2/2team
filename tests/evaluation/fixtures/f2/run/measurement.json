@@ -8,6 +8,21 @@
     "travel_policy": "fixed_segments"
   },
   "drain_rule": "explicit (hand-calculation fixture)",
+  "env": {
+    "branch": "HEAD",
+    "commit": "d18ee1ee77016b4cc1b5a91daf9cad6f7b954784",
+    "cpu_count": 10,
+    "dirty": false,
+    "dirty_tracked": false,
+    "implementation": "CPython",
+    "machine": "arm64",
+    "mem_total_bytes": null,
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "python": "3.14.3",
+    "recorded_at": "2026-11-15T18:42:24+09:00",
+    "simpy": "4.1.2",
+    "untracked_files": 0
+  },
   "event_count": 39,
   "label": "\ub3c5\ub9bd \uac80\uc99d \uc804 \uc7a0\uc815 (provisional, not independently verified)",
   "log_bytes": 5557,

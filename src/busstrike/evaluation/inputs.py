@@ -283,7 +283,9 @@ def resolve(run_dir, scenario_dir=None):
     run_path = Path(run_dir).resolve()
     if not run_path.is_dir():
         raise InputError(f'실행 결과 디렉터리가 아니다: {run_path}')
-    run = Run(run_path)
+    # realization.jsonl은 --write-realization 없이 실행하면 없다. V1은 demand_bins.csv와
+    # seed로 발생을 다시 만들 수 있으므로 필수로 두지 않는다(명세 §2의 (b) 경로).
+    run = Run(run_path, require_realization=False)
 
     candidates = []
     if scenario_dir:
