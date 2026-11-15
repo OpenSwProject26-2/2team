@@ -5,13 +5,13 @@
 #
 #   SIM_WORKTREE=<B worktree> OUT=<출력 루트> [PASSENGERS=1k] sh make_complex.sh
 #
-# 기본값은 저장소 밖(상위 디렉터리의 claude-fixtures)이다. 저장소 안에 쓰면 이후 엔진 실행이
-# dirty=True로 기록된다(sim/IMPLEMENTATION.md 규모 파일럿 절).
+# 기본값은 저장소 밖이다. 저장소 안에 쓰면 이후 엔진 실행이 dirty=True로 기록된다
+# (sim/IMPLEMENTATION.md 규모 파일럿 절).
 set -eu
 
 SIM_WORKTREE="${SIM_WORKTREE:?B worktree 경로를 SIM_WORKTREE로 지정하세요}"
 PASSENGERS="${PASSENGERS:-1k}"
-OUT="${OUT:-$SIM_WORKTREE/../claude-fixtures}"
+OUT="${OUT:-$SIM_WORKTREE/../verifier-fixtures}"
 PY="${PY:-$SIM_WORKTREE/.venv/bin/python}"
 
 SCEN="$OUT/scenario-complex-$PASSENGERS"

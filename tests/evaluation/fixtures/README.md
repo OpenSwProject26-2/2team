@@ -24,17 +24,24 @@
 B 엔진이 필요하다. 내 작업 브랜치에 B 코드를 섞지 않으므로 **별도 worktree**를 쓴다.
 
 ```sh
-# 1) B worktree와 venv (저장소 루트에서)
-git worktree add ../claude-sim-b origin/feat/5-simulation-core --detach
-cd ../claude-sim-b
+# 0) 이 저장소(검증기 브랜치) 루트에서 시작한다
+REPO="$PWD"
+
+# 1) B 엔진 worktree와 venv. 내 작업 브랜치에 B 코드를 섞지 않는다
+git worktree add ../sim-engine origin/feat/5-simulation-core --detach
+cd ../sim-engine
 python3 -m venv .venv && .venv/bin/pip install -r sim/requirements.txt   # SimPy 4.1.2
 
 # 2) F1·F2 (엔진 커밋 d18ee1e 기준)
-PYTHONPATH="$PWD" .venv/bin/python ../claude/tests/evaluation/fixtures/make_fixtures.py \
-    --out ../claude/tests/evaluation/fixtures
+PYTHONPATH="$PWD" .venv/bin/python "$REPO/tests/evaluation/fixtures/make_fixtures.py" \
+    --out "$REPO/tests/evaluation/fixtures"
 
-# 3) 합성 complex 1천 명 (저장소 밖으로)
-SIM_WORKTREE="$PWD" PASSENGERS=1k sh ../claude/tests/evaluation/fixtures/make_complex.sh
+# 3) 합성 complex (저장소 밖으로 쓴다)
+SIM_WORKTREE="$PWD" OUT=../verifier-fixtures PASSENGERS=1k \
+    sh "$REPO/tests/evaluation/fixtures/make_complex.sh"
+
+# 4) 검증기로 돌린다 (저장소 루트에서)
+cd "$REPO" && python -m busstrike.evaluation.verify ../verifier-fixtures/run-complex-1k
 ```
 
 `make_fixtures.py`가 `sim.harness run` 대신 엔진을 직접 호출하는 이유: 하네스의 정책은
