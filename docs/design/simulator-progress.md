@@ -120,3 +120,62 @@
 - 테스트 실행 명령과 결과
   - `PYTHONPATH=src python3 -m unittest discover -s tests -t .` → 117개 통과(3단계까지 104 + 이번 13, Python 3.14.4, 약 11초).
   - 린트·타입 검사는 저장소에 명령이 없어 실행하지 않았다.
+
+## 5단계 — C와 연결(어댑터·S(n)·근사–시뮬 비교)
+
+- PR: (PR 생성 후 추가) (base `feat/sim-gtfs-export`, 스택 PR, 브랜치 `feat/sim-planning-bridge`)
+- 한 일
+  - `src/busstrike/sim/adapters/planning_bridge.py`: C `Inputs`·`Plan` → `scenario.json`·`travel_times.json`·`arrivals.jsonl`·`run_inputs.json`·`plan.json` 어댑터, `run_plan`(어댑터 → `run()` → 검증기 → 지표), C `EvaluationPort` 구현(`evaluation_port`·`make_evaluation_port`), `curve_report`(S(n) 표 + C 근사), `compare_with_estimate`(근사–시뮬 비교표), Markdown 렌더링, CLI `python -m busstrike.sim.adapters.planning_bridge`.
+  - `src/busstrike/sim/curve.py`: `eligible_passengers`·`fleet_curve`·`marginal_gains`·`route_clusters`·`overlap_ratios`·`cluster_eval`. 파일 없이 `normalize_plan → simulate → compute_metrics`를 반복한다.
+  - 테스트 23개: `tests/sim/test_curve.py`(T1·T2·T3 기반 곡선·클러스터·가법성), `tests/sim/test_planning_bridge.py`(어댑터 변환, C 합성 예제 끝까지 실행·손계산 이벤트, C `checked_assessment`·`rerank` 통과, 결정론, 근사–시뮬 비교, 정원 여유 일치 조건, CLI, 구로 규모 1회 시간 측정). C 형식 합성 입력 생성기는 `tests/sim/planning_cases.py`.
+  - `simulator.md` §7.4(5단계 실측)·§7.5(어댑터 세부·차이 관찰)·§10(시그니처)와 `sim/README.md`를 고쳤다(같은 PR).
+- 설계와 달라진 점(문서를 먼저 고침)
+  - `fleet_curve`의 포화 뒤 점: 설계는 "같은 값으로 채움"이었지만 거리·대기는 복사하지 않고 `null`, `simulated=False`로 둔다(차량이 늘면 거리도 늘어 복사값이 틀림).
+  - `compare_with_estimate` 반환: `list[dict]` → `{rows, summary}`.
+  - 비교표 행에 운행안 출처 대신 **만든 방법 라벨**(`equal`·`proportional`·`search-topN`·`exhaustive`)을 쓴다. 기존 `test_fairness`의 AST 검사가 `sim/` 아래 전부에서 `source` 읽기를 막기 때문이다. `plan.json`은 C `to_service_plan()`의 키를 그대로 옮기고 `routes`만 바꾼다(출처 키는 손대지 않고 복사만).
+- 결정한 것(모두 `simulator.md` §7.5)
+  - 승객 ID `c{수요 순번:06d}-{k:05d}`(순번 = `demand_id` 정렬 순)로 같은 도착 시각의 줄 순서를 C의 `(arrival_s, demand_id)`와 맞췄다. 접두어 → `demand_id`는 `demand_index.json`.
+  - C에 없는 값: 1인당 정차 0, `cycle_rest_s` 0, 입석 0, 차급 `planning-uniform`, `kind = access`, `arrival_method = "precomputed"`, `seed = "none"`, `bin_length_s = 1`.
+  - `PLAN_INFEASIBLE`은 `schedule_feasible=False` Assessment로, 그 밖의 `SimError`는 예외로 올린다.
+  - `rank_sim`은 C `rerank`와 같은 키 `(-충족, P90, 거리, 배분)`. 차이에 판정 기준은 두지 않았다.
+- **S(n) 표 — C 합성 예제**(`synthetic.json`, 정원 2·차량 2, 클러스터 `[r1, r2, r3]`, `β` 모두 1)
+
+  | 노선 | eligible | 겹침 비율 | n=1: S_sim / ΔS / S_est | n=2: S_sim / ΔS / S_est |
+  | --- | --- | --- | --- | --- |
+  | r1 | 6 | 0.166667 | 5 / 5 / 5 | 6 / 1 / 6 |
+  | r2 | 3 | 0.333333 | 3 / 3 / 3 | 3 / 0 / 3 (포화, 미실행) |
+  | r3 | 1 | 1 | 1 / 1 / 1 | 1 / 0 / 1 (포화, 미실행) |
+
+- **근사–시뮬 비교표 — C 합성 예제**(전수 배분 10개, 모두 검증 통과): 충족·평균 대기·거리가 10개 모두 같다(MAE 0, 스피어만 1.0, 시뮬 1위 = 근사 1위 = 균등 `r1=1, r2=1`, 7/9명). 순위는 동률 처리만 다르다(`r1=1,r3=1`과 `r1=1`이 둘 다 5명: 근사는 평균 대기, 시뮬은 P90·거리로 끊음). 전체 표는 CLI `report.md`.
+- **근사–시뮬 비교 — 구로 규모 합성**(노선 30·차량 60·승객 47,709명, 판정 아님)
+
+  | 배분 | est 충족 | sim 충족 | sim−est | est 평균대기(s) | sim 평균대기(s) | sim `FULL` |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | 균등(원래 노선 20×3) | 19,444 | 19,080 | −364 (−1.9%) | 683 | 400 | 11,845 |
+  | 30노선×2 | 21,652 | 21,131 | −521 (−2.4%) | 731 | 463 | 19,830 |
+  | 앞 10노선×6 | 17,200 | 17,087 | −113 (−0.7%) | 531 | 313 | 3,406 |
+  | 앞 15노선×4 | 19,189 | 18,802 | −387 (−2.0%) | 620 | 364 | 7,029 |
+  | 홀짝 1·3대 | 21,404 | 20,823 | −581 (−2.7%) | 685 | 430 | 14,075 |
+
+  거리는 5안 모두 같고 순위도 같았다(스피어만 1.0). 노선 단독 곡선(n 0–15): `β_r` 0.989–0.999, 점별 차이 −8.3%~+2.3%(최대 −76명, R25 n=4), 시뮬 한계효용이 음수인 점 38/450.
+- **차이가 큰 경우와 원인 추정**: 차이는 혼잡(`FULL`)이 많은 안에서 커진다. C는 수요를 도착 시각 순으로 trip 전 구간 좌석을 미리 잡고, 시뮬은 차가 지나가는 순서(상류 먼저)로 태운다. 시뮬에서는 하류 정류장 승객이 연달아 남겨지다 대기 한도에 걸린다 — 균등 배분 실행에서 `FULL` 비율이 차고 0.1% → 첫 정류장 8.7% → 다섯째 51% → 허브 48%로 노선을 따라 커졌다. 시뮬 평균 대기가 짧은 것은 오래 기다릴 승객이 포기로 빠지는 생존 편향으로 본다. 1인당 정차·시간대별 구간 시간 차이는 이번 입력에 없다(C에 없는 값이라 어댑터가 0·고정으로 넣음). 실데이터에서는 이 두 요인이 더해진다.
+- **1회 실행 시간**(구로 규모 합성, Python 3.14, WSL2 `/mnt/c`): 어댑터 0.12–0.16초, `run_plan`(입력 파일 쓰기 + `run()`) 1.8–2.7초, 검증기 3.0–7.2초 → 전체 5–10초. C `evaluate()` 1회 0.5–0.6초. 곡선(노선 30 × n 0–15) 시뮬만 12.2초, C 근사까지 함께 내는 `curve_report` 130초(대부분 C `evaluate()` 480회).
+- C와 맞추기 어려운 부분(C 코드는 바꾸지 않았다)
+  - C 수요는 정류장→정류장 한 개씩이다. M05의 egress(역에 딸린 정류장 집합에서 출발)와 access/egress 구분을 표현할 수 없어 모두 `access`, 정류장 1개로 넘긴다.
+  - C 구간은 `segment_id`로, M05 구간은 정류장쌍으로 찾는다. 같은 정류장쌍에 값이 다른 구간이 둘이면 어댑터가 거절한다.
+  - C는 모든 후보가 차량 거점(`fleet[0].initial_stop`)에서 출발해야 받는다. 실제 노선처럼 기점이 다르면 C가 "차고지 공차 이동 자료가 필요한 후보"로 빼므로, 어댑터를 거치기 전에 걸러진다.
+  - C 평균 대기는 충족 인원 기준, 시뮬 평균·P90은 탑승 인원 기준이다(`JOURNEY_EXCEEDED`가 0이면 같음). C `rerank`가 쓰는 `p90_wait_s`도 탑승 인원 기준으로 넘긴다.
+  - §7.3의 보정 2단계(C 배분 탐색이 노선별 근사 대신 `fleet_curve`·`cluster_eval`을 쓰는 것)는 C `search.py`를 바꿔야 해서 하지 않았다. C가 `curve_report` 값을 받아 쓰도록 바꾸는 것은 C 담당 몫이다.
+- 남은 문제 / 실데이터를 붙이려면 남은 작업
+  - **수요 벡터**: 실제 입력은 시간대별 소수 유량(access·egress, 역 단위)이다. 지금 어댑터는 C의 정수 수요에서 승객을 만든다. 실데이터에서는 방향을 바꿔야 한다: A(M03) 수요 벡터 → `arrivals.py` 실현기(체계적 반올림)로 승객을 한 번 만들고, 그 승객을 `(origin, dest, arrival_s)`로 묶어 C 수요를 만든다. 그래야 두 평가가 같은 `RunInputs`를 쓴다. 역 = 정류장 집합(egress 출발, access 도착)을 C 수요로 바꾸는 규칙은 C와 정해야 한다(C 모델은 목적지 정류장 1개). egress 시간대 의미(§2.3)도 M03 확인이 남았다.
+  - **구간 이동시간**: 실제는 TPSS 시간대별 속도라 `travel_times.json`을 M02/A가 직접 만들어야 한다. 어댑터가 C 구간에서 만드는 대신 외부 `travel_times.json`을 받는 경로가 필요하다. C는 구간 시간이 고정이므로 C에 줄 대표값(최댓값/평균) 규칙과, C 구간 ID ↔ 정류장쌍 ↔ A 버스 GTFS `stop_id`의 일치 검사가 남았다. 시간대별 구간 시간이 들어가면 시뮬 주기 P(최댓값 기준)와 C 주기가 달라져 §7.3의 1(일치 조건)이 깨진다.
+  - 차량: 실제 노선 기점이 여럿이면 C의 "동일 거점" 제약과 M05의 "기점 사전 배치"(D03)가 다르다. D03 결정과 C 제약 완화가 필요하다.
+  - 정차·회차 실제값(1인당 정차 포함)이 C 입력에 없다. Scenario 값으로 받을 경로가 필요하다.
+  - 1단계의 "사용자가 확인해야 할 결정" 9개는 그대로다.
+  - S(n) 반복과 탐색에서는 검증기를 표본·최종 후보에만 돌리는 편이 낫다(1회 3–7초). `curve_report`의 시간 대부분은 C `evaluate()`다.
+  - 표의 숫자는 모두 합성 입력이다. 실제 운행 성능이나 C 근사의 정확도 판정 근거가 아니다.
+  - Python 3.10–3.13 미실행(3.14만). 연결된 Issue 없음.
+- 테스트 실행 명령과 결과
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -t .` → 140개 실행, 139개 통과·1개 건너뜀(4단계까지 117 + 이번 23. 건너뛴 1개는 `BUSSTRIKE_SCALE_CURVES=1`일 때만 도는 구로 규모 전체 곡선 측정. 별도로 돌려 위 숫자를 얻음). Python 3.14.4, 약 16초.
+  - `PYTHONPATH=src python3 -m busstrike.sim.adapters.planning_bridge --input tests/fixtures/planning/synthetic.json --out <임시>` → 종료 코드 0, `curves.json`·`comparison.json`·`report.md` 생성.
+  - 린트·타입 검사는 저장소에 명령이 없어 실행하지 않았다.
