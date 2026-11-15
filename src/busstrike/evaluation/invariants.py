@@ -425,3 +425,79 @@ def run_invariants(scenario, run, realization=None):
             check_capacity(scenario, run),
             check_outcomes(scenario, run, records,
                            realization if realization is not None else None)]
+
+
+# ---------- V6 FIFO·비유휴 (재계산 oracle 대조) ----------
+
+def check_boarding(scenario, run, oracle):
+    """승차 집합과 순서가 재계산과 같은지. 빈 좌석이 남았는데 자격 승객이 남으면 실패.
+
+    oracle은 명세 §4대로 대기열 없이 다시 계산한 결과다(`recompute`). 엔진 로그를 정답으로
+    쓰지 않는다.
+    """
+    result = CheckResult('V6', 'FIFO·비유휴', unit='승차가 있는 방문')
+    logged = {}
+    for event in run.iter_events():
+        if event.kind == 'boarded':
+            logged.setdefault(event.stable_id, []).append(event.passenger_id)
+
+    for stable_id in sorted(set(logged) | set(oracle.boardings)):
+        result.examined += 1
+        mine = oracle.boardings.get(stable_id, [])
+        theirs = logged.get(stable_id, [])
+        if mine == theirs:
+            continue
+        visit = scenario.visit_by_stable_id.get(stable_id)
+        where = {'stable_id': stable_id, 'recomputed': mine[:10], 'logged': theirs[:10]}
+        if visit is not None:
+            where.update(stop=visit.stop, arrival_s=visit.arrival_s)
+        if sorted(mine) == sorted(theirs):
+            result.add('승차 집합은 같으나 순서가 다르다 ((time_s, passenger_id) 정렬이어야 한다)',
+                       **where)
+        else:
+            missing = sorted(set(mine) - set(theirs))
+            extra = sorted(set(theirs) - set(mine))
+            if missing:
+                where['not_boarded_but_eligible'] = missing[:10]
+            if extra:
+                where['boarded_but_not_eligible'] = extra[:10]
+            result.add(f'승차 집합이 다르다 (재계산 {len(mine)}명, 로그 {len(theirs)}명)', **where)
+    return result.resolve()
+
+
+# ---------- V7 기한 (재계산 oracle 대조) ----------
+
+def check_deadlines(scenario, run, oracle):
+    """기한 만료 사건이 재계산과 같은지. 승객당 최대 1건이고 같은 시각이면 journey가 먼저."""
+    result = CheckResult('V7', '기한', unit='승객')
+    logged = {}
+    for event in run.iter_events():
+        if event.kind == 'expired':
+            logged.setdefault(event.passenger_id, []).append(event)
+
+    for pid, events in sorted(logged.items()):
+        if len(events) > 1:
+            result.add(f'기한 사건이 {len(events)}건 (승객당 최대 1건, 뒤의 기한은 사건을 '
+                       '남기지 않는다)', passenger_id=pid,
+                       lines=[e.line_no for e in events][:5],
+                       kinds=[expiry_kind(e.stable_id) for e in events][:5])
+
+    for pid in sorted(set(logged) | set(oracle.expiries)):
+        result.examined += 1
+        mine = oracle.expiries.get(pid)
+        event = logged.get(pid, [None])[0]
+        theirs = None if event is None else (event.time_s, expiry_kind(event.stable_id),
+                                             event.vehicle_id)
+        if mine == theirs:
+            continue
+        if mine is None:
+            result.add('재계산에는 기한 만료가 없는데 로그에 있다', passenger_id=pid,
+                       logged=list(theirs), line=event.line_no)
+        elif theirs is None:
+            result.add('재계산에는 기한 만료가 있는데 로그에 없다', passenger_id=pid,
+                       recomputed=list(mine))
+        else:
+            result.add('기한 만료 사건이 재계산과 다르다 (시각, 종류, vehicle_id)',
+                       passenger_id=pid, recomputed=list(mine), logged=list(theirs),
+                       line=event.line_no)
+    return result.resolve()
