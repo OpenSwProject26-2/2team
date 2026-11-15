@@ -68,8 +68,10 @@ python3 -m busstrike.evaluation.verify <실행 결과 폴더>
 엔진 출력과 엔진의 golden 로그는 **정답으로 쓰지 않습니다.** 검증 대상이기 때문입니다.
 검사가 공허하지 않다는 것은 정상 산출물을 한 군데씩 고친 사본 20종으로 확인합니다.
 
-실행법·결과 읽는 법·파일별 역할은
-[`src/busstrike/evaluation/README.md`](src/busstrike/evaluation/README.md)에 있습니다.
+실행법·결과 읽는 법·검사 항목은
+[`src/busstrike/evaluation/README.md`](src/busstrike/evaluation/README.md)에,
+재계산 알고리즘과 명세와의 차이는
+[`docs/design/evaluation-verifier.md`](docs/design/evaluation-verifier.md)에 있습니다.
 검사 정의 명세 `docs/verifier_spec.md`는 아직 `main`에 없고
 [`feat/5-simulation-core` 브랜치(PR #6)](https://github.com/OpenSwProject26-2/2team/blob/ca643f63028908e6a18827abb89c4360bfb1a345/docs/verifier_spec.md)에
 있습니다.
@@ -112,7 +114,10 @@ python3 -m busstrike.evaluation.verify <실행 결과 폴더>
 | [M00 데이터 계약](docs/contracts/M00_DATA_CONTRACT.md) | 모듈 간 주고받는 데이터의 공통 규칙. **먼저 읽습니다** |
 | [ADR-001](docs/adr/ADR-001.md) | 설계 결정 기록 |
 | [AGENTS.md](AGENTS.md) · [CONTRIBUTING.md](CONTRIBUTING.md) | 브랜치·커밋·PR 형식 |
-| [`src/busstrike/evaluation/README.md`](src/busstrike/evaluation/README.md) | M05 독립 검증기 사용법과 명세 차이 |
+| [시뮬레이션 결과 독립 검증기](src/busstrike/evaluation/README.md) | 검증기 실행법·결과 읽는 법·검사 항목 |
+| [검증기 구현 기록](docs/design/evaluation-verifier.md) | 재계산 알고리즘, 변조 검출, 명세와 구현의 차이 |
+| [운행안 비교 평가 프로토콜](docs/design/evaluation-protocol.md) | 여러 운행안을 같은 조건에서 비교하는 절차 |
+| [비교 평가 자료 인벤토리](docs/design/evaluation-data-inventory.md) | 필요 자료의 출처·확보 상태·라이선스 |
 
 ## 데이터 취급
 
