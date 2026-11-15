@@ -179,3 +179,47 @@
   - `PYTHONPATH=src python3 -m unittest discover -s tests -t .` → 140개 실행, 139개 통과·1개 건너뜀(4단계까지 117 + 이번 23. 건너뛴 1개는 `BUSSTRIKE_SCALE_CURVES=1`일 때만 도는 구로 규모 전체 곡선 측정. 별도로 돌려 위 숫자를 얻음). Python 3.14.4, 약 16초.
   - `PYTHONPATH=src python3 -m busstrike.sim.adapters.planning_bridge --input tests/fixtures/planning/synthetic.json --out <임시>` → 종료 코드 0, `curves.json`·`comparison.json`·`report.md` 생성.
   - 린트·타입 검사는 저장소에 명령이 없어 실행하지 않았다.
+
+## 6단계 — M07 출력 형식 통일
+
+- PR: (PR을 연 뒤 링크 추가) (Draft, base `main`, 브랜치 `feat/sim-m07-output`). #28·#32·#33·#34·#36을 대체한다.
+- 한 일
+  - 최신 `main`에서 `feat/sim-m07-output`을 따고 `pr/36`(5단계까지의 스택)을 병합했다. `evaluation/__init__.py` 충돌은 main(giho999) 버전을 그대로 썼다.
+  - 3단계 검증기(`evaluation/validator.py`·`_checks.py`·`_inputs.py`, `tests/evaluation/test_validator.py`·`test_tamper.py`·`test_independence.py`·`runs.py`)를 지웠다. giho999 파일과 이름이 겹치는 것은 없었다.
+  - 검증기 코드·fixture·테스트에서 형식을 거꾸로 정리해 [m07-output-contract.md](m07-output-contract.md)를 썼다. 항목마다 근거 파일과 줄을 달고, 추론한 항목 I1–I9를 따로 모았다. 검증기가 인용하는 `docs/verifier_spec.md`는 main에 없어서 PR #6 브랜치의 커밋 `ca643f6`을 참고로 읽었다.
+  - 새 엔진과 M07의 의미 차이 D1–D16을 표로 정리했다(계약 §7). 기본 원칙은 "엔진을 M07에 맞춘다"였고, 공정성이 걸린 D1(정류장 집합 OD)과 검증기 규칙이 걸린 D2(두 역 연결형 노선)는 코디네이터에게 물었다. 사용자는 둘 다 A를 골랐다.
+  - 엔진을 고쳤다: 고정 일정 실행기(`engine.service_schedule`·`simulate`), M07 사건 로그, `demand_bins.csv` 입력 + M07 생성기(`arrivals.generate`), M07 지표(`metrics.py`), M07 폴더 writer(`run.write_m07`, `run.json` 없앰). `planning_bridge`의 검증 단계는 `busstrike.evaluation.verify.verify`를 쓴다. `curve.py`도 새 지표를 쓴다.
+  - 손계산 T1–T5를 M07 의미로 다시 했다(simulator.md §9). T2b(지연 취소)는 고정 일정이라 일어나지 않아 "차내 여정 만료" 사례로 바꿨다. 교차 검증(§9.11)과 구로 규모 실행(§9.12) 테스트를 더했다.
+  - `simulator.md`의 출력(§6)·검증(§8)·테스트(§9)를 새로 쓰고, §0.3·§2·§3·§4·§7.5·§10·§11·가정 목록에서 바뀐 곳을 고쳤다. `sim/README.md`도 고쳤다.
+- 설계와 달라진 점(의미를 바꾼 항목, 계약 §7)
+
+  | # | 바꾼 것 | 이유 |
+  | --- | --- | --- |
+  | D1 | 승객 OD: 정류장 집합 → 정류장 1개(실현기 입력 `station_stop_id`) | M07이 단일 정류장 OD만 표현한다. 사용자 결정 A. 공정성 손실은 가정 A25 |
+  | D2 | 영업 leg가 2개 이상인 노선(두 역 연결형)은 M07 실행에서 `OUT_OF_SCOPE` | M07 V16 "같은 출발 거점". 사용자 결정 A, 가정 A26 |
+  | D3 | 1인당 정차 → `OUT_OF_SCOPE`, 지연·`cancel` 없음(고정 일정) | M07 V3은 사건 시각 = `network.json` 일정을 요구한다 |
+  | D4 | 발생: 시간대별 인원은 체계적 반올림, 시각은 M07 생성기, ID `["행",i]` | M07 V1. SHA-256 결정 함수라 원칙 유지 |
+  | D6 | 여정 한도: 사후 판정 → 결과를 정하는 기한(unserved journey) | M07 V7·V8 |
+  | D7 | `drain_s`(기본 `W_e + max_journey_s`), `left_waiting` 없음 | M07 config |
+  | D8 | 같은 초 우선순위: vehicle_id → `(time_s, phase, stable_id)` | M07 V2·V6 |
+  | D9·D10 | 미충족 6원인 → 4사유, 만차는 `refused` | M07 V10·V11 |
+  | D11–D13 | 로그·지표·실행 기록 형식 → M07(`run.json` → `measurement.json`) | M07 파일 계약 |
+  | D14 | 검증기 → M07, C `independently_verified` = M07 `pass` | 팀 공식 검증기로 일원화 |
+- 결정한 것(요구사항에 없던 판단)
+  - M07 운행편 = 영업 leg 1개. `departures[-1]` = 마지막 도착(I3), `return_s` = 뒤따르는 공차 leg 끝(I1), `distance_m` = 영업 + 공차(I2).
+  - 운행안이 준 시간표가 구간 시간·정차·회차와 맞지 않으면 `PLAN_INFEASIBLE`(고정 일정이라 실행 중에 고칠 수 없다).
+  - scenario에 선택 필드 `stop_area`, policy에 `drain_s`·`max_headway_s`·`wait_threshold_s`를 더했다. 없으면 M07이 미검증으로 두는 항목(V12·V15)이 생기지만 실패는 아니다.
+  - `measurement.env`에는 엔진 커밋과 `dirty`(추적 파일)만 넣는다. M07 보고서가 엔진 커밋을 인용하고, 검증기 테스트도 fixture에 커밋이 있다고 본다. 같은 체크아웃에서는 값이 같아 결정론이 유지된다.
+  - `timetable.json`은 `run/`에 남겼다(GTFS 내보내기용). 검증기는 이름을 모르는 파일을 열지 않는다(`inputs.py:15-17`, `:269-272`).
+  - 교차 검증에서 F2의 t3 거리 500 m(t1·t2는 1000 m)는 구간 거리만으로는 만들 수 없다. 그래서 r2 복귀 공차를 경유지 Y로 돌려 맞췄다(`tests/sim/m07_fixture_cases.py` 주석).
+- 남은 문제 / 다음 단계가 알아야 할 것
+  - **giho999 확인 필요**: 계약 §6의 추론 항목 I1–I9. 특히 I1·I2(`return_s`·`distance_m`에 복귀 공차 포함), I3(마지막 출발 = 마지막 도착이라 회차 시간이 M6 공차시간에 들어감), I5(drain 뒤 발생 승객은 V4 실패), I6(V16 "같은 출발 거점"이 양방향 노선을 막음).
+  - **giho999 fixture 재생성 스크립트가 예전 엔진에 묶여 있다**. `tests/evaluation/fixtures/make_fixtures.py`는 `sim.arrivals`·`sim.engine.simulate`·`sim.harness`(`HashingJsonlSink`·`OutcomeWriter`·`env_manifest`·`write_scenario`)·`sim.metrics`·`sim.models.Config/Trip`·`sim.run_inputs.RunInputs`를 import하고, `make_complex.sh`는 `sim.harness generate/run`(SimPy 4.1.2, `origin/feat/5-simulation-core`, 엔진 커밋 `d18ee1e`)을 부른다. fixture README의 재생성 절차도 같은 브랜치를 쓴다. PR #6을 닫아도 커밋은 `refs/pull/6/head`로 남지만, 새 엔진으로 바꾸려면 다음이 필요하다. ① F1·F2는 `tests/sim/m07_fixture_cases.py`의 변환과 `busstrike.sim.run`을 쓴다. 새 엔진 출력은 `passenger_outcomes.csv` 바이트와 `network.json` 운행편이 지금 fixture와 같고, 사건 로그 바이트(구분자)·`measurement.json` 필드·`metrics.json` 보조 키는 다르다. ② complex는 새 합성 생성기가 필요하다(예: `tests/sim/cases.synthetic` 또는 `planning_cases.guro_scale` + 브리지). ③ 검증기 테스트 중 fixture 내용에 기대는 것(`test_verify_cli`의 엔진 커밋 형식, 변조 사례 T1–T20의 줄 위치)은 재생성 뒤 다시 확인해야 한다. 이 PR은 fixture와 스크립트를 고치지 않았다(검증기 소유).
+  - **다른 PR 영향**(닫거나 고치지 않았다)
+    - #13(`feat/10-seoul-demand-analysis`): `A.Part/data/prepare_arrivals.py`와 통합 검사가 예전 엔진 커밋 `d18ee1e`의 `sim.arrivals`(`check_rows`·`generate`·`write_realization`·`read_realization`·`validate_realization`)와 `sim.adapters.opt_adapter.c_demands`를 외부 체크아웃으로 고정해 import한다. 새 엔진에는 이 API가 없다(`busstrike.sim.arrivals.generate(rows, seed)`·`io.read_demand_bins`, C 방향 변환 없음). 반면 #13의 `demand_bins_included.csv` 여섯 열은 M07 `demand_bins.csv`와 같아서 새 엔진 입력으로 바로 쓸 수 있다(`build_run_inputs`). 단 aggregate_id 유일·출발≠목적 조건은 같고, 폭 3600초 bin 안의 시각은 M07 생성기가 정한다.
+    - #16(`test/14-common-synthetic-fixtures`): C 형식 공통 합성 입력이다. 예전 엔진에 의존하지 않고 이 PR과 겹치는 파일도 없다. 정확 `arrival_s` 수요는 브리지(`demand_rows`, 폭 1초)로 그대로 실행된다.
+    - #28·#32·#33·#34·#36: 이 PR이 대체한다. 이 PR이 병합된 뒤 사용자가 닫는다.
+  - C의 `rerank`는 `independently_verified`(= M07 `pass`)를 본다. M07 `fully_verified`는 V16 때문에 늘 false라 쓰지 않았다(코디네이터 확인 대기, 아래 "멈춘 지점").
+  - 1인당 정차·양방향 영업 노선·정류장 집합 OD를 다시 쓰려면 M07 형식 확장(검증기 쪽 결정)이 먼저다.
+- 테스트 실행 명령과 결과
+  - `PYTHONPATH=src:. python3 -m unittest discover -s tests -t .` → (최종 결과는 PR 본문 "## 확인")
