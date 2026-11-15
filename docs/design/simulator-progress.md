@@ -101,7 +101,7 @@
 
 ## 4단계 — 셔틀 GTFS 내보내기
 
-- PR: (열린 뒤 아래 worker 보고에 링크. 스택 PR, base `feat/sim-validator`, 브랜치 `feat/sim-gtfs-export`)
+- PR: https://github.com/OpenSwProject26-2/2team/pull/34 (Draft, base `feat/sim-validator`, 스택 PR, 브랜치 `feat/sim-gtfs-export`)
 - 한 일
   - `src/busstrike/sim/gtfs.py`: `timetable.json`의 예정 시각을 `agency`·`routes`·`trips`·`stop_times`·`calendar`·`feed_info`(.txt)로 내보낸다(`export_gtfs`, 바이트 생성은 `build_gtfs_files`). 내보낸 feed를 다시 읽는 `read_gtfs`도 넣었다. `python -m busstrike.sim gtfs --scenario S --timetable T --out DIR` CLI를 추가했다. 표준 라이브러리만 쓴다.
   - `tests/sim/test_gtfs.py`(13개): 왕복 테스트(trip 수, 노선별 정차 순서, 출발 시각, 차량(block), 정차 시각·`stop_sequence` 전부) — T1·합성 3개 seed·`run()` 산출물 경유, 파일·헤더·줄 끝·BOM, 달력, pickup/drop_off/timepoint, direction_id, 결정론, 시각 형식(25시), 오류.
