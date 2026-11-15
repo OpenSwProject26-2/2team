@@ -21,8 +21,8 @@
 | run 필수 파일은 4개다. `realization.jsonl`은 선택이다(없으면 V1이 `demand_bins.csv`와 seed로만 비교하고 checksum 대조를 건너뛴다) | `evaluation/inputs.py:16-17`, `:187-193`, `:286-288`; `evaluation/arrivals_ref.py:175-177` |
 | scenario 위치를 찾는 순서: `--scenario` → `<run>/../scenario` → `measurement.json`의 `scenario`(상대 경로는 run 디렉터리 기준) | `evaluation/inputs.py:277-305` |
 | **모르는 파일은 무시한다.** 검증기는 이름으로 정해진 파일만 열고, 보고서 digest도 `RUN_FILES`·`SCENARIO_FILES`만 계산한다. 그래서 `timetable.json`을 run/에 두어도 된다 | `evaluation/inputs.py:174-175`, `:269-272`; `evaluation/guards.py:11-14` |
-| 검증기는 기본적으로 `<run>/verifier_report.json`을 **쓴다**. 결정론 비교는 검증 전에 하거나 `--out`으로 다른 곳에 쓴다 | `evaluation/verify.py:229-230` |
-| 종료 코드: 0 통과 · 1 검사 실패 · 2 입력 오류 | `evaluation/verify.py:222-237`; `evaluation/README.md:21` |
+| 검증기는 기본적으로 `<run>/verifier_report.json`을 **쓴다**. 결정론 비교는 검증 전에 하거나 `--out`으로 다른 곳에 쓴다 | `evaluation/verify.py:86-87` |
+| 종료 코드: 0 통과 · 1 검사 실패 · 2 입력 오류 | `evaluation/verify.py:79-94`; `evaluation/README.md:21` |
 
 ## 2. 파일별 형식
 
@@ -125,7 +125,7 @@
 | 필드 | 필수 | 의미 | 근거 |
 | --- | --- | --- | --- |
 | `config.max_wait_s`, `config.max_journey_s`, `config.drain_s` | 필수(int) | 기한과 관측 끝 | `evaluation/inputs.py:196-202` |
-| `arrival_seed` | V1·재계산에 필요 | 생성기 seed(JSON 값 그대로 해시에 들어간다) | `evaluation/verify.py:184`; `evaluation/arrivals_ref.py:100-104` |
+| `arrival_seed` | V1·재계산에 필요 | 생성기 seed(JSON 값 그대로 해시에 들어간다) | `evaluation/verify.py:41`; `evaluation/arrivals_ref.py:100-104` |
 | `policy.wait_threshold_s` | 선택 | M3 임계. 없으면 V12 `not_verified` | `evaluation/metrics_ref.py:207-211` |
 | `policy.max_headway_s` | 선택 | R12 상한. 없으면 V15 `not_verified` | `evaluation/guards.py:59-64` |
 | `policy.name` | 선택 | 보고서 기록용 | `evaluation/report.py:131` |
@@ -147,8 +147,8 @@
 
 | 상태 | 뜻 | 근거 |
 | --- | --- | --- |
-| `pass` / `fail` | 위반 0 / 1건 이상 | `evaluation/checks.py:182-186` |
-| `not_run` | 승객 수가 재계산 상한(기본 10,000)을 넘어 V6·V7·V9–V14를 돌리지 않음 | `evaluation/verify.py:166-201` |
+| `pass` / `fail` | 위반 0 / 1건 이상 | `evaluation/checks.py:41-45` |
+| `not_run` | 승객 수가 재계산 상한(기본 10,000)을 넘어 V6·V7·V9–V14를 돌리지 않음 | `evaluation/verify.py:23-58` |
 | `not_verified` | 자료가 없어 판단 불가. **V16은 늘 이 상태다**(R10·R13 자료 없음) | `evaluation/guards.py:106-168` |
 | 보고서 `pass` | 실패한 검사가 없다. `fully_verified`는 현재 구조에서 늘 false다 | `evaluation/report.py:109-116` |
 
