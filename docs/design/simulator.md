@@ -10,7 +10,7 @@
 
 ## 문서 상태
 
-- 상태: **설계 초안 · 팀 검토 대기 · 구현 미착수.** 이 문서의 값은 승인된 결정이 아니다(AGENTS.md §1). D02·D03·D06·D07은 §11의 권장값을 "가정"으로 쓰고, 승인 전에는 코드 상수로 박지 않고 Scenario 입력으로만 받는다.
+- 상태: **설계 초안 · 팀 검토 대기 · 2단계(핵심 엔진, `feat/sim-core`) 구현.** 3–5단계(검증기·GTFS·C 연결)는 미착수. 이 문서의 값은 승인된 결정이 아니다(AGENTS.md §1). D02·D03·D06·D07은 §11의 권장값을 "가정"으로 쓰고, 승인 전에는 코드 상수로 박지 않고 Scenario 입력으로만 받는다.
 - 요구사항 원문: [simulator-brief.md](simulator-brief.md) · 진행 기록: [simulator-progress.md](simulator-progress.md)
 - 관련 모듈: M05(시뮬레이터), M07(독립 검증), M04 연결부, M00 v0.1 계약. 공용 계약(`docs/contracts`, `src/busstrike/contracts`)은 바꾸지 않는다. 아래 스키마는 모두 M00이 "module-owned"로 남긴 영역의 M05 소유 형식이다.
 - 시뮬레이션 결과는 실제 운행 성능·승인 근거가 아니다.
@@ -124,7 +124,10 @@
 | `arrival_realization_uri`, `travel_time_realization_uri` | 위 두 파일 |
 | `arrival_meta` | `{method, bin_length_s, passenger_count, sha256}` |
 | `travel_time_sha256`, `scenario_sha256` | 각 파일 해시 |
-| `checksum` | `sha256(canonical_json({arrivals, travel_times, scenario 세 해시}))` |
+| `checksum` | `sha256(canonical_json({"arrivals": …, "travel_times": …, "scenario": …}))` — 값은 세 파일의 SHA-256 hex, 해시 입력은 줄바꿈 없는 UTF-8 |
+
+- 두 URI는 `run_inputs.json`이 있는 디렉터리 기준 상대 경로(POSIX `/`)다. `scenario.json`은 실행 때 따로 받고 `scenario_sha256`으로 묶는다.
+- 실행(`run.py`)은 세 해시·`checksum`·`arrival_meta.passenger_count`·`scenario_id`가 실제 파일과 맞는지, `travel_times.network_snapshot_id`가 scenario와 같은지 확인하고, 어긋나면 `INPUT_INVALID`로 멈춘다.
 
 **`plan.json`** (M00 `ServicePlan`, `routes`는 M05가 읽는 형식)
 
@@ -244,6 +247,7 @@ assign_vehicles(plan, fleet) -> {route_id: [Vehicle]}
 - v1은 **차고지 공차를 계산하지 않는다.** 차량은 anchor에 미리 가 있다고 본다(§11 D03). 경로 탐색으로 공차 시간을 지어내지 않는 것은 M00 §2.2("미확인 구간을 임의 보완하지 않는다")와 C의 `route_error`("차고지 공차 이동 자료가 필요한 후보")에 맞춘 것이다.
 - 확장 지점: 출고·입고를 `cycle_index=-1`/마지막의 공차 trip으로 duty 앞뒤에 넣으면 엔진 변경 없이 실행된다. 정류장 순서열은 운행안이 명시해야 한다.
 - 차급이 섞인 fleet에서 명시 배정이 없으면 ID 순서 배정이라 정원이 노선에 맞지 않을 수 있다. 그 경우 운행안이 `vehicle_ids`를 준다.
+- (2단계 구현에서 정함) 명시 배정 차량은 **먼저 예약**하고 남은 차량으로 나머지 노선을 채운다. 그래야 route_id가 앞선 무배정 노선이 뒤 노선의 명시 차량을 가져가지 않는다. `vehicle_ids` 길이는 `vehicle_count`와 같아야 한다(아니면 `PLAN_INFEASIBLE`).
 
 ### 1.5 duty와 `timetable.json`
 
@@ -266,7 +270,12 @@ assign_vehicles(plan, fleet) -> {route_id: [Vehicle]}
 | `in_service` | bool | 공차면 false |
 | `stop_times[]` | `{stop_seq:int, stop_id:string, sched_s:int}` | `stop_seq`는 0부터. `sched_s`는 스냅숏 예정 시각 |
 
-`validate_timetable`(생성·제공 공통, 실패 시 `PLAN_INFEASIBLE`): 차량이 fleet에 있음 · 차량당 노선 1개 · 같은 차량의 trip이 예정 시각상 겹치지 않음 · 연속 trip은 앞의 마지막 정류장 = 뒤의 첫 정류장 · 모든 예정 시각이 차량의 유효 창 안 · 연속 정류장쌍이 `travel_times.json`에 있음.
+`validate_timetable`(생성·제공 공통, 실패 시 `PLAN_INFEASIBLE`): 차량이 fleet에 있음 · 차량당 노선 1개 · 같은 차량의 trip이 예정 시각상 겹치지 않음 · 연속 trip은 앞의 마지막 정류장 = 뒤의 첫 정류장 · 모든 예정 시각이 차량의 유효 창 안 · 연속 정류장쌍이 `travel_times.json`에 있음(없으면 `DATA_INCOMPLETE`).
+2단계 구현에서 더한 검사: trip의 정류장열·`in_service`가 `plan.json`의 해당 leg와 같음 · `stop_seq`가 0부터 연속 · trip 안 `sched_s` 비감소 · duty의 `trip_ids`·`start_s`·`end_s`가 trip과 일치 · 노선별 사용 차량 수 ≤ `vehicle_count`(명시 배정이면 그 안) · 차량의 `initial_stop_id`/`end_stop_id`가 있으면 duty의 첫/마지막 정류장과 같음.
+
+- `duties[]`에는 trip이 1개 이상인 차량만 넣는다. 배정됐지만 cycle이 하나도 들어가지 않은 차량은 `routes[].vehicle_ids`에만 남는다.
+- `routes[].period_s`는 배정 대수가 0이면 `null`이다(주기를 계산하지 않는다). `provided`면 `routes[].vehicle_ids`는 trip에 나온 차량이다.
+- 운행안이 trip을 직접 줄 때(`plan.trips`, `plan.vehicle_duties`)는 `(vehicle_id, cycle_index, leg_index)`·`vehicle_id` 순으로 다시 정렬해 쓴다.
 
 ### 1.6 공정성: 시간표가 없는 안
 
@@ -359,6 +368,7 @@ realize_arrivals(rows, station_stops, policy, window, seed, bin_length_s) -> [Pa
 ```
 
 - `passenger_id`는 폭이 고정이라 문자열 정렬 = 생성 순서다. 원시 카드 식별자와 무관하다.
+- (2단계 구현에서 정함) 실현기 입력 행은 `DemandFlow(kind, stop_id, station_id, bin_start_s, flow)`이다. access는 `stop_id → station_stops[station_id]`, egress는 그 반대로 바꾼다. 같은 OD의 시간대 시작은 `bin_length_s` 이상 떨어져야 한다(겹치면 `INPUT_INVALID`). `flow`는 문자열·정수·`Decimal`을 권장하고, float는 `str()`을 거쳐 `Decimal`로 읽는다.
 - 파일 해시와 `run_inputs.json`의 `checksum`은 §0.3. 비교 실험은 `input_bundle_id`와 `checksum`이 같을 때만 "같은 입력"이다.
 
 ### 2.5 버린 대안
@@ -658,7 +668,8 @@ key(e) = (t, phase, vehicle_id 또는 "", visit 또는 0, type_rank, order)
 | `config_hash` | 아래 |
 | `input_checksum`, `plan_sha256`, `timetable_sha256`, `event_log_sha256`, `metrics_sha256` | 추적용 해시 |
 | `timetable_origin` | `generated` / `provided` |
-| `sim_version` | 엔진 버전 문자열 |
+| `sim_version` | 엔진 버전 문자열(2단계: `busstrike-sim/0.1.0`) |
+| `timetable_uri` | `timetable.json`(검증기 입력, 2단계에서 추가) |
 
 **`config_hash`의 범위** = 엔진이 읽었지만 `RunInputs`·`ServicePlan`으로 식별되지 않는 것 전부:
 
@@ -706,6 +717,14 @@ config_hash = sha256(canonical_json({
 - `load_factor_seat = max_load / seat_capacity`(1을 넘으면 입석), `load_factor_total = max_load / (seat+standing)`.
 - `start_delay_s = trip 첫 arrive.t − sched_s[0]`, `end_s = trip 마지막 arrive.t`. `cycles_cancelled`는 시간표에 있지만 실행되지 않은 cycle 수.
 - C의 `Assessment`로 옮길 때(5단계): `served = satisfied`, `total = generated`, `p90_wait_s = wait_s.p90`, `distance_m = fleet.total_m`.
+
+2단계 구현에서 정한 세부(검증기 V13이 같은 규칙으로 재계산해야 한다)
+- 최상위에 `schema_version`(1), `plan_id`, `plan_revision`을 둔다.
+- `unserved.by_cause`는 여섯 cause(`FULL`, `JOURNEY_EXCEEDED`, `NO_ROUTE_AT_STOP`, `NO_ROUTE_TO_DEST`, `SERVICE_ENDED`, `WAIT_EXCEEDED`)를 0까지 모두 싣는다. `by_stop`은 0이 아닌 칸만.
+- `vehicles[]`는 `timetable.routes[].vehicle_ids`에 배정된 차량 전부(`vehicle_id` 순). `first_s`·`last_s`는 그 차량의 `arrive`·`depart` 시각만 본다(`cancel` 제외). 한 번도 움직이지 않으면 `first_s`·`last_s`·`span_s`는 `null`. 거리는 실행된 정차마다 직전 정류장→그 정류장 구간의 `distance_m` 합. `cycles_run`은 trip이 하나라도 실행된 cycle 수.
+- `fleet.vehicles_used`는 이벤트가 있는 차량 수, `total_span_s`는 그 차량들의 `span_s` 합, `boardings_per_vehicle`은 `round(x, 3)`.
+- `trips[]`는 **실행된** 영업 trip만, `timetable.trips` 순서로 싣는다. `boardings`는 그 trip `arrive.boarded` 합, `max_load`는 `arrive.load` 최댓값.
+- `routes[]`는 `timetable.routes` 순서. `trips_run`은 실행된 영업 trip 수, `satisfied`·`mean_wait_s`는 그 노선 trip에서 탄 승객 기준. 값이 없으면 `null`.
 
 ### 6.4 셔틀 GTFS
 
@@ -819,6 +838,7 @@ route_clusters(routes, ctx) -> [[route_id]]
 
 - 근거: 이벤트당 수 µs 수준의 `heapq`+dict 연산. 참고로 기존 SimPy 기반 Draft PR이 합성 90만 명을 41–46초로 측정했다(독립 검증 전 잠정값, 5만 명 환산 약 2.5초).
 - 2단계에서 합성 5만 명 입력을 테스트 안에서 생성해 측정하고 결과를 진행 기록에 남긴다. 목표를 못 맞추면 §4.2의 하위 줄 최적화를 먼저 적용한다.
+- 2단계 실측(`tests/sim/test_determinism.py::SpeedMeasurementTests`, 합성 5만 명·30노선·62대·영업+공차 trip 810개·이벤트 약 9.8만 줄, Python 3.14, WSL2 단일 프로세스): 시간표+준비 0.08초, 엔진 0.31초, 로그 직렬화+지표 0.50초, 파일 읽기·쓰기를 포함한 `run()` 1.41초. 목표 안이라 하위 줄 최적화는 넣지 않았다. 이벤트 수가 추정(15만–25만)보다 적은 것은 합성 입력이 과부하(대당 수요가 많아 대기 한도 초과가 많음)이기 때문이다.
 
 ---
 
@@ -1055,7 +1075,7 @@ t=0의 로그 순서: `no_service` w3, w4, w5 → V1 `arrive`(boarded 1, left_be
 
 지표: generated 5, transported 2, satisfied 2, no_service 3(`NO_ROUTE_AT_STOP` 2, `NO_ROUTE_TO_DEST` 1), 대기 모두 0, `denied.boardings=1`, `denied.passengers=1`. V1 revenue 1500m/deadhead 1500m, V2 800m/800m. 로그 20줄, SHA-256 `caee12748b596343cdd1d9e1cacfa8f702e17e5878467da7f0d0da6c025b662d`.
 
-클러스터 테스트(§7.2): w1·w2가 두 노선 모두에 유효하므로 `route_clusters = [["R1","R2"]]`. w1·w2의 목적지를 각각 {S1}, {S2}로 바꾸면 `[["R1"],["R2"]]`이고 단독 실행 결과의 합이 함께 돌린 결과와 같다.
+클러스터 테스트(§7.2): w1·w2가 두 노선 모두에 유효하므로 `route_clusters = [["R1","R2"]]`. w1·w2의 목적지를 각각 {S1}, {S2}로 바꾸면 `[["R1"],["R2"]]`이고 단독 실행 결과의 합이 함께 돌린 결과와 같다. (2단계는 `curve.py`가 없으므로 "단독 실행 합 = 함께 실행" 성질만 엔진으로 검사한다. `route_clusters` 자체의 기대값 검사는 5단계.)
 
 ### 9.5 T4 — 시간대별 구간 시간·종료 시 대기
 
@@ -1156,7 +1176,8 @@ src/busstrike/sim/
   engine.py          SimContext, prepare, simulate (파일 입출력·난수·시계 없음)
   eventlog.py        canonical_key, canonical_sort, dumps_events, write_events
   metrics.py         compute_metrics
-  run.py             config_hash, run (디렉터리 단위 실행), CLI `python -m busstrike.sim`
+  run.py             config_hash, run (디렉터리 단위 실행)
+  __main__.py        CLI `python -m busstrike.sim run --scenario S --run-inputs R --plan P --out DIR` (SimError면 종료 코드 2)
   gtfs.py            export_gtfs                                         (4단계)
   curve.py           eligible_passengers, route_clusters, fleet_curve, cluster_eval   (5단계)
   adapters/planning_bridge.py   C Inputs·Plan → 시뮬 입력, evaluation_port, compare_with_estimate   (5단계)
