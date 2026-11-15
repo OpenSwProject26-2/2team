@@ -1,229 +1,240 @@
-"""지표 계산(simulator.md §6.3). 엔진 상태가 아니라 로그 + 입력에서만 계산한다."""
+"""승객 결과·지표(simulator.md §6.3, m07-output-contract.md §2.5·§2.6·§4.5–§4.8).
+
+지표는 엔진 안에서 세지 않고 **사건 로그 + 입력(일정·승객)**에서 계산한다. 로그로 알 수 없는 만차 거절
+횟수만 엔진 결과(`SimResult.refused`)에서 받는다(M07 로그에는 거절 사건이 없다). 실수 값은 M07 검증기가
+`==`로 비교하므로 계약에 적힌 식(`served / total`, `sum(waits) / len(waits)`)을 그대로 쓴다.
+"""
 
 from __future__ import annotations
 
-from typing import Iterable, Sequence
+from dataclasses import dataclass
+from math import ceil
+from typing import Mapping, Sequence
 
-from .models import Event, Passenger, Policy, Timetable, Vehicle
-from .traveltime import TravelTimeTable
+from .engine import ARRIVED, CENSORED, ONBOARD, SERVED, UNSERVED, WAITING, SimResult
+from .models import Event, ServiceTrip
 
-CAUSES = ("FULL", "JOURNEY_EXCEEDED", "NO_ROUTE_AT_STOP", "NO_ROUTE_TO_DEST", "SERVICE_ENDED", "WAIT_EXCEEDED")
-METRICS_SCHEMA_VERSION = 1
-
-
-def _ratio(num: int, den: int, digits: int = 6) -> float | None:
-    return None if den == 0 else round(num / den, digits)
-
-
-def _mean(values: Sequence[int]) -> float | None:
-    return None if not values else round(sum(values) / len(values), 3)
+METRICS_SCHEMA_VERSION = 2
+REASONS = ("no_connection", "service_end", "journey", "wait")
+UNKNOWN_AREA = "unknown"
+PROVISIONAL = "독립 검증 전 잠정 (provisional, not independently verified)"
 
 
-def nearest_rank(sorted_values: Sequence[int], p: int) -> int | None:
-    """오름차순 N개 중 ceil(p·N/100)번째(1부터)."""
-    n = len(sorted_values)
-    if n == 0:
+@dataclass(frozen=True)
+class Outcome:
+    """`passenger_outcomes.csv` 1행."""
+
+    passenger_id: str
+    origin: str
+    destination: str
+    time_s: int
+    outcome: str
+    reason: str | None
+    physical: str
+    vehicle_id: str | None
+    boarding_s: int | None
+    arrival_s: int | None
+    refused: int
+    board_vehicle_id: str | None   # CSV에 쓰지 않음. M6 집계용
+
+
+class Connectivity:
+    """출발지 방문 i, 목적지 방문 j > i가 같은 운행편에 있는지와 그런 운행편의 출발지 도착 시각(§4.6)."""
+
+    def __init__(self, schedule: Sequence[ServiceTrip]):
+        self._index: list[tuple[ServiceTrip, dict[str, list[int]]]] = []
+        for trip in schedule:
+            pos: dict[str, list[int]] = {}
+            for k, s in enumerate(trip.stops):
+                pos.setdefault(s, []).append(k)
+            self._index.append((trip, pos))
+        self._cache: dict[tuple[str, str], tuple[int, ...]] = {}
+
+    def origin_arrivals(self, origin: str, destination: str) -> tuple[int, ...]:
+        key = (origin, destination)
+        found = self._cache.get(key)
+        if found is None:
+            times = []
+            for trip, pos in self._index:
+                o, d = pos.get(origin), pos.get(destination)
+                if o and d:
+                    times.extend(trip.arrivals[i] for i in o if i < d[-1])
+            found = self._cache[key] = tuple(sorted(times))
+        return found
+
+    def reason(self, origin: str, destination: str, time_s: int, drain_s: int, expiry: str) -> str:
+        arrivals = self.origin_arrivals(origin, destination)
+        if not arrivals:
+            return "no_connection"
+        if not any(time_s <= t <= drain_s for t in arrivals):
+            return "service_end"
+        return expiry
+
+
+def passenger_outcomes(result: SimResult, schedule: Sequence[ServiceTrip]) -> list[Outcome]:
+    """사건 로그에서 승객별 결과를 정한다(§4.5). 행은 passenger_id 문자열 순."""
+    boarded: dict[str, Event] = {}
+    alighted: dict[str, int] = {}
+    expired: dict[str, Event] = {}
+    for e in result.events:
+        if e.kind == "boarded":
+            boarded[e.passenger_id] = e
+        elif e.kind == "alighted":
+            alighted[e.passenger_id] = e.time_s
+        elif e.kind == "expired":
+            expired[e.passenger_id] = e
+    conn = Connectivity(schedule)
+    rows: list[Outcome] = []
+    for p, refused in sorted(zip(result.passengers, result.refused), key=lambda x: x[0].passenger_id):
+        pid = p.passenger_id
+        board = boarded.get(pid)
+        arrival = alighted.get(pid)
+        physical = ARRIVED if arrival is not None else (ONBOARD if board is not None else WAITING)
+        exp = expired.get(pid)
+        if exp is not None:
+            outcome = UNSERVED
+            reason = conn.reason(p.origin, p.destination, p.arrival_s, result.drain_s, exp.stable_id.split(":", 1)[0])
+        elif arrival is not None:
+            outcome, reason = SERVED, None
+        else:
+            outcome, reason = CENSORED, None
+        rows.append(Outcome(pid, p.origin, p.destination, p.arrival_s, outcome, reason, physical,
+                            board.vehicle_id if physical == ONBOARD else None,
+                            None if board is None else board.time_s, arrival, refused,
+                            None if board is None else board.vehicle_id))
+    return rows
+
+
+# ---------------------------------------------------------------- 지표
+
+def nearest_rank_p90(values: Sequence[int]) -> int | None:
+    if not values:
         return None
-    rank = max(1, -(-p * n // 100))
-    return sorted_values[rank - 1]
+    ordered = sorted(values)
+    return ordered[max(1, ceil(0.9 * len(ordered))) - 1]
 
 
-def stats(values: Iterable[int]) -> dict:
-    v = sorted(values)
-    return {
-        "count": len(v),
-        "mean": _mean(v),
-        "p50": nearest_rank(v, 50),
-        "p90": nearest_rank(v, 90),
-        "p95": nearest_rank(v, 95),
-        "max": v[-1] if v else None,
-    }
+def wait_summary(waits: Sequence[int], threshold_s: int | None) -> dict:
+    n = len(waits)
+    over = None if threshold_s is None else sum(1 for w in waits if w > threshold_s)
+    return {"n": n,
+            "mean_s": (sum(waits) / n) if n else None,
+            "p90_s": nearest_rank_p90(waits),
+            "over_threshold_n": over,
+            "over_threshold_rate": (over / n) if (n and over is not None) else None,
+            "threshold_s": threshold_s}
 
 
-def compute_metrics(events: Sequence[Event], passengers: Sequence[Passenger], timetable: Timetable,
-                    vehicles: Sequence[Vehicle], policy: Policy, tt: TravelTimeTable) -> dict:
-    vehicle_by_id = {v.vehicle_id: v for v in vehicles}
-    trips_by_id = {t.trip_id: t for t in timetable.trips}
+def headway_report(schedule: Sequence[ServiceTrip], max_headway_s: int) -> dict:
+    """§4.8 R12: 노선·정류장별 연속 출발 간격."""
+    by_route_stop: dict[tuple[str, str], list[int]] = {}
+    for trip in schedule:
+        for stop, dep in zip(trip.stops, trip.departures):
+            by_route_stop.setdefault((trip.route_id, stop), []).append(dep)
+    max_gap: dict[str, int] = {}
+    violations = []
+    for (route, stop), deps in sorted(by_route_stop.items()):
+        deps.sort()
+        for before, after in zip(deps, deps[1:]):
+            gap = after - before
+            if gap > max_gap.get(route, -1):
+                max_gap[route] = gap
+            if gap > max_headway_s:
+                violations.append({"route": route, "stop": stop, "from_s": before, "to_s": after, "gap_s": gap})
+    return {"rule": "R12", "max_headway_s": max_headway_s, "max_gap_by_route_s": dict(sorted(max_gap.items())),
+            "violation_count": len(violations), "pass": not violations, "violations": violations,
+            "not_checked": "window-edge gaps; routes with a single departure per stop are omitted"}
 
-    board: dict[str, Event] = {}
-    alight: dict[str, int] = {}
-    outcome: dict[str, tuple[str, str]] = {}
-    denied_pids: set[str] = set()
-    trip_arrives: dict[str, list[Event]] = {}
-    vehicle_times: dict[str, list[int]] = {}
-    boardings_by_vehicle: dict[str, int] = {}
-    left_behind_total = 0
-    for e in events:
-        typ = e.type
-        if typ == "arrive":
-            trip_arrives.setdefault(e.trip_id, []).append(e)
-            vehicle_times.setdefault(e.vehicle_id, []).append(e.t)
-            left_behind_total += e.left_behind
-        elif typ == "depart":
-            vehicle_times.setdefault(e.vehicle_id, []).append(e.t)
-        elif typ == "board":
-            board[e.passenger_id] = e
-            boardings_by_vehicle[e.vehicle_id] = boardings_by_vehicle.get(e.vehicle_id, 0) + 1
-        elif typ == "alight":
-            alight[e.passenger_id] = e.t
-        elif typ == "denied":
-            denied_pids.add(e.passenger_id)
-        elif typ in ("no_service", "abandon", "left_waiting"):
-            outcome[e.passenger_id] = (typ, e.cause)
 
-    ordered = sorted(passengers, key=lambda p: p.passenger_id)
-    satisfied: set[str] = set()
-    for p in ordered:
-        if p.passenger_id in alight and alight[p.passenger_id] - p.arrival_s <= policy.max_journey_s:
-            satisfied.add(p.passenger_id)
+def compute_metrics(result: SimResult, outcomes: Sequence[Outcome], schedule: Sequence[ServiceTrip], *,
+                    stop_area: Mapping[str, str], wait_threshold_s: int | None,
+                    max_headway_s: int | None) -> dict:
+    drain = result.drain_s
+    tally = {SERVED: 0, UNSERVED: 0, CENSORED: 0}
+    reasons = {r: 0 for r in REASONS}
+    not_boarded = {r: 0 for r in REASONS}
+    refused_by = {SERVED: 0, UNSERVED: 0, CENSORED: 0}
+    physical = {WAITING: 0, ONBOARD: 0, ARRIVED: 0}
+    areas: dict[str, dict[str, int]] = {}
+    served_waits: list[int] = []
+    boarded_waits: list[int] = []
+    boarded_by_vehicle: dict[str, int] = {}
+    served_by_vehicle: dict[str, int] = {}
+    for o in outcomes:
+        tally[o.outcome] += 1
+        physical[o.physical] += 1
+        if o.outcome == UNSERVED:
+            reasons[o.reason] += 1
+            if o.boarding_s is None:
+                not_boarded[o.reason] += 1
+        if o.refused:
+            refused_by[o.outcome] += 1
+        a = areas.setdefault(stop_area.get(o.origin, UNKNOWN_AREA),
+                             {"total": 0, SERVED: 0, UNSERVED: 0, CENSORED: 0})
+        a["total"] += 1
+        a[o.outcome] += 1
+        if o.boarding_s is not None:
+            wait = o.boarding_s - o.time_s
+            boarded_waits.append(wait)
+            boarded_by_vehicle[o.board_vehicle_id] = boarded_by_vehicle.get(o.board_vehicle_id, 0) + 1
+            if o.outcome == SERVED:
+                served_waits.append(wait)
+                served_by_vehicle[o.board_vehicle_id] = served_by_vehicle.get(o.board_vehicle_id, 0) + 1
 
-    def block(group: Sequence[Passenger]) -> dict:
-        gen = len(group)
-        tr = sum(1 for p in group if p.passenger_id in alight)
-        sat = sum(1 for p in group if p.passenger_id in satisfied)
-        kinds = [outcome.get(p.passenger_id, ("", ""))[0] for p in group]
-        return {
-            "generated": gen,
-            "transported": tr,
-            "satisfied": sat,
-            "abandoned": kinds.count("abandon"),
-            "no_service": kinds.count("no_service"),
-            "left_waiting": kinds.count("left_waiting"),
-            "transport_rate": _ratio(tr, gen),
-            "satisfaction_rate": _ratio(sat, gen),
-        }
+    total = sum(tally.values())
+    served, censored = tally[SERVED], tally[CENSORED]
+    if total == 0:
+        rate = lower = upper = None
+    elif censored == 0:
+        rate = lower = upper = served / total
+    else:
+        rate, lower, upper = None, served / total, (served + censored) / total
 
-    passengers_block = block(ordered)
-    passengers_block["by_kind"] = {k: block([p for p in ordered if p.kind == k]) for k in ("access", "egress")}
+    by_area = {area: {"total": b["total"], "served": b[SERVED], "unserved": b[UNSERVED], "censored": b[CENSORED],
+                      "served_rate": b[SERVED] / b["total"]}
+               for area, b in sorted(areas.items())}
+    worst = min(((v["served_rate"], area) for area, v in by_area.items()), default=None)
 
-    # ---- 대기·차내·총 이동
-    waits = [board[p.passenger_id].t - p.arrival_s for p in ordered if p.passenger_id in board]
-    in_vehicle = [alight[p.passenger_id] - board[p.passenger_id].t for p in ordered if p.passenger_id in alight]
-    journey = [alight[p.passenger_id] - p.arrival_s for p in ordered if p.passenger_id in alight]
+    # M6: 차량별(§4.7). 출발 시 탑승 인원은 departed 사건에서 읽는다.
+    dep_occ = {e.stable_id: e.occupancy for e in result.events if e.kind == "departed"}
+    vehicles: dict[str, dict] = {}
+    for trip in schedule:
+        row = vehicles.setdefault(trip.vehicle_id, {
+            "vehicle_id": trip.vehicle_id, "trips_completed": 0, "boarded": 0, "served_alighted": 0,
+            "service_time_s": 0, "distance_m": 0, "empty_time_s": 0})
+        if trip.return_s <= drain:
+            row["trips_completed"] += 1
+            row["service_time_s"] += trip.return_s - trip.arrivals[0]
+            row["distance_m"] += trip.distance_m
+            row["empty_time_s"] += trip.return_s - trip.departures[-1]
+        for k in range(len(trip.stops) - 1):
+            if dep_occ.get(trip.stable_id(k)) == 0 and trip.arrivals[k + 1] <= drain:
+                row["empty_time_s"] += trip.arrivals[k + 1] - trip.departures[k]
+    for vid, row in vehicles.items():
+        row["boarded"] = boarded_by_vehicle.get(vid, 0)
+        row["served_alighted"] = served_by_vehicle.get(vid, 0)
 
-    # ---- 미충족 원인
-    by_cause = {c: 0 for c in CAUSES}
-    by_stop: dict[tuple[str, str], int] = {}
-    for p in ordered:
-        if p.passenger_id in alight:
-            if p.passenger_id in satisfied:
-                continue
-            cause = "JOURNEY_EXCEEDED"
-        else:
-            cause = outcome[p.passenger_id][1]
-        by_cause[cause] += 1
-        key = (p.origin_stop_ids[0], cause)
-        by_stop[key] = by_stop.get(key, 0) + 1
-
-    # ---- trip·차량·노선
-    route_of_vehicle = {vid: r.route_id for r in timetable.routes for vid in r.vehicle_ids}
-    trip_rows: list[dict] = []
-    vehicle_acc: dict[str, dict] = {}
-    executed_cycles: dict[str, set[int]] = {}
-    planned_cycles: dict[str, set[int]] = {}
-    for t in timetable.trips:
-        planned_cycles.setdefault(t.vehicle_id, set()).add(t.cycle_index)
-        arrives = sorted(trip_arrives.get(t.trip_id, ()), key=lambda e: e.stop_seq)
-        if not arrives:
-            continue
-        executed_cycles.setdefault(t.vehicle_id, set()).add(t.cycle_index)
-        acc = vehicle_acc.setdefault(t.vehicle_id, {"revenue_m": 0, "deadhead_m": 0, "revenue_s": 0, "deadhead_s": 0})
-        stops = t.stop_ids
-        dist = sum(tt.distance(stops[e.stop_seq - 1], stops[e.stop_seq]) for e in arrives if e.stop_seq > 0)
-        secs = arrives[-1].t - arrives[0].t
-        if t.in_service:
-            acc["revenue_m"] += dist
-            acc["revenue_s"] += secs
-            v = vehicle_by_id[t.vehicle_id]
-            max_load = max(e.load for e in arrives)
-            trip_rows.append({
-                "trip_id": t.trip_id,
-                "route_id": t.route_id,
-                "vehicle_id": t.vehicle_id,
-                "boardings": sum(e.boarded for e in arrives),
-                "max_load": max_load,
-                "load_factor_seat": _ratio(max_load, v.seat_capacity),
-                "load_factor_total": _ratio(max_load, v.capacity),
-                "start_delay_s": arrives[0].t - t.stop_times[0].sched_s,
-                "end_s": arrives[-1].t,
-            })
-        else:
-            acc["deadhead_m"] += dist
-            acc["deadhead_s"] += secs
-
-    vehicle_rows: list[dict] = []
-    for vid in sorted(route_of_vehicle):
-        acc = vehicle_acc.get(vid, {"revenue_m": 0, "deadhead_m": 0, "revenue_s": 0, "deadhead_s": 0})
-        times = vehicle_times.get(vid)
-        first = min(times) if times else None
-        last = max(times) if times else None
-        run_cycles = len(executed_cycles.get(vid, ()))
-        vehicle_rows.append({
-            "vehicle_id": vid,
-            "route_id": route_of_vehicle[vid],
-            "revenue_m": acc["revenue_m"],
-            "deadhead_m": acc["deadhead_m"],
-            "first_s": first,
-            "last_s": last,
-            "span_s": None if times is None else last - first,
-            "revenue_s": acc["revenue_s"],
-            "deadhead_s": acc["deadhead_s"],
-            "boardings": boardings_by_vehicle.get(vid, 0),
-            "cycles_run": run_cycles,
-            "cycles_cancelled": len(planned_cycles.get(vid, ())) - run_cycles,
-        })
-    used = [r for r in vehicle_rows if r["first_s"] is not None]
-    total_boardings = sum(r["boardings"] for r in vehicle_rows)
-    revenue_m = sum(r["revenue_m"] for r in vehicle_rows)
-    deadhead_m = sum(r["deadhead_m"] for r in vehicle_rows)
-    fleet = {
-        "vehicles_used": len(used),
-        "total_m": revenue_m + deadhead_m,
-        "revenue_m": revenue_m,
-        "deadhead_m": deadhead_m,
-        "total_span_s": sum(r["span_s"] for r in used),
-        "boardings_per_vehicle": _ratio(total_boardings, len(used), 3),
-    }
-
-    route_waits: dict[str, list[int]] = {}
-    route_satisfied: dict[str, int] = {}
-    for p in ordered:
-        e = board.get(p.passenger_id)
-        if e is None:
-            continue
-        rid = trips_by_id[e.trip_id].route_id
-        route_waits.setdefault(rid, []).append(e.t - p.arrival_s)
-        if p.passenger_id in satisfied:
-            route_satisfied[rid] = route_satisfied.get(rid, 0) + 1
-    route_rows: list[dict] = []
-    for r in timetable.routes:
-        rows = [x for x in trip_rows if x["route_id"] == r.route_id]
-        route_rows.append({
-            "route_id": r.route_id,
-            "vehicles": len(r.vehicle_ids),
-            "trips_run": len(rows),
-            "boardings": sum(x["boardings"] for x in rows),
-            "satisfied": route_satisfied.get(r.route_id, 0),
-            "mean_wait_s": _mean(route_waits.get(r.route_id, [])),
-            "max_load_factor_total": max((x["load_factor_total"] for x in rows), default=None),
-        })
-
-    return {
+    metrics = {
         "schema_version": METRICS_SCHEMA_VERSION,
-        "plan_id": timetable.plan_id,
-        "plan_revision": timetable.plan_revision,
+        "label": PROVISIONAL,
         "scope_mode": "single_bus_leg",
-        "passengers": passengers_block,
-        "wait_s": stats(waits),
-        "in_vehicle_s": stats(in_vehicle),
-        "journey_s": stats(journey),
-        "denied": {"boardings": left_behind_total, "passengers": len(denied_pids)},
-        "unserved": {
-            "by_cause": by_cause,
-            "by_stop": [{"stop_id": s, "cause": c, "count": n} for (s, c), n in sorted(by_stop.items())],
-        },
-        "vehicles": vehicle_rows,
-        "fleet": fleet,
-        "trips": trip_rows,
-        "routes": route_rows,
+        "M1": {"served": served, "unserved": tally[UNSERVED], "censored": censored, "total": total,
+               "rate": rate, "lower": lower, "upper": upper,
+               "note": "rate is NA when total=0; with censored>0 report lower/upper only"},
+        "M2": {"unserved_by_reason": reasons, "reason_priority": list(REASONS),
+               "refusal_events": result.refusal_events, "passengers_refused_by_outcome": refused_by},
+        "M3": {"served": dict(wait_summary(served_waits, wait_threshold_s),
+                              population="served (boarded and arrived by deadline)"),
+               "boarded": dict(wait_summary(boarded_waits, wait_threshold_s),
+                               population="boarded (includes later journey-unserved and censored onboard)"),
+               "not_boarded_unserved_by_reason": not_boarded},
+        "M5": {"by_origin_area": by_area,
+               "min_served_rate": None if worst is None else {"area": worst[1], "rate": worst[0]}},
+        "M6": {"vehicles": [vehicles[v] for v in sorted(vehicles)],
+               "empty_distance_m": None, "empty_distance_note": "NA: no per-segment empty distance (contract §2.6)"},
+        "physical_at_drain": physical,
+        "drain_s": drain,
     }
+    if max_headway_s is not None:
+        metrics["G"] = {"R12": headway_report(schedule, max_headway_s)}
+    return metrics

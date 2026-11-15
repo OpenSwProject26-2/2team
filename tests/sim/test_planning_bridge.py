@@ -1,4 +1,4 @@
-"""C(planning) ↔ M05 연결(simulator.md §7.3, §10): 어댑터 → 시뮬레이션 → 검증기 → 지표 → Assessment.
+"""C(planning) ↔ M05 연결(simulator.md §7.3, §10): 어댑터 → 시뮬레이션(M07 폴더) → M07 검증기 → 지표 → Assessment.
 
 입력은 C의 합성 예제(tests/fixtures/planning/synthetic.json, 읽기만)와 테스트 안에서 만든 합성 입력뿐이다.
 """
@@ -13,7 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
-from busstrike.evaluation.validator import validate_run
+from busstrike.evaluation.verify import verify
 from busstrike.planning.baselines import baseline
 from busstrike.planning.evaluator import evaluate
 from busstrike.planning.integration import checked_assessment, rerank
@@ -23,10 +23,11 @@ from busstrike.sim.adapters import planning_bridge as pb
 from busstrike.sim.models import SimError
 
 from tests.sim import planning_cases as pc
+from tests.sim.cases import pid
 
 
 def events(d: Path) -> list[dict]:
-    return [json.loads(x) for x in (d / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    return [json.loads(x) for x in (d / "run" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
 
 
 class AdapterTests(unittest.TestCase):
@@ -54,10 +55,13 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(b.demand_index, {"c000001": "d1", "c000002": "d2", "c000003": "d3", "c000004": "d4",
                                           "c000005": "d5"})
         first = b.passengers[0]
-        self.assertEqual((first.passenger_id, first.origin_stop_ids, first.dest_stop_ids, first.arrival_s,
-                          first.max_wait_s), ("c000001-00001", ("A",), ("C",), 0, 300))
+        self.assertEqual((first.passenger_id, first.origin, first.destination, first.arrival_s),
+                         (pid("c000001"), "A", "C", 0))
+        self.assertEqual([(r.aggregate_id, r.bin_start_s, r.bin_width_s, r.passenger_count) for r in b.rows],
+                         [("c000001", 0, 1, 3), ("c000002", 60, 1, 2), ("c000003", 0, 1, 2), ("c000004", 0, 1, 1),
+                          ("c000005", 120, 1, 1)])
         # 같은 도착 시각에서는 C의 (arrival_s, demand_id) 순서와 같다.
-        self.assertEqual([p.passenger_id[:7] for p in b.passengers],
+        self.assertEqual([json.loads(p.passenger_id)[0] for p in b.passengers],
                          ["c000001"] * 3 + ["c000003"] * 2 + ["c000004", "c000002", "c000002", "c000005"])
 
     def test_plan_dict_uses_c_service_plan(self):
@@ -94,27 +98,23 @@ class EndToEndTests(unittest.TestCase):
         plan = baseline(self.x)                    # r1 1대, r2 1대
         with tempfile.TemporaryDirectory() as d:
             br = pb.run_plan(plan, self.x, Path(d))
-            self.assertTrue(br.validation["verified"], br.validation["violations"])
-            self.assertTrue((Path(d) / "validation.json").is_file())
-            self.assertEqual(validate_run(Path(d)), br.validation)
+            self.assertTrue(br.validation["pass"], br.validation["failed_checks"])
+            self.assertTrue((Path(d) / "run" / "verifier_report.json").is_file())
+            self.assertEqual(verify(Path(d) / "run").payload["checks"], br.validation["checks"])
             log = events(Path(d))
         m = br.metrics
-        p = m["passengers"]
-        self.assertEqual((p["generated"], p["transported"], p["satisfied"], p["abandoned"], p["no_service"]),
-                         (9, 7, 7, 1, 1))
-        causes = {k: v for k, v in m["unserved"]["by_cause"].items() if v}
-        self.assertEqual(causes, {"FULL": 1, "NO_ROUTE_AT_STOP": 1})
-        self.assertEqual(m["fleet"]["total_m"], evaluate(self.x, plan).distance_m)
-        # 손계산: d1 셋째(c000001-00003)는 r1 둘째 출발(240)에 타고, d2 둘째는 B에서 만차로 남겨져 360에 포기.
-        boards = {e["passenger_id"]: (e["t"], e["vehicle_id"]) for e in log if e["type"] == "board"}
-        self.assertEqual(boards["c000001-00003"], (240, "v1"))
-        self.assertEqual(boards["c000005-00001"], (240, "v1"))
-        self.assertEqual(boards["c000002-00001"], (300, "v1"))
-        abandon = [e for e in log if e["type"] == "abandon"]
-        self.assertEqual([(e["passenger_id"], e["t"], e["cause"]) for e in abandon],
-                         [("c000002-00002", 360, "FULL")])
-        no_service = [e for e in log if e["type"] == "no_service"]
-        self.assertEqual([(e["passenger_id"], e["cause"]) for e in no_service], [("c000004-00001", "NO_ROUTE_AT_STOP")])
+        self.assertEqual((m["M1"]["total"], m["M1"]["served"], m["M1"]["unserved"], m["physical_at_drain"]["arrived"]),
+                         (9, 7, 2, 7))
+        self.assertEqual({k: v for k, v in m["M2"]["unserved_by_reason"].items() if v}, {"no_connection": 1, "wait": 1})
+        self.assertEqual(m["M2"]["refusal_events"], 4)    # A@0 d1 셋째, B@60 d2 둘, B@300 d2 둘째
+        self.assertEqual(pb.total_distance_m(m), evaluate(self.x, plan).distance_m)
+        # 손계산: d1 셋째(["c000001",2])는 r1 둘째 출발(240)에 타고, d2 둘째는 B에서 만차로 남겨져 360에 만료.
+        boards = {e["passenger_id"]: (e["time_s"], e["vehicle_id"]) for e in log if e["kind"] == "boarded"}
+        self.assertEqual(boards[pid("c000001", 2)], (240, "v1"))
+        self.assertEqual(boards[pid("c000005")], (240, "v1"))
+        self.assertEqual(boards[pid("c000002")], (300, "v1"))
+        expired = [(e["passenger_id"], e["time_s"], e["stable_id"].split(":")[0]) for e in log if e["kind"] == "expired"]
+        self.assertEqual(expired, [(pid("c000004"), 300, "wait"), (pid("c000002", 1), 360, "wait")])
 
     def test_evaluation_port_passes_c_checks_and_rerank(self):
         plan = baseline(self.x)
@@ -130,11 +130,15 @@ class EndToEndTests(unittest.TestCase):
         plan = baseline(self.x)
         with tempfile.TemporaryDirectory() as d:
             a = pb.make_evaluation_port(Path(d))(plan, self.x)
-            files = sorted(p.name for p in (Path(d) / plan.plan_id).iterdir())
+            root = Path(d) / plan.plan_id
+            files = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
         self.assertTrue(a.independently_verified)
-        self.assertEqual(files, ["arrivals.jsonl", "demand_index.json", "events.jsonl", "metrics.json", "plan.json",
-                                 "run.json", "run_inputs.json", "scenario.json", "timetable.json",
-                                 "travel_times.json", "validation.json"])
+        self.assertEqual(files, ["inputs/demand_bins.csv", "inputs/demand_index.json", "inputs/plan.json",
+                                 "inputs/run_inputs.json", "inputs/scenario.json", "inputs/travel_times.json",
+                                 "run/events.jsonl", "run/measurement.json", "run/metrics.json",
+                                 "run/passenger_outcomes.csv", "run/realization.jsonl", "run/timetable.json",
+                                 "run/verifier_report.json", "scenario/demand_bins.csv", "scenario/network.json",
+                                 "scenario/scenario_manifest.json"])
 
     def test_infeasible_schedule_is_reported_not_raised(self):
         plan = baseline(self.x)
@@ -152,9 +156,12 @@ class EndToEndTests(unittest.TestCase):
         outs = []
         with tempfile.TemporaryDirectory() as d:
             for name in ("a", "b"):
-                pb.run_plan(plan, self.x, Path(d) / name)
-                outs.append({p.name: p.read_bytes() for p in sorted((Path(d) / name).iterdir())})
+                pb.run_plan(plan, self.x, Path(d) / name, validate=False)
+                root = Path(d) / name
+                outs.append({p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(root.rglob("*"))
+                             if p.is_file()})
         self.assertEqual(outs[0], outs[1])
+        self.assertIn("run/events.jsonl", outs[0])
 
 
 class CurveAndComparisonTests(unittest.TestCase):
@@ -187,7 +194,7 @@ class CurveAndComparisonTests(unittest.TestCase):
         rows = {tuple(sorted(r["allocation"].items())): r for r in c["rows"]}
         self.assertEqual(rows[(("r1", 1), ("r2", 1))]["sim_satisfied"], 7)
         self.assertEqual(rows[(("r1", 2),)]["sim_satisfied"], 6)
-        self.assertTrue(all(r["verified"] for r in c["rows"]))
+        self.assertTrue(all(r["verified"] for r in c["rows"]))     # M07 pass(실패 검사 0)
         s = c["summary"]
         self.assertEqual((s["plans"], s["mae"], s["distance_mismatch_plans"], s["sim_best_in_est_top3"]),
                          (10, 0.0, 0, True))
@@ -242,17 +249,21 @@ class GuroScaleTimingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             br = pb.run_plan(plan, x, Path(d), validate=False, bridge=bridge)
             t3 = time.perf_counter()
-            report = validate_run(Path(d))
+            report = verify(Path(d) / "run").payload
             t4 = time.perf_counter()
-        p = br.metrics["passengers"]
+        m1 = br.metrics["M1"]
         sys.stderr.write(
-            f"\n[bridge-speed] passengers={p['generated']} vehicles={len(x.fleet)} routes={len(x.routes)} "
-            f"| adapter={t1 - t0:.2f}s C_evaluate={t2 - t1:.2f}s run_plan(files+run)={t3 - t2:.2f}s "
-            f"validate={t4 - t3:.2f}s total={t1 - t0 + t4 - t2:.2f}s "
-            f"| est_served={est.served} sim_satisfied={p['satisfied']} python={sys.version.split()[0]}\n")
-        self.assertEqual(p["generated"], x.total_demand)
-        self.assertTrue(report["verified"])
-        self.assertEqual(br.metrics["fleet"]["total_m"], est.distance_m)
+            f"\n[bridge-speed] passengers={m1['total']} vehicles={len(x.fleet)} routes={len(x.routes)} "
+            f"events={br.run['event_count']} | adapter={t1 - t0:.2f}s C_evaluate={t2 - t1:.2f}s "
+            f"run_plan(files+run)={t3 - t2:.2f}s M07_verify={t4 - t3:.2f}s total={t1 - t0 + t4 - t2:.2f}s "
+            f"| est_served={est.served} sim_served={m1['served']} not_run={report['not_run_checks']} "
+            f"python={sys.version.split()[0]}\n")
+        self.assertEqual(m1["total"], x.total_demand)
+        self.assertTrue(report["pass"], report["failed_checks"])
+        self.assertEqual(report["failed_checks"], [])
+        # N > 10,000이면 재계산 oracle 검사(V6·V7·V9–V14)는 not_run이 정상(검증기 명세 §4)
+        self.assertEqual(report["not_run_checks"], ["V6", "V7", "V9", "V10", "V11", "V12", "V13", "V14"])
+        self.assertEqual(pb.total_distance_m(br.metrics), est.distance_m)
         self.assertLess(t3 - t2, 120.0)
 
     @unittest.skipUnless(os.environ.get("BUSSTRIKE_SCALE_CURVES"), "BUSSTRIKE_SCALE_CURVES=1일 때만(약 3분)")

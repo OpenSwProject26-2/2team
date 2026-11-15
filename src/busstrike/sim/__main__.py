@@ -17,7 +17,7 @@ from .run import run
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m busstrike.sim")
     sub = parser.add_subparsers(dest="command", required=True)
-    p = sub.add_parser("run", help="시간표 생성 + 실행 + 로그·지표 기록")
+    p = sub.add_parser("run", help="시간표 생성 + 실행 + M07 폴더(scenario/, run/) 기록")
     p.add_argument("--scenario", required=True)
     p.add_argument("--run-inputs", required=True)
     p.add_argument("--plan", required=True)

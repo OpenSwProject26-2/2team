@@ -51,7 +51,7 @@ class PlannedCycleTests(unittest.TestCase):
 
 
 class T6FleetSizeTests(unittest.TestCase):
-    """§9.7 T6: F1, 좌석 3(allow=9), 운영시간 [0,1500], P=680."""
+    """§9.7 T6: F1, 좌석 3(1인당 정차 0 → allow=0), 운영시간 [0,1500], P=680."""
 
     def build(self, n):
         route = cases.f1_route(n)

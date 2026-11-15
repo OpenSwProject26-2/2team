@@ -1,8 +1,9 @@
 """C(M04 planning) 입력·운행안 → M05 시뮬레이터 입력 어댑터와 근사–시뮬 비교(simulator.md §7, §10).
 
-- `to_sim_inputs`·`plan_dict`: C `Inputs`·`Plan`을 `scenario.json`·`travel_times.json`·`arrivals.jsonl`·
+- `to_sim_inputs`·`plan_dict`: C `Inputs`·`Plan`을 `scenario.json`·`travel_times.json`·`demand_bins.csv`·
   `plan.json`으로 바꾼다(타입 변환만, 규칙 추가 없음).
-- `run_plan`·`evaluation_port`: 어댑터 → 시간표 생성 → 시뮬레이션 → 독립 검증기 → 지표 → C `Assessment`.
+- `run_plan`·`evaluation_port`: 어댑터 → 시간표 생성 → 시뮬레이션(M07 폴더) → M07 독립 검증기
+  (`busstrike.evaluation.verify`) → 지표 → C `Assessment`.
 - `curve_report`: 노선별 S(n)·한계효용과 같은 대수의 C 근사값.
 - `compare_with_estimate`: 같은 운행안에서 C `evaluate()`와 시뮬레이션 결과를 나란히 놓는다(판정하지 않음).
 
@@ -22,7 +23,7 @@ from math import comb, isfinite
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
-from busstrike.evaluation.validator import VALIDATION_FILE, failed_checks, validate_run, write_report
+from busstrike.evaluation.verify import verify as m07_verify
 from busstrike.planning.baselines import baseline
 from busstrike.planning.candidates import candidates
 from busstrike.planning.evaluator import evaluate
@@ -31,19 +32,21 @@ from busstrike.planning.models import InputError, Inputs, Plan, Route, load_inpu
 from busstrike.planning.search import search
 
 from .. import io
-from ..arrivals import build_run_inputs, write_arrivals
+from ..arrivals import build_run_inputs, generate, write_demand_bins
 from ..curve import fleet_curve, marginal_gains, overlap_ratios, route_clusters
 from ..engine import SimContext, prepare
-from ..models import Leg, Passenger, RouteSpec, SimError
-from ..run import run
+from ..models import BinRow, Leg, Passenger, RouteSpec, SimError
+from ..run import METRICS_FILE, RUN_DIR, run
 from ..traveltime import TravelTimeTable
 
-BRIDGE_VERSION = "busstrike-sim-planning-bridge/0.1.0"
+BRIDGE_VERSION = "busstrike-sim-planning-bridge/0.2.0"
 ARRIVAL_METHOD = "precomputed"      # C 수요는 이미 정수 인원·도착 시각이다(실현기를 거치지 않음)
-SEED = "none"                       # 난수를 쓰지 않았다는 기록값(M00 RunInputs.seed는 string|integer)
+SEED = "none"                       # 폭 1초 행이라 생성기 오프셋이 늘 0이다. seed 값은 결과에 영향이 없다
 VEHICLE_CLASS = "planning-uniform"  # C 첫 버전은 동일 조건 차량만 받는다
-PASSENGER_KIND = "access"           # C 수요는 정류장→정류장. access/egress 구분이 없다
 DEMAND_INDEX_FILE = "demand_index.json"
+VERIFIER_REPORT_FILE = "verifier_report.json"
+# C Assessment.independently_verified에 넣을 M07 보고서 필드. "pass" = 실패 검사 0(fully_verified 아님).
+VERIFIED_FIELD = "pass"
 
 
 # ---------------------------------------------------------------- 입력 변환
@@ -130,26 +133,31 @@ def travel_times_dict(inputs: Inputs) -> dict:
     }
 
 
-def passengers_of(inputs: Inputs) -> tuple[list[Passenger], dict[str, str]]:
-    """수요 묶음 → 1명씩. ID `c{수요 순번:06d}-{k:05d}`(수요 순번은 demand_id 정렬 순).
+def demand_rows(inputs: Inputs) -> tuple[list[BinRow], dict[str, str]]:
+    """수요 묶음 → `demand_bins.csv` 행(폭 1초, 시작 = C `arrival_s`). 행 ID `c{수요 순번:06d}`.
 
-    같은 도착 시각이면 (arrival_s, passenger_id) 순 = C의 (arrival_s, demand_id) 순이 되도록 순번을 쓴다.
-    두 번째 값은 ID 접두어 → demand_id 표.
+    수요 순번은 demand_id 정렬 순이라 같은 도착 시각이면 (arrival_s, passenger_id) 순 = C의 (arrival_s,
+    demand_id) 순이다. 승객 ID는 M07 형식 `["c000001",k]`. 두 번째 값은 행 ID → demand_id 표.
     """
     p = inputs.policy
-    out: list[Passenger] = []
+    rows: list[BinRow] = []
     index: dict[str, str] = {}
     for i, d in enumerate(sorted(inputs.demands, key=lambda x: x.demand_id), start=1):
-        prefix = f"c{i:06d}"
-        index[prefix] = d.demand_id
-        if d.passenger_count and not p.start_s <= d.arrival_s <= p.end_s:
+        aggregate_id = f"c{i:06d}"
+        index[aggregate_id] = d.demand_id
+        if not d.passenger_count:
+            continue
+        if not p.start_s <= d.arrival_s <= p.end_s:
             raise SimError(SimError.INPUT_INVALID, "demand arrival outside operating window",
                            {"demand_id": d.demand_id, "arrival_s": d.arrival_s})
-        for k in range(1, d.passenger_count + 1):
-            out.append(Passenger(f"{prefix}-{k:05d}", PASSENGER_KIND, (d.origin,), (d.destination,),
-                                 d.arrival_s, p.max_wait_s))
-    out.sort(key=lambda x: (x.arrival_s, x.passenger_id))
-    return out, index
+        rows.append(BinRow(aggregate_id, d.origin, d.destination, d.arrival_s, 1, d.passenger_count))
+    return rows, index
+
+
+def passengers_of(inputs: Inputs) -> tuple[list[Passenger], dict[str, str]]:
+    """수요 묶음 → 1명씩(M07 생성기, 폭 1초라 발생 시각 = C `arrival_s`)."""
+    rows, index = demand_rows(inputs)
+    return sorted(generate(rows, SEED), key=lambda x: (x.arrival_s, x.passenger_id)), index
 
 
 def plan_dict(plan: Plan, inputs: Inputs) -> dict:
@@ -173,14 +181,16 @@ class BridgeInputs:
     input_checksum: str
     scenario: dict
     travel_times: dict
+    rows: tuple[BinRow, ...]
     passengers: tuple[Passenger, ...]
     demand_index: dict[str, str]
 
 
 def to_sim_inputs(inputs: Inputs) -> BridgeInputs:
-    pax, index = passengers_of(inputs)
+    rows, index = demand_rows(inputs)
+    pax = sorted(generate(rows, SEED), key=lambda x: (x.arrival_s, x.passenger_id))
     return BridgeInputs(inputs.input_bundle_id, inputs.checksum, scenario_dict(inputs), travel_times_dict(inputs),
-                        tuple(pax), index)
+                        tuple(rows), tuple(pax), index)
 
 
 def sim_context(bridge: BridgeInputs) -> SimContext:
@@ -190,18 +200,18 @@ def sim_context(bridge: BridgeInputs) -> SimContext:
 
 
 def write_inputs(bridge: BridgeInputs, d: Path) -> dict[str, Path]:
-    """scenario·travel_times·arrivals·run_inputs(+ demand_index)를 한 디렉터리에 쓴다."""
-    d = Path(d)
+    """scenario·travel_times·demand_bins·run_inputs(+ demand_index)를 `d/inputs/`에 쓴다."""
+    d = Path(d) / "inputs"
     paths = {name: d / name for name in
-             ("scenario.json", "travel_times.json", "arrivals.jsonl", "run_inputs.json", DEMAND_INDEX_FILE)}
+             ("scenario.json", "travel_times.json", "demand_bins.csv", "run_inputs.json", DEMAND_INDEX_FILE)}
     io.write_bytes(paths["scenario.json"], io.json_bytes(bridge.scenario))
     io.write_bytes(paths["travel_times.json"], io.json_bytes(bridge.travel_times))
-    write_arrivals(bridge.passengers, paths["arrivals.jsonl"])
+    write_demand_bins(bridge.rows, paths["demand_bins.csv"])
     io.write_bytes(paths[DEMAND_INDEX_FILE], io.json_bytes({
         "bridge_version": BRIDGE_VERSION, "planning_input_bundle_id": bridge.input_bundle_id,
-        "planning_input_checksum": bridge.input_checksum, "demand_id_by_prefix": bridge.demand_index}))
-    build_run_inputs(bridge.input_bundle_id, paths["scenario.json"], paths["arrivals.jsonl"],
-                     paths["travel_times.json"], seed=SEED, bin_length_s=1, out_path=paths["run_inputs.json"])
+        "planning_input_checksum": bridge.input_checksum, "demand_id_by_aggregate_id": bridge.demand_index}))
+    build_run_inputs(bridge.input_bundle_id, paths["scenario.json"], paths["demand_bins.csv"],
+                     paths["travel_times.json"], seed=SEED, out_path=paths["run_inputs.json"], method=ARRIVAL_METHOD)
     return paths
 
 
@@ -209,37 +219,55 @@ def write_inputs(bridge: BridgeInputs, d: Path) -> dict[str, Path]:
 
 @dataclass(frozen=True)
 class BridgeRun:
-    run_dir: Path
-    run: dict
+    out_dir: Path               # inputs/ · scenario/ · run/
+    run: dict                   # measurement.json
     metrics: dict
-    validation: dict | None
+    validation: dict | None     # M07 verifier_report.json 내용
+
+    @property
+    def run_dir(self) -> Path:
+        return self.out_dir / RUN_DIR
 
 
 def run_plan(plan: Plan, inputs: Inputs, out_dir: Path, *, validate: bool = True,
              bridge: BridgeInputs | None = None) -> BridgeRun:
-    """한 운행안: 입력 파일 → `run()` → (검증기) → 지표. 모든 파일을 `out_dir` 한 곳에 둔다."""
+    """한 운행안: 입력 파일 → `run()`(M07 폴더) → (M07 검증기) → 지표. 모든 파일을 `out_dir` 아래에 둔다."""
     bridge = bridge or to_sim_inputs(inputs)
     if bridge.input_checksum != inputs.checksum:
         raise SimError(SimError.INPUT_INVALID, "bridge inputs were built from different planning inputs")
     out_dir = Path(out_dir)
     paths = write_inputs(bridge, out_dir)
-    plan_path = out_dir / "plan.json"
+    plan_path = paths["scenario.json"].parent / "plan.json"
     io.write_bytes(plan_path, io.json_bytes(plan_dict(plan, inputs)))
     result = run(paths["scenario.json"], paths["run_inputs.json"], plan_path, out_dir)
-    metrics = io.read_json(out_dir / result["metrics_uri"])
+    metrics = io.read_json(out_dir / RUN_DIR / METRICS_FILE)
     report = None
     if validate:
-        report = validate_run(out_dir)
-        write_report(report, out_dir / VALIDATION_FILE)
+        verified = m07_verify(out_dir / RUN_DIR)
+        verified.write(out_dir / RUN_DIR / VERIFIER_REPORT_FILE)
+        report = verified.payload
     return BridgeRun(out_dir, result, metrics, report)
 
 
+def failed_checks(report: dict | None) -> list[str]:
+    return [] if report is None else list(report["failed_checks"])
+
+
+def total_distance_m(metrics: dict) -> int:
+    """완료 운행편 거리 합(M6). drain 기본값(W_e + J)에서는 모든 운행편이 완료라 전체 운행거리와 같다."""
+    return sum(v["distance_m"] for v in metrics["M6"]["vehicles"])
+
+
 def assessment_of(plan: Plan, inputs: Inputs, br: BridgeRun) -> Assessment:
-    """§6.3·§8.3: served = satisfied, total = generated, p90 = wait_s.p90, distance = fleet.total_m."""
-    p = br.metrics["passengers"]
-    if p["generated"] != inputs.total_demand:
+    """served = M1.served, total = M1.total, p90 = M3.boarded.p90_s, distance = M6 거리 합(§7.5).
+
+    `independently_verified`는 M07 보고서의 `pass`(실패 검사 0)다. `fully_verified`가 아니다(V16은 늘
+    not_verified). 검증을 끄면 False이고 violations에 `NOT_VALIDATED`를 둔다.
+    """
+    m1 = br.metrics["M1"]
+    if m1["total"] != inputs.total_demand:
         raise SimError(SimError.INPUT_INVALID, "generated passengers differ from planning total demand",
-                       {"generated": p["generated"], "total_demand": inputs.total_demand})
+                       {"generated": m1["total"], "total_demand": inputs.total_demand})
     report = br.validation
     return Assessment(
         plan_id=plan.plan_id,
@@ -247,11 +275,11 @@ def assessment_of(plan: Plan, inputs: Inputs, br: BridgeRun) -> Assessment:
         input_bundle_id=inputs.input_bundle_id,
         input_checksum=inputs.checksum,
         schedule_feasible=True,
-        independently_verified=bool(report and report["verified"]),
-        served=p["satisfied"],
-        total=p["generated"],
-        p90_wait_s=br.metrics["wait_s"]["p90"],
-        distance_m=br.metrics["fleet"]["total_m"],
+        independently_verified=bool(report and report[VERIFIED_FIELD]),
+        served=m1["served"],
+        total=m1["total"],
+        p90_wait_s=br.metrics["M3"]["boarded"]["p90_s"],
+        distance_m=total_distance_m(br.metrics),
         violations=tuple(failed_checks(report)) if report else ("NOT_VALIDATED",),
     )
 
@@ -463,20 +491,21 @@ def compare_with_estimate(inputs: Inputs, plans: Iterable[Plan | tuple[str, Plan
             ranked_plans.append((plan, est))
             continue
         m = br.metrics
-        sat = m["passengers"]["satisfied"]
-        causes = m["unserved"]["by_cause"]
+        sat = m["M1"]["served"]
+        mean_wait = m["M3"]["boarded"]["mean_s"]
+        total_m = total_distance_m(m)
         row.update({
             "sim_satisfied": sat,
-            "sim_transported": m["passengers"]["transported"],
+            "sim_transported": m["physical_at_drain"]["arrived"],
             "diff": sat - est.served,
             "ratio": None if est.served == 0 else round(sat / est.served, 6),
-            "sim_mean_wait_s": m["wait_s"]["mean"],
-            "sim_p90_wait_s": m["wait_s"]["p90"],
-            "sim_total_m": m["fleet"]["total_m"],
-            "distance_diff_m": m["fleet"]["total_m"] - est.distance_m,
-            "sim_unserved_by_cause": causes,
-            "sim_denied_passengers": m["denied"]["passengers"],
-            "verified": None if br.validation is None else br.validation["verified"],
+            "sim_mean_wait_s": None if mean_wait is None else round(mean_wait, 3),
+            "sim_p90_wait_s": m["M3"]["boarded"]["p90_s"],
+            "sim_total_m": total_m,
+            "distance_diff_m": total_m - est.distance_m,
+            "sim_unserved_by_reason": m["M2"]["unserved_by_reason"],
+            "sim_refused_passengers": sum(m["M2"]["passengers_refused_by_outcome"].values()),
+            "verified": None if br.validation is None else br.validation[VERIFIED_FIELD],
             "violations": None if br.validation is None else failed_checks(br.validation),
         })
         rows.append(row)
@@ -567,12 +596,12 @@ def render_markdown(curves: dict, comparison: dict) -> str:
     s = comparison["summary"]
     out += ["", "## 같은 운행안의 C 근사 vs 시뮬레이션", ""]
     out += _table(["plan_id", "라벨", "배분", "est 충족", "sim 충족", "sim−est", "비율", "est 평균대기",
-                   "sim 평균대기", "sim P90", "est 거리", "sim 거리", "rank est", "rank sim", "검증",
-                   "sim 미충족 원인(0 제외)"],
+                   "sim 평균대기", "sim P90", "est 거리", "sim 거리", "rank est", "rank sim", "M07 pass",
+                   "sim 미충족 사유(0 제외)"],
                   ([r["plan_id"], r["label"], r["allocation"], r["est_served"], r["sim_satisfied"], r["diff"],
                     r["ratio"], r["est_mean_wait_s"], r.get("sim_mean_wait_s"), r.get("sim_p90_wait_s"),
                     r["est_distance_m"], r.get("sim_total_m"), r["rank_est"], r["rank_sim"], r.get("verified"),
-                    {k: v for k, v in (r.get("sim_unserved_by_cause") or {}).items() if v}]
+                    {k: v for k, v in (r.get("sim_unserved_by_reason") or {}).items() if v}]
                    for r in comparison["rows"]))
     out += ["", "요약(판정 아님)", ""]
     out += [f"- {k}: {_cell(v)}" for k, v in s.items()]

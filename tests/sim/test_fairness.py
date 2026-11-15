@@ -18,7 +18,9 @@ def run_plan(case, plan, d: Path):
     paths = case.write(d / "in")
     out = d / "out"
     result = run(paths["scenario.json"], paths["run_inputs.json"], paths["plan.json"], out)
-    return result, {name: (out / name).read_bytes() for name in ("timetable.json", "events.jsonl", "metrics.json")}
+    # measurement.json은 plan.json 해시(출처 필드 포함)를 담으므로 비교에서 뺀다. 나머지 M07 파일 전부를 본다.
+    return result, {p.relative_to(out).as_posix(): p.read_bytes() for p in sorted(out.rglob("*"))
+                    if p.is_file() and p.name != "measurement.json"}
 
 
 class T7FairnessTests(unittest.TestCase):
@@ -28,7 +30,7 @@ class T7FairnessTests(unittest.TestCase):
             plan = cases.plan_dict([cases.r1(vehicle_count=1)], trips=[], vehicle_duties=[])
             result, files = run_plan(case, plan, Path(d))
         self.assertEqual(result["timetable_origin"], "generated")
-        self.assertEqual(files["events.jsonl"], cases.t1_expected_log())
+        self.assertEqual(files["run/events.jsonl"], cases.t1_expected_log())
 
     def test_source_does_not_change_outputs(self):
         outputs = {}
@@ -44,12 +46,12 @@ class T7FairnessTests(unittest.TestCase):
     def test_provided_trips_give_same_log(self):
         with tempfile.TemporaryDirectory() as d:
             _, generated = run_plan(cases.t1(), cases.plan_dict([cases.r1()]), Path(d) / "gen")
-            tt = json.loads(generated["timetable.json"])
+            tt = json.loads(generated["run/timetable.json"])
             plan = cases.plan_dict([cases.r1()], trips=tt["trips"], vehicle_duties=tt["duties"])
             result, provided = run_plan(cases.t1(), plan, Path(d) / "prov")
         self.assertEqual(result["timetable_origin"], "provided")
-        self.assertEqual(provided["events.jsonl"], generated["events.jsonl"])
-        ptt = json.loads(provided["timetable.json"])
+        self.assertEqual(provided["run/events.jsonl"], generated["run/events.jsonl"])
+        ptt = json.loads(provided["run/timetable.json"])
         self.assertEqual((ptt["trips"], ptt["duties"]), (tt["trips"], tt["duties"]))
 
     def test_sim_sources_never_read_plan_source(self):

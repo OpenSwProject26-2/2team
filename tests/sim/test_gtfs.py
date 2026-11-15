@@ -58,14 +58,14 @@ class RoundTripTests(RoundTripMixin, unittest.TestCase):
 
     def test_synthetic_round_trip_with_deadhead_excluded(self):
         for seed in (1, 2, 3):
-            case = cases.synthetic(seed)
+            case = cases.synthetic(seed, two_station=True)
             sc, tb = timetable_of(case)
             self.assertTrue(any(not t.in_service for t in tb.trips), "공차 trip이 있는 사례여야 한다")
             with tempfile.TemporaryDirectory() as d:
                 self.assert_round_trip(sc, tb, Path(d))
 
     def test_direction_id_for_in_service_return_leg(self):
-        sc, tb = timetable_of(cases.synthetic(1))
+        sc, tb = timetable_of(cases.synthetic(1, two_station=True))
         with tempfile.TemporaryDirectory() as d:
             feed = self.assert_round_trip(sc, tb, Path(d))
         by_id = {t.trip_id: t for t in tb.trips}
@@ -80,11 +80,11 @@ class RoundTripTests(RoundTripMixin, unittest.TestCase):
             d = Path(d)
             paths = case.write(d / "in")
             run(paths["scenario.json"], paths["run_inputs.json"], paths["plan.json"], d / "out")
-            tb = io.timetable_from_dict(io.read_json(d / "out" / "timetable.json"))
+            tb = io.timetable_from_dict(io.read_json(d / "out" / "run" / "timetable.json"))
             sc = io.scenario_from_dict(io.read_json(paths["scenario.json"]))
             self.assert_round_trip(sc, tb, d / "gtfs")
             self.assertEqual(main(["gtfs", "--scenario", str(paths["scenario.json"]),
-                                   "--timetable", str(d / "out" / "timetable.json"), "--out", str(d / "gtfs2")]), 0)
+                                   "--timetable", str(d / "out" / "run" / "timetable.json"), "--out", str(d / "gtfs2")]), 0)
             for name in (d / "gtfs").iterdir():
                 self.assertEqual(name.read_bytes(), (d / "gtfs2" / name.name).read_bytes())
 

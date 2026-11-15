@@ -1,7 +1,8 @@
 """노선별 대수 곡선 S(n)과 정류장 공유 클러스터(simulator.md §7.1·§7.2).
 
-파일을 쓰지 않고 엔진을 메모리에서 반복 실행한다. 모든 점은 `normalize_plan` → `simulate` →
-`compute_metrics`를 지나므로 디렉터리 단위 `run()`과 같은 규칙이다(공정성 §1.6).
+파일을 쓰지 않고 엔진을 메모리에서 반복 실행한다. 모든 점은 `normalize_plan` → `service_schedule` →
+`simulate` → `compute_metrics`를 지나므로 디렉터리 단위 `run()`과 같은 규칙이다(공정성 §1.6).
+충족 인원은 M07 M1.served다(여정 기한 안에 목적지 하차).
 """
 
 from __future__ import annotations
@@ -9,8 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 
-from .engine import SimContext, simulate
-from .metrics import compute_metrics
+from .engine import SimContext, service_schedule, simulate
+from .metrics import compute_metrics, passenger_outcomes
 from .models import Passenger, PlanSpec, RouteSpec, SimError, Vehicle
 from .timetable import normalize_plan
 
@@ -34,12 +35,10 @@ def service_patterns(route: RouteSpec) -> tuple[tuple[str, ...], ...]:
 
 
 def _servable(patterns: Sequence[tuple[str, ...]], p: Passenger) -> bool:
-    """§4.5 정적 판정: 어떤 영업 leg에서 origin(마지막 아님) 뒤에 dest가 온다."""
-    origin = set(p.origin_stop_ids)
-    dest = set(p.dest_stop_ids)
+    """정적 판정(계약 §4.6 no_connection의 반대): 어떤 영업 leg에서 origin 뒤에 destination이 온다."""
     for stops in patterns:
         for k, s in enumerate(stops[:-1]):
-            if s in origin and any(x in dest for x in stops[k + 1:]):
+            if s == p.origin and p.destination in stops[k + 1:]:
                 return True
     return False
 
@@ -47,10 +46,10 @@ def _servable(patterns: Sequence[tuple[str, ...]], p: Passenger) -> bool:
 def eligible_passengers(route: RouteSpec, ctx: SimContext) -> tuple[Passenger, ...]:
     """노선 r의 영업 leg로 정적 서비스 가능한 승객(ctx 순서 유지). 대수와 무관하다."""
     patterns = service_patterns(route)
-    cache: dict[tuple[tuple[str, ...], tuple[str, ...]], bool] = {}
+    cache: dict[tuple[str, str], bool] = {}
     out = []
     for p in ctx.passengers:
-        key = (p.origin_stop_ids, p.dest_stop_ids)
+        key = (p.origin, p.destination)
         ok = cache.get(key)
         if ok is None:
             ok = cache[key] = _servable(patterns, p)
@@ -71,17 +70,18 @@ def _simulate_point(routes: Sequence[RouteSpec], vehicles: Sequence[Vehicle], pa
                     ctx: SimContext, plan_id: str) -> CurvePoint:
     plan = PlanSpec(plan_id, "curve", 1, "draft", tuple(routes))
     timetable = normalize_plan(plan, vehicles, ctx.window, ctx.policy, ctx.tt)
-    events = simulate(ctx, timetable, passengers)
-    metrics = compute_metrics(events, passengers, timetable, list(ctx.vehicles.values()), ctx.policy, ctx.tt)
-    p = metrics["passengers"]
+    schedule = service_schedule(timetable, ctx)
+    result = simulate(ctx, schedule, passengers)
+    metrics = compute_metrics(result, passenger_outcomes(result, schedule), schedule, stop_area={},
+                              wait_threshold_s=None, max_headway_s=None)
     return CurvePoint(
         n=len(vehicles),
-        satisfied=p["satisfied"],
-        transported=p["transported"],
+        satisfied=metrics["M1"]["served"],
+        transported=metrics["physical_at_drain"]["arrived"],
         eligible=len(passengers),
-        wait_p90_s=metrics["wait_s"]["p90"],
-        total_m=metrics["fleet"]["total_m"],
-        vehicles_used=metrics["fleet"]["vehicles_used"],
+        wait_p90_s=metrics["M3"]["boarded"]["p90_s"],
+        total_m=sum(v["distance_m"] for v in metrics["M6"]["vehicles"]),
+        vehicles_used=len(metrics["M6"]["vehicles"]),
     )
 
 

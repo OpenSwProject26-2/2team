@@ -21,15 +21,24 @@ def f1_ctx(case):
     return plan, prepare(pas, sc.vehicles, sc.window, sc.policy, tt)
 
 
-class ClusterTests(unittest.TestCase):
-    def test_t3_shared_passengers_join_routes(self):
-        plan, ctx = t3_ctx()
-        self.assertEqual(route_clusters(plan.routes, ctx), [["R1", "R2"]])
-        self.assertEqual([p.passenger_id for p in eligible_passengers(plan.routes[0], ctx)], ["w1", "w2"])
-        self.assertEqual(overlap_ratios(plan.routes, ctx), {"R1": 1.0, "R2": 1.0})
+def with_twin_of_r1(case):
+    """T3에 R1과 같은 leg의 노선 R1b(차량 V3)를 더한다. 두 노선이 같은 승객(B→S1)을 나눠 갖는다."""
+    twin = dict(case.plan["routes"][0], route_id="R1b")
+    case.plan["routes"].append(twin)
+    case.scenario["fleet"]["vehicles"].append(cases.vehicle_dict("V3", 1, 450))
+    return case
 
-    def test_t3_split_destinations_are_independent_and_additive(self):
-        plan, ctx = t3_ctx(w1_dest=("S1",), w2_dest=("S2",))
+
+class ClusterTests(unittest.TestCase):
+    def test_routes_sharing_an_od_join(self):
+        sc, tt, plan, pas = with_twin_of_r1(cases.t3()).objects()
+        ctx = prepare(pas, sc.vehicles, sc.window, sc.policy, tt)
+        self.assertEqual(route_clusters(plan.routes, ctx), [["R1", "R1b"], ["R2"]])
+        self.assertEqual([p.passenger_id for p in eligible_passengers(plan.routes[0], ctx)], [cases.pid("w3")])
+        self.assertEqual(overlap_ratios(plan.routes, ctx), {"R1": 1.0, "R1b": 1.0, "R2": 0.0})
+
+    def test_t3_disjoint_routes_are_independent_and_additive(self):
+        plan, ctx = t3_ctx()
         self.assertEqual(route_clusters(plan.routes, ctx), [["R1"], ["R2"]])
         self.assertEqual(overlap_ratios(plan.routes, ctx), {"R1": 0.0, "R2": 0.0})
         r1, r2 = plan.routes
@@ -37,7 +46,7 @@ class ClusterTests(unittest.TestCase):
         alone = [fleet_curve(r, 1, ctx)[1] for r in (r1, r2)]
         self.assertEqual(together.satisfied, sum(p.satisfied for p in alone))
         self.assertEqual(together.transported, sum(p.transported for p in alone))
-        self.assertEqual(together.eligible, 2)
+        self.assertEqual((together.eligible, together.satisfied), (3, 2))   # w1·w3 충족, w2는 R2 만석
 
     def test_cluster_eval_rejects_unknown_route_and_oversized_fleet(self):
         plan, ctx = t3_ctx()
@@ -50,11 +59,11 @@ class ClusterTests(unittest.TestCase):
 
 class FleetCurveTests(unittest.TestCase):
     def test_t1_curve_matches_single_run(self):
-        # T1(§9.2): 1대면 p1·p2·p4·p5 수송, p3는 5초 늦어 WAIT_EXCEEDED → 충족 4, 대기 P90 119.
+        # T1(§9.2): 1대면 p1·p2·p4·p5 충족, p3는 5초 늦어 wait 만료 → 충족 4, 대기 [0,0,30,110] → P90 110.
         plan, ctx = f1_ctx(cases.t1())
         pts = fleet_curve(plan.routes[0], 1, ctx)
         self.assertEqual(pts[0], CurvePoint(0, 0, 0, 5, None, 0, 0, True))
-        self.assertEqual(pts[1], CurvePoint(1, 4, 4, 5, 119, 10_000, 1, True))
+        self.assertEqual(pts[1], CurvePoint(1, 4, 4, 5, 110, 10_000, 1, True))
         self.assertEqual(marginal_gains(pts), [None, 4])
 
     def test_t2_more_vehicles_relieve_full(self):

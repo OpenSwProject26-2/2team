@@ -1,18 +1,21 @@
 """입력 검증·직렬화(simulator.md §0.2–§0.4, §1.5).
 
 직렬화 규칙: `json.dumps(x, ensure_ascii=False, separators=(",", ":"))`, UTF-8, 줄 끝 `\\n`.
-구조 문서(JSON)는 `sort_keys=True`, 행 문서(JSONL)는 키 순서를 호출자가 정한다.
+구조 문서(JSON)는 `sort_keys=True`, 행 문서(JSONL)는 키 순서를 호출자가 정한다. CSV는 csv 모듈 기본
+따옴표 규칙 + 줄 끝 `\\n`.
 """
 
 from __future__ import annotations
 
+import csv
 import hashlib
+import io as _io
 import json
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from .models import (
-    Duty, Leg, Passenger, PlanSpec, Policy, RouteSpec, Scenario, SimError, StopTime,
+    BinRow, Duty, Leg, Passenger, PlanSpec, Policy, RouteSpec, Scenario, SimError, StopTime,
     Timetable, TimetableRoute, Trip, Vehicle, Window,
 )
 
@@ -98,6 +101,12 @@ def _str(raw: dict, name: str) -> str:
     return v
 
 
+def _opt_int(raw: dict, name: str, minimum: int | None = None) -> int | None:
+    if raw.get(name) is None:
+        return None
+    return _int(raw, name, minimum)
+
+
 def _opt_str(raw: dict, name: str) -> str | None:
     v = raw.get(name)
     if v is None:
@@ -155,6 +164,9 @@ def policy_from_dict(raw: dict) -> Policy:
         turnaround_s=_int(raw, "turnaround_s", 0),
         cycle_rest_s=_int(raw, "cycle_rest_s", 0),
         unknown_link=_str(raw, "unknown_link"),
+        drain_s=_opt_int(raw, "drain_s"),
+        max_headway_s=_opt_int(raw, "max_headway_s", 0),
+        wait_threshold_s=_opt_int(raw, "wait_threshold_s", 0),
     )
     if p.unknown_link != "error":
         raise _fail('policy.unknown_link must be "error"', field="unknown_link")
@@ -177,6 +189,10 @@ def scenario_from_dict(raw: dict) -> Scenario:
         raise _fail("fleet.vehicles must be a list")
     vehicles = tuple(vehicle_from_dict(x) for x in items)
     check_vehicles_unique(vehicles)
+    area = raw.get("stop_area") or {}
+    if not isinstance(area, dict) or any(not isinstance(k, str) or not isinstance(v, str) or not k or not v
+                                         for k, v in area.items()):
+        raise _fail("stop_area must map stop_id to area string", field="stop_area")
     return Scenario(
         scenario_id=_str(raw, "scenario_id"),
         service_date=_str(raw, "service_date"),
@@ -188,40 +204,59 @@ def scenario_from_dict(raw: dict) -> Scenario:
         authorized_count=_int(fleet, "authorized_count", 0),
         vehicles=vehicles,
         policy=policy_from_dict(_get(raw, "policy")),
+        stop_area=tuple(sorted(area.items())),
     )
 
 
-# ---------------------------------------------------------------- arrivals.jsonl
+# ---------------------------------------------------------------- demand_bins.csv (M07)
 
-PASSENGER_KEYS = ("passenger_id", "kind", "origin_stop_ids", "dest_stop_ids", "arrival_s", "max_wait_s")
-
-
-def passenger_from_dict(raw: dict) -> Passenger:
-    kind = _str(raw, "kind")
-    if kind not in ("access", "egress"):
-        raise _fail("kind must be access or egress", field="kind")
-    p = Passenger(
-        passenger_id=_str(raw, "passenger_id"),
-        kind=kind,
-        origin_stop_ids=_str_list(raw, "origin_stop_ids", sorted_unique=True, min_len=1),
-        dest_stop_ids=_str_list(raw, "dest_stop_ids", sorted_unique=True, min_len=1),
-        arrival_s=_int(raw, "arrival_s"),
-        max_wait_s=_int(raw, "max_wait_s", 0),
-    )
-    if set(p.origin_stop_ids) & set(p.dest_stop_ids):
-        raise _fail("origin_stop_ids and dest_stop_ids overlap", passenger_id=p.passenger_id)
-    return p
+DEMAND_BIN_COLUMNS = ("aggregate_id", "origin", "destination", "bin_start_s", "bin_width_s", "passenger_count")
 
 
-def passenger_to_dict(p: Passenger) -> dict:
-    return {
-        "passenger_id": p.passenger_id,
-        "kind": p.kind,
-        "origin_stop_ids": list(p.origin_stop_ids),
-        "dest_stop_ids": list(p.dest_stop_ids),
-        "arrival_s": p.arrival_s,
-        "max_wait_s": p.max_wait_s,
-    }
+def demand_bins_bytes(rows: Iterable[BinRow]) -> bytes:
+    """`demand_bins.csv` 바이트. 행은 aggregate_id 순(m07-output-contract.md §2.2)."""
+    buf = _io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(DEMAND_BIN_COLUMNS)
+    for r in sorted(rows, key=lambda r: r.aggregate_id):
+        w.writerow((r.aggregate_id, r.origin, r.destination, r.bin_start_s, r.bin_width_s, r.passenger_count))
+    return buf.getvalue().encode("utf-8")
+
+
+def _csv_int(row: dict, name: str, where: str, minimum: int) -> int:
+    text = row.get(name)
+    try:
+        v = int(text)
+    except (TypeError, ValueError):
+        raise _fail(f"{where}: {name} must be int", field=name) from None
+    if str(v) != text.strip() or v < minimum:
+        raise _fail(f"{where}: {name} must be int >= {minimum}", field=name)
+    return v
+
+
+def read_demand_bins(path: Path) -> tuple[BinRow, ...]:
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise _fail(f"cannot read {Path(path).name}") from exc
+    reader = csv.DictReader(_io.StringIO(text))
+    if tuple(reader.fieldnames or ()) != DEMAND_BIN_COLUMNS:
+        raise _fail("demand_bins.csv header differs from M07 contract", header=list(reader.fieldnames or ()))
+    rows: list[BinRow] = []
+    seen: set[str] = set()
+    for n, r in enumerate(reader, start=2):
+        where = f"demand_bins.csv:{n}"
+        row = BinRow(r["aggregate_id"], r["origin"], r["destination"], _csv_int(r, "bin_start_s", where, 0),
+                     _csv_int(r, "bin_width_s", where, 1), _csv_int(r, "passenger_count", where, 0))
+        if not row.aggregate_id or not row.origin or not row.destination:
+            raise _fail(f"{where}: empty id or stop")
+        if row.origin == row.destination:
+            raise _fail(f"{where}: origin equals destination", aggregate_id=row.aggregate_id)
+        if row.aggregate_id in seen:
+            raise _fail(f"{where}: duplicate aggregate_id", aggregate_id=row.aggregate_id)
+        seen.add(row.aggregate_id)
+        rows.append(row)
+    return tuple(rows)
 
 
 def check_passengers(passengers: Sequence[Passenger], window: Window) -> None:
@@ -230,6 +265,8 @@ def check_passengers(passengers: Sequence[Passenger], window: Window) -> None:
         if p.passenger_id in seen:
             raise _fail("duplicate passenger_id", passenger_id=p.passenger_id)
         seen.add(p.passenger_id)
+        if p.origin == p.destination:
+            raise _fail("origin equals destination", passenger_id=p.passenger_id)
         if not window.start_s <= p.arrival_s <= window.end_s:
             raise _fail("arrival_s outside operating window", passenger_id=p.passenger_id)
 

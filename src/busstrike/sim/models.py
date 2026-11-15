@@ -1,4 +1,4 @@
-"""M05 시뮬레이터 데이터 모델(simulator.md §0.3, §1.5, §3.1, §6.1).
+"""M05 시뮬레이터 데이터 모델(simulator.md §0.3, §1.5, §3.1, §6.1, m07-output-contract.md).
 
 모든 시간은 service_date 자정 기준 정수 초, 거리는 m, 인원은 정수다.
 """
@@ -58,6 +58,10 @@ class Policy:
     turnaround_s: int
     cycle_rest_s: int
     unknown_link: str
+    # M07 출력용(선택). drain_s가 없으면 W_e + max_journey_s(§6.2). 나머지 둘은 없으면 M07이 미검증으로 둔다.
+    drain_s: int | None = None
+    max_headway_s: int | None = None
+    wait_threshold_s: int | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +76,7 @@ class Scenario:
     authorized_count: int
     vehicles: tuple[Vehicle, ...]
     policy: Policy
+    stop_area: tuple[tuple[str, str], ...] = ()   # (stop_id, area). M07 M5 지역(없으면 unknown)
 
 
 @dataclass(frozen=True)
@@ -156,56 +161,83 @@ class PlanSpec:
 
 @dataclass(frozen=True)
 class Passenger:
+    """승객 1명. M07 계약상 출발 정류장 1개 → 목적 정류장 1개(m07-output-contract.md §2.2, I9).
+
+    `passenger_id`는 `json.dumps([aggregate_id, index], separators=(",", ":"))`, `arrival_s`는 M07의 time_s.
+    """
+
     passenger_id: str
-    kind: str  # "access" | "egress"
-    origin_stop_ids: tuple[str, ...]
-    dest_stop_ids: tuple[str, ...]
+    origin: str
+    destination: str
     arrival_s: int
-    max_wait_s: int
+
+
+@dataclass(frozen=True)
+class BinRow:
+    """`demand_bins.csv` 1행: 집계 수요 1개(m07-output-contract.md §2.2)."""
+
+    aggregate_id: str
+    origin: str
+    destination: str
+    bin_start_s: int
+    bin_width_s: int
+    passenger_count: int
 
 
 @dataclass(frozen=True)
 class DemandFlow:
-    """실현기 입력 한 행(§2.3). access는 stop→station, egress는 station→stop.
+    """실현기 입력 한 행(§2.3). access는 stop → station_stop, egress는 station_stop → stop.
 
+    역에 딸린 정류장 중 어느 것에 붙일지는 상류(M03)가 운행안과 무관하게 정해 준다(가정 A25).
     flow는 그 시간대의 유량(명). 문자열·정수·Decimal을 권장한다(float도 str()을 거쳐 받는다).
     """
 
     kind: str
     stop_id: str
-    station_id: str
+    station_stop_id: str
     bin_start_s: int
     flow: Any
 
 
-# 이벤트 로그 키 순서(§6.1). 값이 None인 키는 쓰지 않는다.
-EVENT_KEYS = (
-    "seq", "t", "type", "vehicle_id", "trip_id", "visit", "stop_id", "stop_seq",
-    "passenger_id", "alighted", "boarded", "left_behind", "load", "cause",
-)
+@dataclass(frozen=True)
+class ServiceTrip:
+    """M07 `network.json`의 운행편 1개 = 영업 leg 1개 + 뒤따르는 복귀 공차(m07-output-contract.md §2.1).
+
+    departures[i]는 그 정류장을 떠나는 시각(마지막 정류장은 도착과 같다, I3), return_s는 복귀 공차가
+    끝나 출발 거점에 돌아온 시각(I1), distance_m은 영업 + 복귀 공차 거리(I2).
+    """
+
+    trip_id: str
+    route_id: str
+    vehicle_id: str
+    capacity: int
+    stops: tuple[str, ...]
+    arrivals: tuple[int, ...]
+    departures: tuple[int, ...]
+    return_s: int
+    distance_m: int
+
+    def stable_id(self, index: int) -> str:
+        return f"{self.trip_id}:{index:08d}"
+
+
+# M07 사건 로그 키 순서(m07-output-contract.md §5). 값이 없으면 null로 쓴다.
+EVENT_KEYS = ("time_s", "phase", "stable_id", "kind", "passenger_id", "vehicle_id", "occupancy")
+
+PHASE_ALIGHT, PHASE_GENERATE, PHASE_BOARD, PHASE_DEPART, PHASE_EXPIRE = 0, 1, 2, 3, 4
 
 
 @dataclass(slots=True)
 class Event:
-    t: int
-    type: str
-    vehicle_id: str | None = None
-    trip_id: str | None = None
-    visit: int | None = None
-    stop_id: str | None = None
-    stop_seq: int | None = None
+    """M07 사건 1건(m07-output-contract.md §2.4)."""
+
+    time_s: int
+    phase: int
+    stable_id: str
+    kind: str
     passenger_id: str | None = None
-    alighted: int | None = None
-    boarded: int | None = None
-    left_behind: int | None = None
-    load: int | None = None
-    cause: str | None = None
-    seq: int | None = field(default=None)
+    vehicle_id: str | None = None
+    occupancy: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {}
-        for key in EVENT_KEYS:
-            value = getattr(self, key)
-            if value is not None:
-                out[key] = value
-        return out
+        return {key: getattr(self, key) for key in EVENT_KEYS}

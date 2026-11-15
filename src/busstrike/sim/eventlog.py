@@ -1,37 +1,25 @@
-"""이벤트 로그 정렬·직렬화(simulator.md §6.1). 정렬 키가 로그 순서의 정의다."""
+"""M07 사건 로그·승객 결과 직렬화(m07-output-contract.md §2.4·§2.5·§5).
+
+로그 순서의 정의는 키 `(time_s, phase, stable_id)`이고 엔진이 그 순서로 만든다. 여기서는 바이트만 정한다:
+키 순서 `EVENT_KEYS`, `separators=(",", ":")`, `ensure_ascii=False`, 줄 끝 `\\n`.
+"""
 
 from __future__ import annotations
 
+import csv
+import io as _io
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Sequence
 
 from . import io
 from .models import Event
 
-_PHASE = {"no_service": 0, "abandon": 2, "left_waiting": 3}
-_TYPE_RANK = {"arrive": 0, "alight": 1, "board": 2, "denied": 3, "depart": 4, "cancel": 0}
-PASSENGER_OUTCOMES = ("no_service", "abandon", "left_waiting")
+OUTCOME_COLUMNS = ("passenger_id", "origin", "destination", "time_s", "outcome", "reason", "physical",
+                   "vehicle_id", "boarding_s", "arrival_s", "refused")
 
 
-def canonical_key(event: Event, arrival_s_by_passenger: Mapping[str, int]) -> tuple:
-    phase = _PHASE.get(event.type, 1)
-    if phase != 1:
-        return (event.t, phase, "", 0, 0, (event.passenger_id,))
-    if event.type == "alight":
-        order: tuple = (event.passenger_id,)
-    elif event.type in ("board", "denied"):
-        order = (arrival_s_by_passenger[event.passenger_id], event.passenger_id)
-    else:
-        order = ()
-    return (event.t, 1, event.vehicle_id, event.visit, _TYPE_RANK[event.type], order)
-
-
-def canonical_sort(events: Iterable[Event], arrival_s_by_passenger: Mapping[str, int]) -> list[Event]:
-    """정렬 키 순서로 정렬하고 seq를 0부터 매긴다."""
-    out = sorted(events, key=lambda e: canonical_key(e, arrival_s_by_passenger))
-    for i, e in enumerate(out):
-        e.seq = i
-    return out
+def event_key(event: Event) -> tuple[int, int, str]:
+    return (event.time_s, event.phase, event.stable_id)
 
 
 def dumps_events(events: Sequence[Event]) -> bytes:
@@ -40,3 +28,13 @@ def dumps_events(events: Sequence[Event]) -> bytes:
 
 def write_events(events: Sequence[Event], path: Path) -> str:
     return io.write_bytes(path, dumps_events(events))
+
+
+def outcomes_bytes(rows: Iterable) -> bytes:
+    """`passenger_outcomes.csv`. 빈 값은 빈 칸, 행 순서는 호출자(passenger_id 순)."""
+    buf = _io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(OUTCOME_COLUMNS)
+    for r in rows:
+        w.writerow(["" if getattr(r, c) is None else getattr(r, c) for c in OUTCOME_COLUMNS])
+    return buf.getvalue().encode("utf-8")
