@@ -41,7 +41,7 @@ python3 -m busstrike.planning --input tests/fixtures/planning/synthetic.json
 python3 -m busstrike.evaluation.verify <실행 결과 폴더>
 ```
 
-## M05 독립 검증기
+## 시뮬레이션 결과 독립 검증기 (M07)
 
 시뮬레이터가 낸 사건 로그·승객 결과·지표를 **엔진과 따로 다시 계산해서** 맞는지 봅니다.
 엔진 코드를 쓰지 않고 출력 파일만 읽습니다. 같은 코드를 쓰면 같은 버그를 그대로
@@ -68,8 +68,11 @@ python3 -m busstrike.evaluation.verify <실행 결과 폴더>
 엔진 출력과 엔진의 golden 로그는 **정답으로 쓰지 않습니다.** 검증 대상이기 때문입니다.
 검사가 공허하지 않다는 것은 정상 산출물을 한 군데씩 고친 사본 20종으로 확인합니다.
 
-파일별 역할과 방법론은
+실행법·결과 읽는 법·파일별 역할은
 [`src/busstrike/evaluation/README.md`](src/busstrike/evaluation/README.md)에 있습니다.
+검사 정의 명세 `docs/verifier_spec.md`는 아직 `main`에 없고
+[`feat/5-simulation-core` 브랜치(PR #6)](https://github.com/OpenSwProject26-2/2team/blob/ca643f63028908e6a18827abb89c4360bfb1a345/docs/verifier_spec.md)에
+있습니다.
 
 ## 구조
 
