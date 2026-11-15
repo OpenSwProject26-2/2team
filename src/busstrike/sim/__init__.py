@@ -3,6 +3,7 @@
 from .arrivals import build_run_inputs, realize_arrivals, realize_od, u_micro, write_arrivals
 from .engine import SimContext, prepare, simulate
 from .eventlog import canonical_key, canonical_sort, dumps_events, write_events
+from .gtfs import build_gtfs_files, export_gtfs, read_gtfs
 from .metrics import compute_metrics
 from .models import (
     DemandFlow, Duty, Event, Leg, Passenger, PlanSpec, Policy, RouteSpec, Scenario, SimError, StopTime,
@@ -18,5 +19,5 @@ __all__ = [
     "Vehicle", "Window", "assign_vehicles", "build_run_inputs", "build_timetable", "canonical_key",
     "canonical_sort", "compute_metrics", "config_hash", "dumps_events", "normalize_plan", "planned_cycle",
     "prepare", "realize_arrivals", "realize_od", "run", "simulate", "u_micro", "validate_timetable",
-    "write_arrivals", "write_events",
+    "write_arrivals", "write_events", "build_gtfs_files", "export_gtfs", "read_gtfs",
 ]

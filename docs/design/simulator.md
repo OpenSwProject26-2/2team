@@ -10,7 +10,7 @@
 
 ## 문서 상태
 
-- 상태: **설계 초안 · 팀 검토 대기 · 2단계(핵심 엔진, `feat/sim-core`)·3단계(독립 검증기, `feat/sim-validator`) 구현.** 4–5단계(GTFS·C 연결)는 미착수. 이 문서의 값은 승인된 결정이 아니다(AGENTS.md §1). D02·D03·D06·D07은 §11의 권장값을 "가정"으로 쓰고, 승인 전에는 코드 상수로 박지 않고 Scenario 입력으로만 받는다.
+- 상태: **설계 초안 · 팀 검토 대기 · 2단계(핵심 엔진, `feat/sim-core`)·3단계(독립 검증기, `feat/sim-validator`)·4단계(셔틀 GTFS, `feat/sim-gtfs-export`) 구현.** 5단계(C 연결)는 미착수. 이 문서의 값은 승인된 결정이 아니다(AGENTS.md §1). D02·D03·D06·D07은 §11의 권장값을 "가정"으로 쓰고, 승인 전에는 코드 상수로 박지 않고 Scenario 입력으로만 받는다.
 - 요구사항 원문: [simulator-brief.md](simulator-brief.md) · 진행 기록: [simulator-progress.md](simulator-progress.md)
 - 관련 모듈: M05(시뮬레이터), M07(독립 검증), M04 연결부, M00 v0.1 계약. 공용 계약(`docs/contracts`, `src/busstrike/contracts`)은 바꾸지 않는다. 아래 스키마는 모두 M00이 "module-owned"로 남긴 영역의 M05 소유 형식이다.
 - 시뮬레이션 결과는 실제 운행 성능·승인 근거가 아니다.
@@ -745,6 +745,13 @@ config_hash = sha256(canonical_json({
 
 - `stop_id`는 NetworkSnapshot(A의 버스 GTFS)의 ID를 그대로 쓴다. `stops.txt`는 스냅숏이 좌표를 줄 때만 쓰인 정류장을 복사해 넣고, 없으면 내보내지 않는다(그때는 A의 feed와 합쳐야 완결된 feed가 된다).
 - `feed_info.txt`에 `plan_id`·`revision`을 `feed_version`으로 적는다. `plan_mode=simulation`임을 `agency_name`에 드러낸다.
+- **4단계 구현에서 정한 세부**(`sim/gtfs.py`)
+  - `feed_info.txt` 열은 `feed_publisher_name, feed_publisher_url, feed_lang, feed_version`. 값은 `agency_name`·자리표시 URL·`ko`·`<plan_id>@<revision>`.
+  - `routes.txt`는 영업 trip이 하나라도 있는 노선만 쓴다(대수 0 노선은 빠진다). `route_short_name = route_id`, `route_long_name = 첫–끝 정류장`(`leg_index`가 가장 작은 영업 trip 기준, 구분자 `–`).
+  - `service_date`는 `YYYY-MM-DD`만 받고 아니면 `INPUT_INVALID`. 요일은 `calendar` 모듈로 계산한다(`datetime` 미사용, 결정론 검사 유지).
+  - `stops.txt`는 호출자가 `stop_coords`(정류장 ID → 위도·경도)를 줄 때만, 쓰인 정류장만 쓴다. 스냅숏에서 좌표를 읽는 연결은 5단계 몫이다.
+  - 같은 `timetable`·`service_date`면 파일 바이트가 항상 같다. `read_gtfs()`가 다시 읽어 trip 단위로 돌려준다(왕복 테스트용).
+  - CLI: `python -m busstrike.sim gtfs --scenario S --timetable T --out DIR`. 입력 오류는 종료 코드 2.
 - 버린 대안: `frequencies.txt`(차량별 trip이 사라져 block을 못 잇는다), 실현 시각 내보내기(안내용 시간표가 승객 수에 따라 달라진다).
 
 ---

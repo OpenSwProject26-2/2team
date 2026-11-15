@@ -98,3 +98,25 @@
 - 테스트 실행 명령과 결과
   - `PYTHONPATH=src python3 -m unittest discover -s tests -t .` → 104개 통과(2단계까지 86 + 이번 18, Python 3.14.4, 약 10초).
   - 린트·타입 검사는 저장소에 명령이 없어 실행하지 않았다.
+
+## 4단계 — 셔틀 GTFS 내보내기
+
+- PR: (열린 뒤 아래 worker 보고에 링크. 스택 PR, base `feat/sim-validator`, 브랜치 `feat/sim-gtfs-export`)
+- 한 일
+  - `src/busstrike/sim/gtfs.py`: `timetable.json`의 예정 시각을 `agency`·`routes`·`trips`·`stop_times`·`calendar`·`feed_info`(.txt)로 내보낸다(`export_gtfs`, 바이트 생성은 `build_gtfs_files`). 내보낸 feed를 다시 읽는 `read_gtfs`도 넣었다. `python -m busstrike.sim gtfs --scenario S --timetable T --out DIR` CLI를 추가했다. 표준 라이브러리만 쓴다.
+  - `tests/sim/test_gtfs.py`(13개): 왕복 테스트(trip 수, 노선별 정차 순서, 출발 시각, 차량(block), 정차 시각·`stop_sequence` 전부) — T1·합성 3개 seed·`run()` 산출물 경유, 파일·헤더·줄 끝·BOM, 달력, pickup/drop_off/timepoint, direction_id, 결정론, 시각 형식(25시), 오류.
+  - `simulator.md` §6.4에 4단계에서 정한 세부를 적었다(같은 PR).
+- 설계와 달라진 점: 없음. 엔진·생성기·검증기·`timetable.json` 형식은 바꾸지 않았다.
+- 결정한 것(설계가 비워 둔 부분, 모두 §6.4 "4단계 구현에서 정한 세부")
+  - `feed_info.txt` 열과 값, 영업 trip이 없는 노선은 `routes.txt`에서 제외, 노선 긴 이름 구분자 `–`.
+  - `service_date` 요일 계산에 `datetime` 대신 `calendar`를 썼다(2단계의 "시계·난수 import 금지" 검사를 그대로 유지).
+  - `stops.txt`는 호출자가 좌표(`stop_coords`)를 줄 때만 쓴다. 좌표 출처 연결은 하지 않았다.
+- 남은 문제 / 다음 단계가 알아야 할 것
+  - 1단계의 "사용자가 확인해야 할 결정" 9개는 그대로다(특히 7번: `arrival_time = departure_time`은 도착 스냅숏 승차를 전제로 한 내보내기 규칙).
+  - `stop_id`는 `timetable`의 ID를 그대로 쓴다. A의 버스 GTFS ID와 같은지는 5단계 어댑터와 M00 확인이 필요하다. 이 feed 단독으로는 `stops.txt`가 없어 완결된 feed가 아니다(A의 feed와 합쳐야 함). 표준 GTFS 검증기(예: gtfs-validator)로는 돌려 보지 않았다.
+  - 공차 trip은 내보내지 않으므로 같은 `block_id` 안에서 시각 간격이 벌어질 수 있다(설계대로).
+  - 5단계(`sim/adapters/planning_bridge.py`, `curve.py`)는 이 브랜치에서 `feat/sim-planning-bridge`를 따고 base를 이 PR 브랜치로 잡는다.
+  - Python 3.10–3.13 미실행(3.14만). 연결된 Issue 없음.
+- 테스트 실행 명령과 결과
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -t .` → 117개 통과(3단계까지 104 + 이번 13, Python 3.14.4, 약 11초).
+  - 린트·타입 검사는 저장소에 명령이 없어 실행하지 않았다.
