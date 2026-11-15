@@ -1,0 +1,4 @@
+passenger_id,origin,destination,time_s,outcome,reason,physical,vehicle_id,boarding_s,arrival_s,refused
+"[""d"",0]",A,B,0,served,,arrived,,0,5,0
+"[""d"",1]",A,B,0,served,,arrived,,0,5,0
+"[""d"",2]",A,B,0,unserved,journey,waiting,,,,1

@@ -1,0 +1,4 @@
+{"checksum":"ff6e3c0ba2c84edae9fe80c0f037438e45e5c9643c5c8ffc61aef9f66a150265","generator":"uniform_bin_sha256_v1","passenger_count":3,"rows":[{"aggregate_id":"d","bin_start_s":0,"bin_width_s":1,"destination":"B","origin":"A","passenger_count":3}],"seed":"f1-j14","source_checksum":"636b46d420dbc2e2524a61b4bb28ebf40222b947ded7756ebce7b9974cbdce9f"}
+["[\"d\",0]","A","B",0]
+["[\"d\",1]","A","B",0]
+["[\"d\",2]","A","B",0]

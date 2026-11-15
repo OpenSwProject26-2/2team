@@ -1,0 +1,46 @@
+{
+  "_source": "docs/verifier_spec.md §5 F1 (명세 커밋 ca643f6, 엔진 브랜치 HEAD d18ee1e)",
+  "_transcribed_by": "giho999 (M07)",
+  "_transcription_rule": [
+    "명세 §5 본문 표에서 사람이 손으로 옮긴 값이다. 엔진 산출물에서 복사하지 않았다.",
+    "명세가 말하지 않은 값은 넣지 않는다. 비어 있는 항목은 '검증 대상이 아님'이 아니라 '명세 미기재'다.",
+    "검증기는 이 파일을 정답으로 쓰고, 엔진 출력을 정답으로 쓰지 않는다."
+  ],
+  "_scenario": "A→B 정원 2, 출발 0·10초, 주행 5초, 승객 3명 t=0 (sim/fixtures/direct_shuttle.json)",
+  "variants": {
+    "f1": {
+      "_spec_text": "W=10, J=15, drain 20 (본문 표)",
+      "config": {"max_wait_s": 10, "max_journey_s": 15, "drain_s": 20},
+      "passengers": {
+        "[\"d\",0]": {"boarding_s": 0, "arrival_s": 5, "outcome": "served"},
+        "[\"d\",1]": {"boarding_s": 0, "arrival_s": 5, "outcome": "served"},
+        "[\"d\",2]": {"boarding_s": 10, "arrival_s": 15, "outcome": "served"}
+      },
+      "metrics": {"M3.served.p90_s": 10, "_p90_basis": "served 대기 [0,0,10]"}
+    },
+    "f1-w9": {
+      "_spec_text": "변형: W=9 → [\"d\",2] unserved(wait)",
+      "config": {"max_wait_s": 9, "max_journey_s": 15, "drain_s": 20},
+      "passengers": {"[\"d\",2]": {"outcome": "unserved", "reason": "wait"}},
+      "metrics": {}
+    },
+    "f1-j14": {
+      "_spec_text": "변형: J=14 → [\"d\",2] unserved(journey), arrival_s 15 보존",
+      "config": {"max_wait_s": 10, "max_journey_s": 14, "drain_s": 20},
+      "passengers": {"[\"d\",2]": {"outcome": "unserved", "reason": "journey", "arrival_s": 15}},
+      "metrics": {}
+    },
+    "f1-drain12": {
+      "_spec_text": "변형: drain 12 → [\"d\",2] censored(onboard)",
+      "config": {"max_wait_s": 10, "max_journey_s": 15, "drain_s": 12},
+      "passengers": {"[\"d\",2]": {"outcome": "censored", "physical": "onboard"}},
+      "metrics": {}
+    },
+    "f1-wj9": {
+      "_spec_text": "변형: W=J=9 → [\"d\",2] unserved, 사유 journey(동시각 우선), refusal_events 1(첫 차 만석 시 남은 1명)",
+      "config": {"max_wait_s": 9, "max_journey_s": 9, "drain_s": 20},
+      "passengers": {"[\"d\",2]": {"outcome": "unserved", "reason": "journey"}},
+      "metrics": {"M2.refusal_events": 1}
+    }
+  }
+}

@@ -1,0 +1,104 @@
+{
+  "G": {
+    "R12": {
+      "max_gap_by_route_s": {
+        "r1": 10
+      },
+      "max_headway_s": 600,
+      "not_checked": "window-edge gaps (service start/end to first/last departure); TODO(policy)",
+      "pass": true,
+      "rule": "R12",
+      "violation_count": 0,
+      "violations": []
+    },
+    "engine_invariants": "capacity/conservation/time order enforced by engine (fail-fast); independent check pending M07"
+  },
+  "M1": {
+    "censored": 0,
+    "lower": 1.0,
+    "note": "rate is NA when total=0; with censored>0 report lower/upper only",
+    "rate": 1.0,
+    "served": 3,
+    "total": 3,
+    "unserved": 0,
+    "upper": 1.0
+  },
+  "M2": {
+    "censored_by_physical": {},
+    "passengers_refused_by_outcome": {
+      "censored": 0,
+      "served": 1,
+      "unserved": 0
+    },
+    "reason_priority": [
+      "no_connection",
+      "service_end",
+      "journey",
+      "wait"
+    ],
+    "refusal_events": 1,
+    "unserved_by_reason": {
+      "journey": 0,
+      "no_connection": 0,
+      "service_end": 0,
+      "wait": 0
+    }
+  },
+  "M3": {
+    "boarded": {
+      "mean_s": 3.3333333333333335,
+      "n": 3,
+      "over_threshold_n": 0,
+      "over_threshold_rate": 0.0,
+      "p90_s": 10,
+      "population": "boarded (includes later journey-unserved and censored onboard)",
+      "threshold_s": 60
+    },
+    "not_boarded_unserved_by_reason": {
+      "journey": 0,
+      "no_connection": 0,
+      "service_end": 0,
+      "wait": 0
+    },
+    "served": {
+      "mean_s": 3.3333333333333335,
+      "n": 3,
+      "over_threshold_n": 0,
+      "over_threshold_rate": 0.0,
+      "p90_s": 10,
+      "population": "served (boarded and arrived by deadline)",
+      "threshold_s": 60
+    }
+  },
+  "M5": {
+    "by_origin_area": {
+      "dong-1": {
+        "censored": 0,
+        "served": 3,
+        "served_rate": 1.0,
+        "total": 3,
+        "unserved": 0
+      }
+    },
+    "min_served_rate": {
+      "area": "dong-1",
+      "rate": 1.0
+    }
+  },
+  "M6": {
+    "empty_distance_m": null,
+    "empty_distance_note": "NA: Trip has no per-segment distance (TODO)",
+    "vehicles": [
+      {
+        "boarded": 3,
+        "distance_m": 0,
+        "empty_time_s": 10,
+        "served_alighted": 3,
+        "service_time_s": 20,
+        "trips_completed": 2,
+        "vehicle_id": "v1"
+      }
+    ]
+  },
+  "label": "독립 검증 전 잠정 (provisional, not independently verified)"
+}

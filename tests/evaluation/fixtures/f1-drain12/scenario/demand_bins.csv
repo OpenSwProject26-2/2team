@@ -1,0 +1,2 @@
+aggregate_id,origin,destination,bin_start_s,bin_width_s,passenger_count
+d,A,B,0,1,3

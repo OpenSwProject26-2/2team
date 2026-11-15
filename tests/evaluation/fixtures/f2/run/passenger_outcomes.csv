@@ -1,0 +1,10 @@
+passenger_id,origin,destination,time_s,outcome,reason,physical,vehicle_id,boarding_s,arrival_s,refused
+"[""a"",0]",A,C,0,served,,arrived,,100,300,0
+"[""a"",1]",A,C,0,served,,arrived,,100,300,0
+"[""a"",2]",A,C,0,unserved,wait,waiting,,,,1
+"[""b"",0]",B,C,150,unserved,wait,waiting,,,,1
+"[""c"",0]",A,D,0,unserved,no_connection,waiting,,,,0
+"[""d"",0]",C,A,50,unserved,no_connection,waiting,,,,0
+"[""e"",0]",A,B,750,unserved,service_end,waiting,,,,0
+"[""f"",0]",B,C,820,censored,,waiting,,,,0
+"[""g"",0]",A,C,380,unserved,journey,arrived,,400,1000,0
