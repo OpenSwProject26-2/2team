@@ -57,7 +57,19 @@ python3 -m busstrike.evaluation.verify <실행 결과 폴더>
 `fully_verified`(미실행·미검증까지 없음)를 따로 둡니다 — 자료가 없어 검증할 수 없는 항목을
 통과로 적지 않기 위해서입니다.
 
-자세한 것은 [`src/busstrike/evaluation/README.md`](src/busstrike/evaluation/README.md)를 봅니다.
+**어떻게 검증하는가**는 세 방향입니다.
+
+| 방법 | 묻는 것 | 정답의 출처 |
+| --- | --- | --- |
+| 불변조건 | 로그가 스스로 모순되지 않는가 | 물리적으로 불가능한 일 |
+| 재계산 | 같은 입력에서 같은 결과가 나오는가 | 검증기가 구조가 다른 방식으로 다시 돌린 결과 |
+| 손계산 대조 | 사람이 손으로 푼 답과 맞는가 | 명세의 손계산 표를 사람이 옮긴 파일 |
+
+엔진 출력과 엔진의 golden 로그는 **정답으로 쓰지 않습니다.** 검증 대상이기 때문입니다.
+검사가 공허하지 않다는 것은 정상 산출물을 한 군데씩 고친 사본 20종으로 확인합니다.
+
+파일별 역할과 방법론은
+[`src/busstrike/evaluation/README.md`](src/busstrike/evaluation/README.md)에 있습니다.
 
 ## 구조
 
@@ -85,6 +97,10 @@ python3 -m busstrike.evaluation.verify <실행 결과 폴더>
 ├─ experiments/    실험 기록·운행안 보존
 └─ notebooks/      EDA
 ```
+
+모듈 폴더와 그 테스트 폴더는 짝입니다. `src/busstrike/<모듈>/` 안의 코드는
+`tests/<모듈>/` 에서 검증하고, 테스트가 쓰는 입력은 `tests/<모듈>/fixtures/` 에 둡니다.
+각 폴더의 파일별 역할은 해당 모듈의 `README.md`에 적습니다.
 
 ## 문서
 
