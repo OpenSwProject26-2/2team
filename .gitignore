@@ -4,3 +4,7 @@ __pycache__/
 .env
 raw/
 data/processed/
+*.zip
+VW_KSCC_*.csv
+data/raw/
+*.egg-info/

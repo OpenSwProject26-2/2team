@@ -4,14 +4,14 @@ from dataclasses import replace
 from pathlib import Path
 import unittest
 
-from opt.baselines import baseline
-from opt.candidates import candidates, validate_allocation
-from opt.evaluator import evaluate, route_timing
-from opt.integration import Assessment, evaluate_holdout, rerank
-from opt.models import Demand, InputError, load_inputs, make_plan
-from opt.search import exhaustive, search
+from busstrike.planning.baselines import baseline
+from busstrike.planning.candidates import candidates, validate_allocation
+from busstrike.planning.evaluator import evaluate, route_timing
+from busstrike.planning.integration import Assessment, evaluate_holdout, rerank
+from busstrike.planning.models import Demand, InputError, load_inputs, make_plan
+from busstrike.planning.search import exhaustive, search
 
-FIXTURE = Path(__file__).resolve().parents[2] / "opt/examples/synthetic.json"
+FIXTURE = Path(__file__).resolve().parents[1] / "fixtures/planning/synthetic.json"
 
 
 class PlanningTests(unittest.TestCase):
