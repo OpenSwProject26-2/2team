@@ -42,3 +42,31 @@
 - 테스트 실행 명령과 결과
   - `PYTHONPATH=src python3 -m unittest discover -s tests -t .` → 기존 22개 통과(Python 3.14.4). 이 단계에서 추가한 테스트는 없다.
   - 린트·타입 검사는 저장소에 명령이 없어 실행하지 않았다.
+
+## 2단계 — 핵심 엔진
+
+- PR: https://github.com/OpenSwProject26-2/2team/pull/32 (Draft, base `docs/simulator-design` — 스택 PR, 브랜치 `feat/sim-core`)
+- 한 일
+  - `src/busstrike/sim/`에 `models.py`·`io.py`·`traveltime.py`·`timetable.py`·`arrivals.py`·`engine.py`·`eventlog.py`·`metrics.py`·`run.py`·`__main__.py`를 만들었다. 입력 스키마 검증, 시간표 생성기, 승객 발생 실현기, 이벤트 엔진, 이벤트 로그 기록, 지표 계산, 디렉터리 단위 실행·CLI까지다. 표준 라이브러리만 쓴다.
+  - `tests/sim/`에 손계산 시나리오 T1–T7 전부, 결정론 테스트, 입력 오류 테스트, 속도 측정을 넣었다. 입력은 `tests/sim/cases.py`가 코드로 만든다(합성). T1 기대 로그는 `simulator.md`에서 그대로 잘라 `tests/fixtures/sim/t1_events.jsonl`로 두었다.
+  - `simulator.md`에 설계가 비워 둔 세부를 구현하며 정한 대로 적었다(같은 PR).
+- 설계와 달라진 점: 없음. 손계산 표와 참고 SHA-256(T1·T2·T2b·T3·T4)이 첫 구현에서 모두 맞았다.
+- 결정한 것(설계가 비워 둔 부분. 모두 `simulator.md`에 반영)
+  - 명시 배정(`vehicle_ids`) 차량을 먼저 예약하고 나머지 노선을 채운다. `vehicle_ids` 길이 ≠ `vehicle_count`면 `PLAN_INFEASIBLE`(§1.4).
+  - `duties[]`는 trip이 있는 차량만. 대수 0인 노선의 `period_s`는 `null`. 제공 시간표는 정렬 후 사용(§1.5).
+  - 시간표 검사에 trip 정류장열 = plan leg, duty–trip 일치, 노선별 차량 수 ≤ `vehicle_count`, `initial/end_stop_id` 일치를 더했다(§1.5).
+  - 실현기 입력 행은 `DemandFlow(kind, stop_id, station_id, bin_start_s, flow)`(§2.4).
+  - `run_inputs.json`의 `checksum` 키 이름(`arrivals`·`travel_times`·`scenario`), URI는 `run_inputs.json` 기준 상대 경로, 실행 때 해시·인원·`network_snapshot_id` 불일치는 `INPUT_INVALID`(§0.3).
+  - `run.json`에 `timetable_uri` 추가, `sim_version = "busstrike-sim/0.1.0"`(§6.2).
+  - 지표 세부: `by_cause`는 6개 cause를 0까지 모두, `trips[]`는 실행된 영업 trip만, 차량 `first_s`/`last_s`는 arrive·depart만(cancel 제외) 등(§6.3 "2단계 구현에서 정한 세부"). 3단계 검증기 V13은 이 규칙으로 재계산해야 한다.
+  - CLI: `python -m busstrike.sim run --scenario S --run-inputs R --plan P --out DIR`, `SimError`면 종료 코드 2(§10).
+- 남은 문제 / 다음 단계가 알아야 할 것
+  - 1단계의 "사용자가 확인해야 할 결정" 9개는 그대로 남아 있다(D02·D03·D06·D07, `W_e`, 정차·회차 값, 도착 스냅숏, 3안 공통 생성기, egress 시간대 의미). 코드는 모두 Scenario 입력으로만 받고 상수로 박지 않았다.
+  - T3의 클러스터 검사 중 `route_clusters` 기대값은 `curve.py`(5단계) 몫이라 넣지 않았다. 2단계는 "목적지가 갈리면 단독 실행 합 = 함께 실행" 성질만 엔진으로 검사한다.
+  - 3단계(검증기)는 `busstrike.sim`을 import하지 않아야 한다. 입력 디렉터리는 `tests/sim/cases.py`의 `Case.write()`로, 실행 결과는 `run()`으로 만들 수 있다(테스트 쪽에서 sim을 써서 fixture를 만드는 것은 검증기 코드의 독립성과 별개).
+  - 속도 실측(합성 5만 명·30노선·62대·trip 810개·이벤트 약 9.8만 줄, Python 3.14, WSL2): 시간표+준비 0.08초, 엔진 0.31초, 로그 직렬화+지표 0.50초, 파일 입출력 포함 `run()` 1.41초. 목표(2초) 안이라 §4.2 하위 줄 최적화는 넣지 않았다. 합성 입력이 과부하라 이벤트 수는 추정(15만–25만)보다 적다.
+  - Python 3.10–3.13에서는 실행해 보지 않았다(이 환경에 3.14만 있음). 3.10 이후 문법만 썼다(`dataclass(slots=True)` 등).
+  - 연결된 Issue가 없다.
+- 테스트 실행 명령과 결과
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -t .` → 86개 통과(기존 22 + 이번 64, Python 3.14.4, 약 6초).
+  - 린트·타입 검사는 저장소에 명령이 없어 실행하지 않았다.
