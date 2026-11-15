@@ -70,3 +70,31 @@
 - 테스트 실행 명령과 결과
   - `PYTHONPATH=src python3 -m unittest discover -s tests -t .` → 86개 통과(기존 22 + 이번 64, Python 3.14.4, 약 6초).
   - 린트·타입 검사는 저장소에 명령이 없어 실행하지 않았다.
+
+## 3단계 — 독립 검증기
+
+- PR: https://github.com/OpenSwProject26-2/2team/pull/33 (Draft, base `feat/sim-core`, 스택 PR, 브랜치 `feat/sim-validator`)
+- 한 일
+  - `src/busstrike/evaluation/`에 `_inputs.py`(자체 파서·구간 시간 조회·해시), `_checks.py`(V01–V15, 로그 색인, 대기열 재구성, 지표 재계산), `validator.py`(`validate_run`·`write_report`·`failed_checks`·CLI)를 만들었다. `busstrike.sim`은 import하지 않고 설계 문서만 보고 따로 구현했다. 표준 라이브러리만 쓴다.
+  - `tests/evaluation/`에 손계산 시나리오 통과, 합성 30개 통과, 변조 18종 검출, 리포트 형식, CLI, 독립성(AST + `sys.modules`) 테스트를 넣었다. 실행 디렉터리는 `tests/evaluation/runs.py`가 `tests/sim/cases.py` + `busstrike.sim.run`으로 만든다(입력과 출력을 한 디렉터리에 둔다).
+  - `simulator.md` §8.2·§8.3·§9.10·§10에 3단계에서 정한 세부를 적었다(같은 PR).
+- 설계와 달라진 점(문서를 먼저 고침)
+  - **V14**: "같은 차량의 연속 cycle 간격 ≥ `period_s`"는 §1.3과 맞지 않았다. 생성기는 `s = max(슬롯, prev_ready)`이다. 직전 cycle이 시간대 경계에 걸려 P보다 길면 그 cycle만 밀리고, 다음 cycle은 슬롯으로 돌아와 간격이 P보다 짧아진다. 합성 seed 1·2에서 정상 시간표인데도 실패했다. "cycle m anchor ≥ `start + floor(k·P/n) + m·P`, `cycle_index` 0부터 연속"으로 바꿨다. 엔진·생성기는 바꾸지 않았다.
+  - **V10**: `cancel`은 뺀다. 이동이 아니라 판단 기록이고 `t = ready`(회차 포함)라 `W_e`를 넘을 수 있다. 시각은 V09가 §3.4 식으로 본다.
+- 결정한 것(설계가 비워 둔 부분. 모두 `simulator.md` §8.3 "3단계 구현에서 정한 세부"에 있음)
+  - 입력 위치: `run.json`·`timetable.json`·`events.jsonl`·`metrics.json`은 `--run-dir`에서 읽는다. `run.json`에 입력 경로가 없으므로 `scenario.json`·`run_inputs.json`·`plan.json`은 기본이 같은 디렉터리이고, 다르면 `--scenario`·`--run-inputs`·`--plan`으로 준다. 입력을 읽을 수 없으면 위반이 아니라 `ValidatorInputError`, 종료 코드 2.
+  - 검사 분담: `board` 필드가 `arrive`와 다르면 V06, `alight`면 V07, `depart`·`denied`면 V04. 최종 결과 누락·중복은 V02만 본다.
+  - V11의 "아직 안 탄 승객"은 승차 시각이 아니라 승차가 속한 visit 기준이다. V09는 첫 cycle의 취소 조건을 보지 않는다(엔진과 같음).
+  - 변조 테스트는 실패 검사 집합을 정확히 고정한다. 로그를 바꾸면 V13 등이 함께 실패하는 연쇄도 그대로 고정한다. 설계 표 "board 복제해 정원 초과"는 T1(좌석 3)에서 정원을 넘지 않는다. 그래서 정원 초과는 T2의 `denied` q3→`board` 변조로 본다.
+  - 검사가 예외로 멈추면 `fail` + `check aborted` 위반 1건(통과로 두지 않음). `validator_version = "busstrike-validator/0.1.0"`.
+- 남은 문제 / 다음 단계가 알아야 할 것
+  - 1단계의 "사용자가 확인해야 할 결정" 9개는 그대로 남아 있다. 검증기도 값은 모두 Scenario 입력에서 읽는다.
+  - V14는 P를 다시 계산하지 않으므로(§8.4) 밀린 cycle이 정확히 `prev_ready`에 출발했는지는 보지 않는다.
+  - 5단계 어댑터는 `independently_verified = report["verified"]`, `violations = failed_checks(report)`로 옮기면 된다(§8.3).
+  - 4단계(GTFS)는 검증기와 무관하다. 다만 `timetable.json` 형식을 바꾸면 `_inputs.parse_timetable`과 V14도 같이 고쳐야 한다.
+  - 다른 검증기 브랜치 `feat/28-evaluation-m05-verifier`·`feat/29-evaluation-m05-verifier`(SimPy 기반 PR #6용)가 있다. 읽기만 했다. 모듈 파일 이름은 겹치지 않지만 `src/busstrike/evaluation/__init__.py`를 양쪽이 서로 다른 내용으로 추가한다(`tests/evaluation/__init__.py`는 둘 다 빈 파일). 그래서 나중에 병합되는 쪽은 그 파일에서 add/add 충돌이 난다. 어느 검증기를 M07로 쓸지와 병합 순서는 팀이 정해야 한다.
+  - 속도(합성 5만 명·이벤트 약 9.8만 줄, Python 3.14, WSL2): `validate_run` 4.75초, 엔진 `run()` 1.48초. S(n) 반복(5단계)에서는 전부를 검증하지 말고 표본 실행만 검증하는 편이 낫다.
+  - Python 3.10–3.13에서는 실행해 보지 않았다. 연결된 Issue가 없다.
+- 테스트 실행 명령과 결과
+  - `PYTHONPATH=src python3 -m unittest discover -s tests -t .` → 104개 통과(2단계까지 86 + 이번 18, Python 3.14.4, 약 10초).
+  - 린트·타입 검사는 저장소에 명령이 없어 실행하지 않았다.
