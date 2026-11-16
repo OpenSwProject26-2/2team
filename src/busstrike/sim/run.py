@@ -20,7 +20,10 @@ from .arrivals import GENERATOR, generate, input_checksum, realization_bytes
 from .engine import SimContext, SimResult, prepare, service_schedule, simulate
 from .eventlog import dumps_events, outcomes_bytes
 from .metrics import METRICS_SCHEMA_VERSION, PROVISIONAL, compute_metrics, passenger_outcomes
-from .models import BinRow, Policy, Scenario, ServiceTrip, SimError, Timetable, Vehicle, Window
+from .models import (
+    SERVICE_END_CYCLE_WITHIN_WINDOW, BinRow, Policy, Scenario, ServiceTrip, SimError, Timetable, Vehicle,
+    Window,
+)
 from .timetable import normalize_plan
 from .traveltime import TravelTimeTable
 
@@ -56,6 +59,9 @@ def config_hash(policy: Policy, window: Window, vehicles: Sequence[Vehicle]) -> 
         "operating_window": {"start_s": window.start_s, "end_s": window.end_s},
         "fleet": [asdict(v) for v in sorted(vehicles, key=lambda v: v.vehicle_id)],
     }
+    if policy.service_end_rule != SERVICE_END_CYCLE_WITHIN_WINDOW:
+        # 기본 규칙이면 키를 넣지 않는다: 기존 실행의 config_hash·run_id가 그대로다
+        doc["policy"]["service_end_rule"] = policy.service_end_rule
     return io.sha256_bytes(io.canonical_json(doc).encode("utf-8"))
 
 
@@ -91,6 +97,13 @@ def network_doc(schedule: Sequence[ServiceTrip], scenario: Scenario, timetable: 
             "provenance": "M05 simulator schedule (simulation, not observed operation)"}
     if len(capacities) == 1:
         spec["capacity"] = capacities.pop()           # 계약 I7: 정원이 하나일 때만 R11 기준값을 쓴다
+    rule = scenario.policy.service_end_rule
+    if rule != SERVICE_END_CYCLE_WITHIN_WINDOW:
+        # 계약 §2.1 R14: 새 규칙이면 검증기가 운영창 끝 대신 차량 가용 종료로 return_s를 본다.
+        # 기본 규칙이면 키를 넣지 않는다(기존 network.json 바이트 그대로).
+        spec["service_end_rule"] = rule
+        spec["vehicle_available_end_s"] = {v.vehicle_id: v.available_end_s
+                                           for v in sorted(scenario.vehicles, key=lambda v: v.vehicle_id)}
     stops = sorted({s for t in schedule for s in t.stops})
     routes: dict[str, list[str]] = {}
     for t in schedule:
@@ -152,7 +165,9 @@ def write_m07(out_dir: Path, *, scenario: Scenario, timetable: Timetable, schedu
         "policy": {"name": scenario.scenario_id, "max_wait_s": policy.max_wait_s,
                    "max_journey_s": policy.max_journey_s, "max_headway_s": policy.max_headway_s,
                    "wait_threshold_s": policy.wait_threshold_s, "dwell_base_s": policy.dwell_base_s,
-                   "turnaround_s": policy.turnaround_s, "cycle_rest_s": policy.cycle_rest_s},
+                   "turnaround_s": policy.turnaround_s, "cycle_rest_s": policy.cycle_rest_s,
+                   **({} if policy.service_end_rule == SERVICE_END_CYCLE_WITHIN_WINDOW
+                      else {"service_end_rule": policy.service_end_rule})},
         "passengers": len(result.passengers),
         "event_count": len(result.events),
         "log_bytes": len(log), "log_sha256": log_sha,

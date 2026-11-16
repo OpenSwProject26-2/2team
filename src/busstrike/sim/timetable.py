@@ -9,8 +9,8 @@ from __future__ import annotations
 from typing import Sequence
 
 from .models import (
-    Duty, PlanSpec, Policy, RouteSpec, SimError, StopTime, Timetable, TimetableRoute, Trip,
-    Vehicle, Window,
+    SERVICE_END_START_WITHIN_WINDOW, Duty, PlanSpec, Policy, RouteSpec, SimError, StopTime, Timetable,
+    TimetableRoute, Trip, Vehicle, Window,
 )
 from .traveltime import TravelTimeTable
 
@@ -107,6 +107,26 @@ def _service_legs(route: RouteSpec) -> int:
     return sum(1 for leg in route.legs if leg.in_service)
 
 
+def vehicle_end(v: Vehicle, window: Window, policy: Policy) -> int:
+    """순환이 끝나야 하는 시각(§1.3 운영 종료 규칙). 기본 규칙은 min(W_e, 가용 종료), 새 규칙은 가용 종료."""
+    if policy.service_end_rule == SERVICE_END_START_WITHIN_WINDOW:
+        return v.available_end_s
+    return min(window.end_s, v.available_end_s)
+
+
+def starts_too_late(cycle_start_s: int, window: Window, policy: Policy) -> bool:
+    """새 규칙에서 순환 시작(첫 영업 leg 출발)이 W_e보다 이르지 않으면 True. 기본 규칙은 늘 False."""
+    return policy.service_end_rule == SERVICE_END_START_WITHIN_WINDOW and cycle_start_s >= window.end_s
+
+
+def _cycle_start(legs, flags) -> int:
+    """cycle의 첫 영업 leg 첫 정류장 예정 시각. 영업 leg가 없으면 첫 leg 시각."""
+    for times, in_service in zip(legs, flags):
+        if in_service:
+            return times[0]
+    return legs[0][0]
+
+
 def route_period(route: RouteSpec, vehicles: Sequence[Vehicle], window: Window, policy: Policy,
                  tt: TravelTimeTable) -> tuple[int, int]:
     """(첫 출발 start, 고정 주기 P)."""
@@ -126,7 +146,7 @@ def build_route_trips(route: RouteSpec, vehicles: Sequence[Vehicle], window: Win
     per_pax = policy.dwell_per_boarding_s + policy.dwell_per_alighting_s
     trips: list[Trip] = []
     for k, v in enumerate(sorted(vehicles, key=lambda x: x.vehicle_id)):
-        end = min(window.end_s, v.available_end_s)
+        end = vehicle_end(v, window, policy)
         allow = per_pax * v.capacity * n_rev
         m = 0
         prev_ready: int | None = None
@@ -136,6 +156,8 @@ def build_route_trips(route: RouteSpec, vehicles: Sequence[Vehicle], window: Win
                 s = max(s, prev_ready)
             leg_times, finish, ready = planned_cycle(route, s, policy, tt)
             if finish + allow > end:
+                break
+            if starts_too_late(_cycle_start(leg_times, [leg.in_service for leg in route.legs]), window, policy):
                 break
             for li, leg in enumerate(route.legs):
                 trips.append(Trip(
@@ -199,7 +221,8 @@ def provided_timetable(plan: PlanSpec) -> Timetable:
 # ---------------------------------------------------------------- §1.5 검사
 
 def validate_timetable(timetable: Timetable, plan: PlanSpec, vehicles: Sequence[Vehicle],
-                       window: Window, tt: TravelTimeTable) -> None:
+                       window: Window, tt: TravelTimeTable, policy: Policy | None = None) -> None:
+    """policy가 없으면 기본 운영 종료 규칙(cycle_within_window)으로 검사한다."""
     by_id = {v.vehicle_id: v for v in vehicles}
     routes = {r.route_id: r for r in plan.routes}
     for r in plan.routes:
@@ -245,11 +268,20 @@ def validate_timetable(timetable: Timetable, plan: PlanSpec, vehicles: Sequence[
         if d.start_s != ts[0].stop_times[0].sched_s or d.end_s != ts[-1].stop_times[-1].sched_s:
             raise _infeasible("duty start_s/end_s differ from trips", vehicle_id=vid)
         lo = max(window.start_s, v.available_start_s)
-        hi = min(window.end_s, v.available_end_s)
+        hi = min(window.end_s, v.available_end_s) if policy is None else vehicle_end(v, window, policy)
         for t in ts:
             for s in t.stop_times:
                 if not lo <= s.sched_s <= hi:
                     raise _infeasible("sched_s outside vehicle window", trip_id=t.trip_id, sched_s=s.sched_s)
+        if policy is not None:
+            cycles: dict[int, list[Trip]] = {}
+            for t in ts:
+                cycles.setdefault(t.cycle_index, []).append(t)
+            for ci, cts in sorted(cycles.items()):
+                start = _cycle_start([[s.sched_s for s in t.stop_times] for t in cts], [t.in_service for t in cts])
+                if starts_too_late(start, window, policy):
+                    raise _infeasible("cycle starts at or after operating window end", vehicle_id=vid,
+                                      cycle_index=ci, start_s=start, window_end_s=window.end_s)
         for a, b in zip(ts, ts[1:]):
             if a.stop_times[-1].stop_id != b.stop_times[0].stop_id:
                 raise _infeasible("consecutive trips are not connected", trip_id=b.trip_id)
@@ -279,5 +311,5 @@ def normalize_plan(plan: PlanSpec, vehicles: Sequence[Vehicle], window: Window,
         timetable = build_timetable(plan, vehicles, window, policy, tt)
     else:
         timetable = provided_timetable(plan)
-    validate_timetable(timetable, plan, vehicles, window, tt)
+    validate_timetable(timetable, plan, vehicles, window, tt, policy)
     return timetable

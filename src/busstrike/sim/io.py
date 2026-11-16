@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from .models import (
-    BinRow, Duty, Leg, Passenger, PlanSpec, Policy, RouteSpec, Scenario, SimError, StopTime,
-    Timetable, TimetableRoute, Trip, Vehicle, Window,
+    SERVICE_END_CYCLE_WITHIN_WINDOW, SERVICE_END_RULES, BinRow, Duty, Leg, Passenger, PlanSpec, Policy,
+    RouteSpec, Scenario, SimError, StopTime, Timetable, TimetableRoute, Trip, Vehicle, Window,
 )
 
 _ENCODER = json.JSONEncoder(ensure_ascii=False, separators=(",", ":"))
@@ -167,9 +167,13 @@ def policy_from_dict(raw: dict) -> Policy:
         drain_s=_opt_int(raw, "drain_s"),
         max_headway_s=_opt_int(raw, "max_headway_s", 0),
         wait_threshold_s=_opt_int(raw, "wait_threshold_s", 0),
+        service_end_rule=_opt_str(raw, "service_end_rule") or SERVICE_END_CYCLE_WITHIN_WINDOW,
     )
     if p.unknown_link != "error":
         raise _fail('policy.unknown_link must be "error"', field="unknown_link")
+    if p.service_end_rule not in SERVICE_END_RULES:
+        raise _fail(f"policy.service_end_rule must be one of {list(SERVICE_END_RULES)}", field="service_end_rule",
+                    value=p.service_end_rule)
     return p
 
 
