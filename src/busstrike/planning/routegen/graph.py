@@ -16,7 +16,7 @@ from .data import Network
 @dataclass(frozen=True)
 class Limits:
     l_max_s: int                 # 편도 상한(초)
-    max_stops: int = 8           # 역 지정 정류장을 뺀 정차 수 상한
+    max_stops: int | None = 8    # 역 지정 정류장을 뺀 정차 수 상한 N_max(None = 검사하지 않음)
     max_detour: float = 1.6      # 경로 길이 ÷ 첫·끝 정류장 직선거리
 
 
@@ -36,13 +36,16 @@ class Graph:
                 self._w[(a, b)] = max(prof)
         self.n_bins = len(bins)
         self._fwd: dict[str, dict[str, tuple[int, tuple[str, ...]]]] = {}
+        self._any: dict[str, dict[str, tuple[int, tuple[str, ...]]]] = {}   # 진단용(cutoff 없음)
 
     def weight(self, a: str, b: str) -> int:
         return self._w[(a, b)]
 
-    def tree(self, src: str) -> dict[str, tuple[int, tuple[str, ...]]]:
-        """src에서 비용 cutoff_s 이하로 닿는 정류장 → (비용, 경로)."""
-        got = self._fwd.get(src)
+    def tree(self, src: str, capped: bool = True) -> dict[str, tuple[int, tuple[str, ...]]]:
+        """src에서 비용 cutoff_s 이하로 닿는 정류장 → (비용, 경로). capped=False는 거절 사유 진단용(상한 없음)."""
+        cache = self._fwd if capped else self._any
+        limit = self.cutoff_s if capped else float("inf")
+        got = cache.get(src)
         if got is not None:
             return got
         heap: list[tuple[int, tuple[str, ...]]] = [(0, (src,))]
@@ -57,9 +60,9 @@ class Graph:
                 if nxt in done:
                     continue
                 c = cost + self._w[(here, nxt)]
-                if c <= self.cutoff_s:
+                if c <= limit:
                     heapq.heappush(heap, (c, path + (nxt,)))
-        self._fwd[src] = done
+        cache[src] = done
         return done
 
     def path(self, a: str, b: str) -> tuple[str, ...] | None:
@@ -79,6 +82,20 @@ class Graph:
         if len(set(out)) != len(out):
             return None
         return tuple(out)
+
+    def diagnose(self, anchors: list[str] | tuple[str, ...], station_stops: frozenset[str], lim: Limits) -> list[str]:
+        """expand가 실패한 anchor열의 거절 사유. 결과에는 쓰지 않고 집계에만 쓴다.
+
+        cutoff 없이 최단경로로 이어 붙인 정차열에 모든 제약을 매긴다. 망에서 아예 못 닿으면 ["unreachable"].
+        cutoff(= L_max 최댓값)를 넘는 구간이 있으면 그 정차열은 반드시 l_max에 걸린다.
+        """
+        out: list[str] = [anchors[0]]
+        for a, b in zip(anchors, anchors[1:]):
+            hit = self.tree(a, capped=False).get(b) if a != b else (0, (a,))
+            if hit is None:
+                return ["unreachable"]
+            out.extend(hit[1][1:])
+        return self.violations(tuple(out), station_stops, lim) or ["no_path_or_repeat"]
 
     # ------------------------------------------------------------ 지표
 
@@ -107,7 +124,7 @@ class Graph:
             bad.append("repeat")
         if self.oneway_s(stops) > lim.l_max_s:
             bad.append("l_max")
-        if sum(1 for s in stops if s not in station_stops) > lim.max_stops:
+        if lim.max_stops is not None and sum(1 for s in stops if s not in station_stops) > lim.max_stops:
             bad.append("max_stops")
         if self.detour(stops) > lim.max_detour:
             bad.append("detour")

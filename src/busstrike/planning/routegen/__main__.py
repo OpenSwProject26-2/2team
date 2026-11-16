@@ -1,13 +1,18 @@
 """후보 생성 + per_gu 배분 → 비교 입력 plan.json.
 
     python -m busstrike.planning.routegen --root <guro_0610 폴더> --out <저장소 밖 폴더> [--fleets 11,13]
-        [--tau 0.2 --radius-m 3000 --c0-min 40 --l-max 20,30 --max-stops 8 --max-detour 1.6 ...]
+        [--tau 0.2 --radius-m 3000 --c0-min 40 --l-max 20,30 --max-stops 8|none --max-detour 1.6 ...]
+
+맨 앞에서 실험 묶음인지 확인한다(망 ID guro-buf2km-0610-v2, README "실험 데이터 10/26~30", 묶음 날짜). 다르면 멈춘다.
 
 출력(`--out`)
 - bundle_check.json: 잔여 수요 → 시뮬레이터 정수화 결과가 묶음 demand_bins.csv와 같은지(다르면 중단)
 - candidates/<변형>.json: 후보 목록(route_id, kind, stops, C, 덮는 수요, origin …), 허브·군집·소요 시간
 - plans/<plan_id>.json: 비교 입력(experiments/plans/schema.md) — 변형 4개 × 차량 조건 × {ours, sp}
-- manifest.json: 안별 배분·근사 충족(κ=1)·파라미터·코드 커밋
+- manifest.json: 안별 배분·근사 충족(κ=1)·초기해별 국소 탐색 결과·이동 종류별 시도/수락·파라미터·코드 커밋
+
+배분 순서: 피더안(sp 풀)을 먼저 배분하고, 그 배분을 우리 안(ours 풀) 초기해 하나로 넣는다.
+그래서 같은 후보 풀에서 우리 안의 근사 ≥ 피더안의 근사다(아니면 멈춘다).
 """
 
 from __future__ import annotations
@@ -42,6 +47,10 @@ def _ints(text: str) -> tuple[int, ...]:
     return tuple(int(x) for x in text.split(","))
 
 
+def _opt_int(text: str) -> int | None:
+    return None if text.lower() in ("none", "inf", "0") else int(text)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m busstrike.planning.routegen")
     ap.add_argument("--root", required=True, type=Path, help="구 실험 묶음 폴더(README.md, network/, demand/, bundles/)")
@@ -55,14 +64,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--c0-min", type=int, default=d.c0_s // 60)
     ap.add_argument("--l-max", type=_ints, default=d.l_max_min)
     ap.add_argument("--sectors", type=_ints, default=d.sectors)
-    ap.add_argument("--max-stops", type=int, default=d.max_stops)
+    ap.add_argument("--max-stops", type=_opt_int, default=d.max_stops, help="N_max. none = 검사하지 않음")
     ap.add_argument("--max-detour", type=float, default=d.max_detour)
     ap.add_argument("--sp-top", type=int, default=d.sp_top)
     ap.add_argument("--jaccard", type=float, default=d.jaccard)
     ap.add_argument("--revision", type=int, default=1)
+    ap.add_argument("--condition", default="base", help="실행 조건 이름(manifest에 적는다)")
     args = ap.parse_args(argv)
 
     root, out = args.root.resolve(), args.out.resolve()
+    root_check = D.check_root(root)
     (out / "candidates").mkdir(parents=True, exist_ok=True)
     (out / "plans").mkdir(parents=True, exist_ok=True)
     started = time.time()
@@ -80,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
                       sectors=args.sectors, l_max_min=args.l_max, max_stops=args.max_stops,
                       max_detour=args.max_detour, sp_top=args.sp_top, jaccard=args.jaccard)
     ap_ = A.AllocParams()
-    manifest = {"root": str(root), "readme_title": (root / "README.md").read_text(encoding="utf-8").splitlines()[0],
+    manifest = {"condition": args.condition, "root_check": root_check, "root": str(root), "readme_title": (root / "README.md").read_text(encoding="utf-8").splitlines()[0],
                 "network_snapshot_id": net.tt.network_snapshot_id,
                 "commit": _git("rev-parse", "HEAD"),
                 "branch": _git("branch", "--show-current"),
@@ -106,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
             "hubs": {k: {"name": net.stations[k].name, "F": round(v, 2), "catchment": res.catchment_sizes[k]}
                      for k, v in res.hubs.items()},
             "overlaps": res.overlaps, "clusters": res.clusters, "dropped": res.dropped, "reasons": res.reasons,
+            "reason_sets": res.reason_sets,
             "seconds": res.seconds | {"generate_total": round(t_gen, 2)},
             "candidates": len(res.candidates),
             "by_origin_kind": {}, "pools": {k: {"kept": len(v[0]), "removed_jaccard": v[1]} for k, v in pools.items()},
@@ -120,12 +132,26 @@ def main(argv: list[str] | None = None) -> int:
                                                              encoding="utf-8")
         by_id = {c.route_id: c for c in res.candidates}
         vinfo["alloc_seconds"] = {}
-        for label, (pool, _) in pools.items():
-            model = A.Model([(c.route_id, c.cycle_s, c.cover_keys) for c in pool], demand.od, ap_)
-            for fleet in args.fleets:
+        # ours 풀은 sp 풀의 정차열을 모두 가져야 한다(같은 후보 풀 비교). 빠진 정차열은 sp 후보를 그대로 더한다.
+        ours_by_stops = {c.stops: c.route_id for c in pools["ours"][0]}
+        added = [c for c in pools["sp"][0] if c.stops not in ours_by_stops]
+        ours_pool = sorted(pools["ours"][0] + added, key=lambda c: c.route_id)
+        sp_to_ours = {c.route_id: ours_by_stops.get(c.stops, c.route_id) for c in pools["sp"][0]}
+        vinfo["sp_routes_added_to_ours"] = [c.route_id for c in added]
+        models = {lab: A.Model([(c.route_id, c.cycle_s, c.cover_keys) for c in pool], demand.od, ap_)
+                  for lab, pool in (("sp", pools["sp"][0]), ("ours", ours_pool))}
+        for fleet in args.fleets:
+            allocs = {}
+            for label in ("sp", "ours"):
+                model = models[label]
+                starts = None
+                if label == "ours":
+                    starts = {"sp_plan": {sp_to_ours[r]: k for r, k in allocs["sp"]["n"].items()}}
                 t1 = time.time()
-                alloc = A.allocate(model, fleet)
+                alloc = allocs[label] = A.allocate(model, fleet, starts)
                 vinfo["alloc_seconds"][f"{label}_f{fleet}"] = round(time.time() - t1, 2)
+                if label == "ours" and alloc["value"] < allocs["sp"]["value"] - 1e-6:
+                    raise SystemExit(f"{variant} f{fleet}: 우리 안 근사 {alloc['value']:.3f} < 피더안 {allocs['sp']['value']:.3f}")
                 det = model.detail(alloc["n"])
                 plan_id = f"plan-{PLAN_LABELS[label]}-{variant}-f{fleet}"
                 routes = []
@@ -149,6 +175,11 @@ def main(argv: list[str] | None = None) -> int:
                     "approx_cap_cut": round(det["cap_cut"], 4),
                     "value_greedy": round(alloc["value_greedy"], 4), "value_filled": round(alloc["value_filled"], 4),
                     "greedy": alloc["greedy"], "local_search": alloc["local_search"],
+                    "chosen_start": alloc["chosen"], "move_stats": alloc["move_stats"],
+                    "starts": {k: {"initial": round(v["initial"], 4), "final": round(v["final"], 4),
+                                   "start": v["start"], "n": v["n"], "moves": v["moves"], "stats": v["stats"]}
+                               for k, v in alloc["inits"].items()},
+                    "pool_size": len(model.ids),
                     "demand_total_5day_avg": round(demand.total(), 4)})
         manifest["variants"][variant] = vinfo
         print(f"{variant}: 허브 {len(res.hubs)} · 군집 {len(res.clusters)} · 후보 {len(res.candidates)} "

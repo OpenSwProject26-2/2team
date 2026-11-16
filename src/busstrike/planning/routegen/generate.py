@@ -36,7 +36,7 @@ class Params:
     cluster_max: int = 3
     sectors: tuple[int, ...] = (2, 3, 4)
     l_max_min: tuple[int, ...] = (20, 30)
-    max_stops: int = 8
+    max_stops: int | None = 8        # N_max. None = 정차 수를 검사하지 않음(편도 L_max·우회율만)
     max_detour: float = 1.6
     sp_top: int = 15
     jaccard: float = 0.8
@@ -235,11 +235,14 @@ class Builder:
         self.od_total = {k: sum(v) for k, v in demand.od.items()}
         # 거절 사유 집계: (단계, kind, 사유) → 횟수. 사유는 여러 개가 함께 붙을 수 있다(편도·정차 수·우회율).
         self.reasons: dict[tuple[str, str, str], int] = {}
+        # 거절 사유 조합: (단계, kind, "l_max+detour" 같은 조합) → 횟수(단독 원인을 셀 때 쓴다)
+        self.reason_sets: dict[tuple[str, str, str], int] = {}
 
     def check(self, pattern: Pattern, anchors: list[str], lim: Limits) -> tuple[tuple[str, ...] | None, list[str]]:
         stops = self.g.expand(anchors)
         if stops is None:
-            return None, ["no_path_or_repeat"]   # cutoff 안 경로 없음 또는 이어 붙인 정차열에 같은 정류장(S2)
+            # cutoff 안 경로 없음 또는 이어 붙인 정차열에 같은 정류장(S2): 상한 없는 최단경로로 제약별 사유를 매긴다
+            return None, self.g.diagnose(anchors, pattern.station_stops, lim)
         bad = self.g.violations(stops, pattern.station_stops, lim)
         return (None if bad else stops), bad
 
@@ -249,9 +252,13 @@ class Builder:
             for r in (bad + ["rejected"]) if bad else ["ok"]:   # rejected = 거절된 시도 수(사유는 겹쳐 셈)
                 key = (stage, pattern.kind, r)
                 self.reasons[key] = self.reasons.get(key, 0) + 1
+            if bad:
+                key = (stage, pattern.kind, "+".join(sorted(bad)))
+                self.reason_sets[key] = self.reason_sets.get(key, 0) + 1
         return stops
 
-    def insertion(self, pattern: Pattern, seed: str, pool: list[str], lim: Limits) -> tuple[str, ...] | None:
+    def insertion(self, pattern: Pattern, seed: str, pool: list[str], lim: Limits,
+                  stage: str = "insertion") -> tuple[str, ...] | None:
         anchors = pattern.anchors_with(seed)
         stops = self.route_of(pattern, anchors, lim)
         if stops is None:
@@ -266,7 +273,7 @@ class Builder:
                     continue
                 for pos in pattern.insert_positions(anchors):
                     trial = anchors[:pos] + [s] + anchors[pos:]
-                    new = self.route_of(pattern, trial, lim, "insertion")
+                    new = self.route_of(pattern, trial, lim, stage)
                     if new is None:
                         continue
                     d_dem = cover_value(new, self.od_total) - cur_dem
@@ -344,7 +351,8 @@ class Result:
     candidates: list[Candidate]
     dropped: dict[str, int] = field(default_factory=dict)
     seconds: dict[str, float] = field(default_factory=dict)
-    reasons: dict[str, int] = field(default_factory=dict)   # "단계/kind/사유" → 횟수
+    reasons: dict[str, int] = field(default_factory=dict)   # "단계/kind/사유" → 횟수(단계 = seed_L20, insertion_L30 …)
+    reason_sets: dict[str, int] = field(default_factory=dict)   # "단계/kind/사유1+사유2" → 횟수
 
 
 def _finish(c: Candidate, b: Builder, scenario: Scenario, p: Params) -> bool:
@@ -435,13 +443,13 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
             values = _pool(pat, K, demand)
             for L in p.l_max_min:
                 lim = Limits(L * 60, p.max_stops, p.max_detour)
-                feas = [s for s in values if b.route_of(pat, pat.anchors_with(s), lim, "seed") is not None]
+                feas = [s for s in values if b.route_of(pat, pat.anchors_with(s), lim, f"seed_L{L}") is not None]
                 dropped["seed_infeasible"] += len(values) - len(feas)
                 for m in p.sectors:
                     for sec in sectors(feas, values, pat.center, m, net):
                         seed = max(sec, key=lambda s: (values[s] * haversine_m(
                             pat.center[0], pat.center[1], net.stops[s].lat, net.stops[s].lon), s))
-                        stops = b.insertion(pat, seed, sec, lim)
+                        stops = b.insertion(pat, seed, sec, lim, f"insertion_L{L}")
                         if stops is not None:
                             add(pat.kind, stops, "generated", pat.hubs, cl["id"], f"m{m}_L{L}")
     t_gen = time.time()
@@ -457,7 +465,7 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
             for s in ranked:
                 if picked >= p.sp_top:
                     break
-                stops = b.route_of(pat, pat.anchors_with(s), lim)
+                stops = b.route_of(pat, pat.anchors_with(s), lim, f"sp_L{max(p.l_max_min)}")
                 if stops is None:
                     continue
                 picked += 1
@@ -480,7 +488,8 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
                   clusters, cands, dropped,
                   {"setup": round(t_setup - t0, 2), "insertion": round(t_gen - t_setup, 2),
                    "shortest_path_feeders": round(t_sp - t_gen, 2), "cover_cycle": round(t_fin - t_sp, 2)},
-                  {"/".join(k): v for k, v in sorted(b.reasons.items())})
+                  {"/".join(k): v for k, v in sorted(b.reasons.items())},
+                  {"/".join(k): v for k, v in sorted(b.reason_sets.items())})
 
 
 def pools(cands: list[Candidate], threshold: float) -> dict[str, tuple[list[Candidate], int]]:

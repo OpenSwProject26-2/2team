@@ -1,17 +1,24 @@
 """routegen 단위 테스트: 병합, 삽입 제약 위반, 덮개 판정, 주기 = 시뮬레이터, 차량 합.
 
+v1: 같은 후보 풀에서 결과 ≥ 피더안(근사), N_max = None이면 정차 수 미검사, 노선 교체 후 차량 합,
+거절 사유 진단, 실험 묶음 확인.
+
 합성 망만 쓴다(실제 묶음 자료는 저장소에 넣지 않는다).
 """
 
 from __future__ import annotations
 
+import json
 import math
+import random
+import tempfile
 import unittest
+from pathlib import Path
 
 from busstrike.planning.routegen import allocate as A
 from busstrike.planning.routegen import generate as G
 from busstrike.planning.routegen.cycle import route_cycle, single_route_plan
-from busstrike.planning.routegen.data import Demand, Network, Station, Stop, haversine_m
+from busstrike.planning.routegen.data import Demand, Network, Station, Stop, check_root, haversine_m
 from busstrike.planning.routegen.graph import Graph, Limits
 from busstrike.sim import io as sio
 from busstrike.sim.adapters.comparison_plan import to_engine_plan
@@ -233,6 +240,180 @@ class AllocateTest(unittest.TestCase):
         m = self.model()
         a = A.allocate(m, 7)
         self.assertGreaterEqual(a["value"] + 1e-9, a["value_filled"])
+
+
+def random_instance(seed: int, n_routes: int = 14, n_keys: int = 30, d_max: float = 120, c_max: int = 3600,
+                    cover_max: int = 6) -> tuple[list, dict]:
+    """합성 배분 문제: 노선 n_routes개(sp* 절반 = 피더 풀), OD n_keys개. 주기 15분~c_max, 덮개 1~cover_max개."""
+    rnd = random.Random(seed)
+    keys = [(f"o{i}", "H") for i in range(n_keys)]
+    od = {k: [round(rnd.uniform(0, d_max), 1) for _ in range(4)] for k in keys}
+    routes = []
+    for i in range(n_routes):
+        cover = tuple(sorted(rnd.sample(keys, rnd.randint(1, cover_max))))
+        routes.append((f"{'sp' if i % 2 else 'gn'}{i:02d}", rnd.randint(900, c_max), cover))
+    return routes, od
+
+
+# 탐욕·수요 상위 초기해만으로는 국소해에 멈춰 피더안보다 낮아지는 사례(v0 affected 13대와 같은 현상)
+STUCK = dict(seed=20, n_routes=24, n_keys=40, d_max=150, c_max=4800, cover_max=8)
+
+
+class AllocateV1Test(unittest.TestCase):
+    def test_result_not_below_feeder_plan(self):
+        """같은 후보 풀(피더 풀 ⊆ 우리 풀)에서 우리 안 근사 ≥ 피더안 근사."""
+        for seed in range(12):
+            routes, od = random_instance(seed)
+            sp_model = A.Model([r for r in routes if r[0].startswith("sp")], od, A.AllocParams())
+            ours_model = A.Model(routes, od, A.AllocParams())
+            for budget in (11, 13):
+                sp = A.allocate(sp_model, budget)
+                ours = A.allocate(ours_model, budget, {"sp_plan": sp["n"]})
+                self.assertGreaterEqual(ours["value"] + 1e-9, sp["value"], (seed, budget))
+                self.assertEqual(sum(ours["n"].values()), budget)
+                for name, run in ours["inits"].items():          # 국소 탐색은 어느 초기해도 나쁘게 만들지 않는다
+                    self.assertGreaterEqual(run["final"] + 1e-9, run["initial"], (seed, budget, name))
+                    self.assertGreaterEqual(ours["value"] + 1e-9, run["final"])
+                self.assertEqual(set(ours["inits"]), {"greedy", "top_demand", "sp_plan"})
+
+    def test_feeder_start_lifts_stuck_case(self):
+        """피더안 배분을 초기해로 넣지 않으면 피더안보다 낮은 사례에서도, 넣으면 피더안 이상."""
+        routes, od = random_instance(**STUCK)
+        sp_model = A.Model([r for r in routes if r[0].startswith("sp")], od, A.AllocParams())
+        ours_model = A.Model(routes, od, A.AllocParams())
+        for budget in (11, 13):
+            sp = A.allocate(sp_model, budget)
+            alone = A.allocate(ours_model, budget)
+            self.assertLess(alone["value"], sp["value"] - 1e-6, budget)          # 사례가 여전히 유효한지
+            ours = A.allocate(ours_model, budget, {"sp_plan": sp["n"]})
+            self.assertGreaterEqual(ours["value"] + 1e-9, sp["value"], budget)
+            self.assertEqual(sum(ours["n"].values()), budget)
+
+    def test_swap_keeps_vehicle_sum(self):
+        """노선 교체(a 닫고 c를 n0대로 열기, 모자라면 다른 노선에서 1대씩) 후 차량 합 = 11/13."""
+        for seed in range(6):
+            routes, od = random_instance(seed)
+            m = A.Model(routes, od, A.AllocParams())
+            for budget in (11, 13):
+                n = A.allocate(m, budget)["n"]
+                for a in sorted(n):
+                    for c in m.ids:
+                        if c in n:
+                            continue
+                        got = A.swap(m, budget, n, a, c)
+                        if got is None:
+                            continue
+                        self.assertEqual(sum(got.values()), budget, (seed, budget, a, c))
+                        self.assertNotIn(a, got)
+                        self.assertGreaterEqual(got[c], m.n0[c])
+                        self.assertTrue(all(v >= 1 for v in got.values()))
+
+    def test_swap_takes_vehicles_from_others(self):
+        od = {("a", "H"): [50.0] * 4, ("b", "H"): [50.0] * 4, ("c", "H"): [80.0] * 4}
+        routes = [("ra", 1100, (("a", "H"),)), ("rb", 1100, (("b", "H"),)), ("rc", 3500, (("c", "H"),))]
+        m = A.Model(routes, od, A.AllocParams())
+        self.assertEqual(m.n0["rc"], 3)
+        for budget in (11, 13):
+            n = {"ra": 1, "rb": budget - 1}
+            got = A.swap(m, budget, n, "ra", "rc")              # ra 1대를 풀어도 rc 3대에 2대 모자람
+            self.assertEqual(sum(got.values()), budget)
+            self.assertEqual(got["rc"] + got["rb"], budget)
+            self.assertGreaterEqual(got["rc"], 3)
+        self.assertIsNone(A.swap(m, 2, {"ra": 1, "rb": 1}, "ra", "rc"))   # n0 = 3 > 예산 2
+
+    def test_move_stats_recorded(self):
+        routes, od = random_instance(3)
+        a = A.allocate(A.Model(routes, od, A.AllocParams()), 11)
+        self.assertEqual(set(a["move_stats"]), set(A.MOVES))
+        for k, v in a["move_stats"].items():
+            self.assertLessEqual(v["accepts"], v["tries"], k)
+        self.assertGreater(a["move_stats"]["swap"]["tries"], 0)
+
+
+class NmaxTest(unittest.TestCase):
+    def setUp(self):
+        self.net = line_network(10)
+        self.g = Graph(self.net, dwell_s=10, cutoff_s=3600)
+
+    def test_none_skips_stop_count(self):
+        long_route = tuple(f"S{i}" for i in range(1, 11)) + ("H",)         # 정차 10개(역 제외)
+        st = frozenset({"H"})
+        self.assertIn("max_stops", self.g.violations(long_route, st, Limits(30 * 60, 8, 1.6)))
+        self.assertEqual(self.g.violations(long_route, st, Limits(30 * 60, None, 1.6)), [])
+        # 편도·우회율은 여전히 검사한다
+        self.assertEqual(self.g.violations(long_route, st, Limits(60, None, 1.6)), ["l_max"])
+
+    def test_insertion_without_cap_uses_more_stops(self):
+        od = {(f"S{i}", "H"): [1.0, 1.0, 1.0, 1.0] for i in range(1, 11)}
+        b = G.Builder(self.net, Graph(self.net, 10, 3600), Demand("affected", ("20261026",), {}, od), G.Params())
+        pat = G.Pattern("access", ("K",), None, "H", (LAT, 126.85))
+        pool = [f"S{i}" for i in range(1, 11)]
+        capped = b.insertion(pat, "S9", pool, Limits(30 * 60, 8, 1.6))
+        free = b.insertion(pat, "S9", pool, Limits(30 * 60, None, 1.6))
+        self.assertEqual(len(capped), 9)
+        self.assertEqual(free, tuple(pool) + ("H",))
+
+
+class DiagnoseTest(unittest.TestCase):
+    def test_cutoff_failure_is_reported_as_l_max(self):
+        net = line_network(10)
+        g = Graph(net, 10, cutoff_s=300)
+        self.assertIsNone(g.expand(["S1", "H"]))
+        self.assertEqual(g.diagnose(["S1", "H"], frozenset({"H"}), Limits(5 * 60, None, 1.6)), ["l_max"])
+        self.assertEqual(g.diagnose(["S1", "H"], frozenset({"H"}), Limits(5 * 60, 8, 1.6)), ["l_max", "max_stops"])
+
+    def test_unreachable_and_repeat(self):
+        stops = {"A": _stop("A", 0), "B": _stop("B", 1), "C": _stop("C", 2)}
+        tt = TravelTimeTable.from_dict({"schema_version": 1, "network_snapshot_id": "syn-1", "valid_from_s": 21600,
+                                        "valid_until_s": 43200,
+                                        "segments": _segments(stops, [("A", "B"), ("B", "A"), ("B", "C")])})
+        net = Network(tt, stops, {})
+        g = Graph(net, 10, 3600)
+        lim = Limits(30 * 60, 8, 1.6)
+        self.assertEqual(g.diagnose(["C", "A"], frozenset(), lim), ["unreachable"])
+        self.assertIsNone(g.expand(["A", "B", "A", "C"]))
+        self.assertIn("repeat", g.diagnose(["A", "B", "A", "C"], frozenset(), lim))
+
+    def test_builder_counts_reason_sets(self):
+        net = line_network(10)
+        b = G.Builder(net, Graph(net, 10, 300), Demand("affected", ("20261026",), {}, {}), G.Params())
+        pat = G.Pattern("access", ("K",), None, "H", (LAT, 126.85))
+        self.assertIsNone(b.route_of(pat, ["S1", "H"], Limits(5 * 60, 8, 1.6), "seed_L5"))
+        self.assertEqual(b.reason_sets, {("seed_L5", "access", "l_max+max_stops"): 1})
+        self.assertEqual(b.reasons[("seed_L5", "access", "rejected")], 1)
+
+
+class CheckRootTest(unittest.TestCase):
+    def make(self, d: Path, net_id: str, readme: str, dates=("20261026", "20261027", "20261028", "20261029", "20261030")):
+        (d / "network").mkdir(parents=True)
+        doc = json.dumps({"schema_version": 1, "network_snapshot_id": net_id, "segments": []})
+        (d / "network" / "travel_times.json").write_text(doc, encoding="utf-8")
+        (d / "README.md").write_text(readme, encoding="utf-8")
+        for day in dates:
+            b = d / "bundles" / f"affected_{day}"
+            b.mkdir(parents=True)
+            (b / "travel_times.json").write_text(doc, encoding="utf-8")
+
+    def test_accepts_experiment_bundle(self):
+        with tempfile.TemporaryDirectory() as t:
+            self.make(Path(t), "guro-buf2km-0610-v2", "# v3\n이 묶음은 **실험(조정) 데이터 10/26~30**이다.\n")
+            got = check_root(Path(t))
+            self.assertEqual(got["network_snapshot_id"], "guro-buf2km-0610-v2")
+            self.assertEqual(got["readme_match"], "실험(조정) 데이터 10/26~30")
+
+    def test_rejects_other_network_readme_or_dates(self):
+        cases = [("guro-buf2km-0610-v1", "실험 데이터 10/26~30", None),
+                 ("guro-buf2km-0610-v2", "테스트 셋 11/02~06", None),
+                 ("guro-buf2km-0610-v2", "실험 데이터 10/26~30", ("20261102", "20261103", "20261104", "20261105",
+                                                                "20261106"))]
+        for net_id, readme, dates in cases:
+            with tempfile.TemporaryDirectory() as t:
+                if dates:
+                    self.make(Path(t), net_id, readme, dates)
+                else:
+                    self.make(Path(t), net_id, readme)
+                with self.assertRaises(SystemExit):
+                    check_root(Path(t))
 
 
 class SectorTest(unittest.TestCase):

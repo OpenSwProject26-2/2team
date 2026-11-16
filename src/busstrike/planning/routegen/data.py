@@ -29,6 +29,11 @@ VARIANTS: dict[str, tuple[bool, bool]] = {   # 변형 → (마을 흡수 제외,
     "affected_maeul_gg": (True, True),
 }
 HOURS = (6, 7, 8, 9)
+
+# 실험 묶음 확인(실행마다 맨 앞에서): 망 ID와 README의 실험 데이터 기간 문구. 다르면 멈춘다.
+EXPECTED_NETWORK_ID = "guro-buf2km-0610-v2"
+EXPECTED_DATES = ("20261026", "20261027", "20261028", "20261029", "20261030")
+README_PATTERN = r"실험(?:\(조정\))?\s*데이터\s*10/26~30"   # README v3 원문: "**실험(조정) 데이터 10/26~30**"
 KINDS = ("access", "egress")
 
 
@@ -209,3 +214,52 @@ def check_bundles(root: Path, rows: list[FlowRow], seed: int = 42, bin_s: int = 
                 "match": tuple(mine) == tuple(theirs),
             })
     return out
+
+
+def _network_id(path: Path) -> str | None:
+    import json
+    import re
+    with open(path, encoding="utf-8") as f:
+        head = f.read(4096)
+    m = re.search(r'"network_snapshot_id"\s*:\s*"([^"]+)"', head)
+    if m:
+        return m.group(1)
+    return json.loads(path.read_text(encoding="utf-8")).get("network_snapshot_id")
+
+
+def check_root(root: Path) -> dict:
+    """실험 묶음인지 확인한다: 망 ID(망 폴더와 묶음 전부), README 문구, 묶음 날짜. 하나라도 다르면 SystemExit.
+
+    테스트 셋(11/02~06)이나 망 v1 자료로 잘못 돌리는 일을 막는다. 돌려주는 값은 실행 기록에 남긴다.
+    """
+    import re
+    root = Path(root)
+    problems = []
+    readme = root / "README.md"
+    text = readme.read_text(encoding="utf-8") if readme.exists() else ""
+    hit = re.search(README_PATTERN, text.replace("**", ""))
+    if not hit:
+        problems.append(f"README에 '실험 데이터 10/26~30' 문구가 없다: {readme}")
+    net_id = _network_id(root / "network" / "travel_times.json")
+    if net_id != EXPECTED_NETWORK_ID:
+        problems.append(f"network/travel_times.json 망 ID {net_id} != {EXPECTED_NETWORK_ID}")
+    bundle_ids = {}
+    dates_by_variant: dict[str, list[str]] = {}
+    for b in sorted((root / "bundles").iterdir()):
+        if not b.is_dir():
+            continue
+        variant, date = b.name.rsplit("_", 1)
+        dates_by_variant.setdefault(variant, []).append(date)
+        bid = _network_id(b / "travel_times.json")
+        bundle_ids[b.name] = bid
+        if bid != EXPECTED_NETWORK_ID:
+            problems.append(f"{b.name}/travel_times.json 망 ID {bid} != {EXPECTED_NETWORK_ID}")
+    for variant, dates in dates_by_variant.items():
+        if tuple(dates) != EXPECTED_DATES:
+            problems.append(f"{variant} 묶음 날짜 {dates} != {list(EXPECTED_DATES)}")
+    if not dates_by_variant:
+        problems.append(f"묶음이 없다: {root / 'bundles'}")
+    if problems:
+        raise SystemExit("실험 묶음 확인 실패 — 멈춘다:\n  " + "\n  ".join(problems))
+    return {"root": str(root.resolve()), "network_snapshot_id": net_id, "readme_match": hit.group(0),
+            "bundles": len(bundle_ids), "variants": sorted(dates_by_variant), "dates": list(EXPECTED_DATES)}
