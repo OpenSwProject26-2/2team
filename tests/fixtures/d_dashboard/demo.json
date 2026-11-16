@@ -1,0 +1,43 @@
+{
+  "schema_version": "d-map-demo-v1",
+  "source": "synthetic",
+  "service_date": "2026-11-13",
+  "scenario_id": "demo-seoul-1",
+  "plan_id": "demo-shuttle-plan",
+  "revision": 1,
+  "fleet": {"available": 8, "assigned": 5, "capacity_per_vehicle": 40, "window": "06:00–22:00"},
+  "stops": [
+    {"stop_id":"d-a","name":"가상 거점 A","kind":"metro","coordinates":[126.9723,37.5547]},
+    {"stop_id":"d-b","name":"가상 거점 B","kind":"bus","coordinates":[126.9788,37.5527]},
+    {"stop_id":"d-c","name":"가상 거점 C","kind":"metro","coordinates":[126.9854,37.5494]},
+    {"stop_id":"d-d","name":"가상 거점 D","kind":"bus","coordinates":[126.9916,37.5473]},
+    {"stop_id":"d-e","name":"가상 거점 E","kind":"metro","coordinates":[127.0008,37.5432]},
+    {"stop_id":"d-f","name":"가상 거점 F","kind":"bus","coordinates":[126.9816,37.5432]},
+    {"stop_id":"d-g","name":"가상 거점 G","kind":"bus","coordinates":[126.9694,37.5456]},
+    {"stop_id":"d-h","name":"가상 거점 H","kind":"metro","coordinates":[126.9756,37.5385]},
+    {"stop_id":"d-i","name":"가상 거점 I","kind":"bus","coordinates":[126.9893,37.5352]},
+    {"stop_id":"d-j","name":"가상 거점 J","kind":"bus","coordinates":[127.0063,37.5358]}
+  ],
+  "routes": [
+    {"route_id":"demo-strike-700","short_name":"700","agency":"가상 서울운수","kind":"strike","geometry_status":"synthetic","coordinates":[[126.9723,37.5547],[126.9788,37.5527],[126.9854,37.5494],[126.9916,37.5473],[127.0008,37.5432]]},
+    {"route_id":"demo-strike-701","short_name":"701","agency":"가상 서울운수","kind":"strike","geometry_status":"synthetic","coordinates":[[126.9694,37.5456],[126.9816,37.5432],[126.9893,37.5352]]},
+    {"route_id":"demo-city-421","short_name":"421","agency":"가상 시내버스","kind":"city","geometry_status":"synthetic","stop_ids":["d-a","d-b","d-c","d-d","d-j"],"demo_capacity_per_hour":160,"coordinates":[[126.9723,37.5547],[126.9788,37.5527],[126.9854,37.5494],[126.9916,37.5473],[127.0063,37.5358]]},
+    {"route_id":"demo-gyeonggi-5500","short_name":"5500","agency":"가상 경기버스","kind":"gyeonggi","geometry_status":"synthetic","stop_ids":["d-g","d-f","d-d","d-e"],"demo_capacity_per_hour":100,"coordinates":[[126.9694,37.5456],[126.9816,37.5432],[126.9916,37.5473],[127.0008,37.5432]]},
+    {"route_id":"demo-village-03","short_name":"용산03","agency":"가상 마을버스","kind":"village","geometry_status":"synthetic","stop_ids":["d-g","d-f","d-i"],"demo_capacity_per_hour":80,"coordinates":[[126.9694,37.5456],[126.9816,37.5432],[126.9893,37.5352]]},
+    {"route_id":"demo-metro-4","short_name":"4호선","agency":"가상 도시철도","kind":"metro","geometry_status":"synthetic","stop_ids":["d-a","d-c","d-e","d-h"],"demo_capacity_per_hour":200,"coordinates":[[126.9723,37.5547],[126.9854,37.5494],[127.0008,37.5432],[126.9756,37.5385]]},
+    {"route_id":"demo-shuttle-01","short_name":"SH-01","agency":"가상 대체 셔틀","kind":"shuttle","geometry_status":"synthetic","stop_ids":["d-a","d-b","d-c","d-d"],"assigned_vehicles":5,"coordinates":[[126.9723,37.5547],[126.9788,37.5527],[126.9854,37.5494],[126.9916,37.5473]]}
+  ],
+  "demand_hubs": [
+    {"stop_id":"d-a","weight":160,"origin_fraction":0.54,"destination_stop_ids":["d-c","d-j","d-e"]},
+    {"stop_id":"d-b","weight":105,"origin_fraction":0.63,"destination_stop_ids":["d-d","d-j","d-e"]},
+    {"stop_id":"d-c","weight":135,"origin_fraction":0.42,"destination_stop_ids":["d-d","d-j","d-h"]},
+    {"stop_id":"d-d","weight":94,"origin_fraction":0.60,"destination_stop_ids":["d-j","d-e"]},
+    {"stop_id":"d-e","weight":122,"origin_fraction":0.36,"destination_stop_ids":["d-h","d-a"]},
+    {"stop_id":"d-f","weight":80,"origin_fraction":0.57,"destination_stop_ids":["d-d","d-e","d-i"]},
+    {"stop_id":"d-g","weight":64,"origin_fraction":0.69,"destination_stop_ids":["d-f","d-e","d-i"]},
+    {"stop_id":"d-h","weight":88,"origin_fraction":0.44,"destination_stop_ids":["d-e","d-i"]},
+    {"stop_id":"d-i","weight":76,"origin_fraction":0.61,"destination_stop_ids":["d-j","d-a"]},
+    {"stop_id":"d-j","weight":70,"origin_fraction":0.38,"destination_stop_ids":["d-a","d-h"]}
+  ],
+  "time_factors": {"06":0.65,"07":1.0,"08":1.24,"09":0.88,"18":1.13}
+}
