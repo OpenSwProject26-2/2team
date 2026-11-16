@@ -1,6 +1,6 @@
 {
   "plan_id": "plan-01",
-  "revision": 1,
+  "revision": 2,
   "condition": "morning-11",
   "_condition_note": "공식 배포본의 오전 차량 배분(합 11대). 주민 공지의 오전 13대 배분은 공개 자료에 없어 이 파일을 13대 조건으로 쓰면 안 된다(프로토콜 §3.1).",
   "network_snapshot_id": null,
@@ -47,10 +47,11 @@
         "116000026",
         "116000051",
         "116000050",
+        "TEMP-G02-12",
+        "TEMP-G02-13",
         "116000041"
       ],
-      "vehicles": 1,
-      "_unresolved_stop_count": 2
+      "vehicles": 1
     },
     {
       "route_id": "r3",
@@ -168,15 +169,26 @@
       "_unresolved_stop_count": 0
     }
   ],
-  "_incomplete": [
-    {
-      "route_id": "r2",
-      "positions": [
-        12,
-        13
-      ],
-      "reason": "임시 정류장 — ARS·NODE_ID 없음. 근접 정류장으로 대체하지 않음"
+  "_incomplete": [],
+  "_source": "experiments/plans/plan-01/conversion.md 참고. 출처는 manifest.json에만 둔다(C5)",
+  "_temporary_stops": {
+    "_what": "기존 정류장 망에 없는 셔틀 전용 임시 정류장. plan.json의 stops에 이 ID로 들어간다.",
+    "_source": "source/temporary-stops.json (카카오 로컬 API 주소 검색, 2026-11-16)",
+    "_status": "주소 기반 추정 — 건물 위치이므로 실제 승강장과 수십 미터 차이가 있을 수 있다",
+    "stops": {
+      "TEMP-G02-12": {
+        "name": "남구로역(공인중개사 상호)",
+        "address": "서울 구로구 디지털로27길 131",
+        "lat": 37.4847696038267,
+        "lon": 126.886873659595
+      },
+      "TEMP-G02-13": {
+        "name": "삼화인쇄",
+        "address": "서울 구로구 디지털로27길 33",
+        "lat": 37.4834005003858,
+        "lon": 126.891657336404
+      }
     }
-  ],
-  "_source": "experiments/plans/plan-01/conversion.md 참고. 출처는 manifest.json에만 둔다(C5)"
+  },
+  "_revision_note": "rev2: 구로동2의 임시 정류장 2곳을 좌표와 함께 추가 (12 → 14개)"
 }

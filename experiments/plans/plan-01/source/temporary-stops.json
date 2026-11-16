@@ -16,9 +16,28 @@
       "address_lot": null,
       "ars_id": null,
       "node_id": null,
-      "lat": null,
-      "lon": null,
-      "coordinate_status": "미확보"
+      "lat": 37.4847696038267,
+      "lon": 126.886873659595,
+      "coordinate_status": "주소 기반 추정 — 검토 완료",
+      "_coordinate_note": "API가 주는 것은 건물 위치다. 임시 정류장은 그 앞 도로변이라 수십 미터 차이가 날 수 있다.",
+      "_lookup": {
+        "source": "카카오 로컬 API 주소 검색 (주소로 좌표 변환)",
+        "queried_at": "2026-11-16",
+        "query": "서울 구로구 디지털로27길 131",
+        "matched_address": "서울 구로구 디지털로27길 131",
+        "candidates": 1,
+        "all_candidates": null,
+        "bounds_check": {
+          "checked": true,
+          "segment_span_m": 996,
+          "via_point_total_m": 1023,
+          "extra_m": 27,
+          "inside_corridor": true
+        }
+      },
+      "needs_review": false,
+      "_review_reasons": null,
+      "plan_stop_id": "TEMP-G02-12"
     },
     {
       "route": "구로동2",
@@ -34,9 +53,28 @@
       "_address_source": "삼화인쇄(주) 기업정보 검색 (2026-11-16 확인). 1954년 설립 인쇄업체",
       "ars_id": null,
       "node_id": null,
-      "lat": null,
-      "lon": null,
-      "coordinate_status": "미확보"
+      "lat": 37.4834005003858,
+      "lon": 126.891657336404,
+      "coordinate_status": "주소 기반 추정 — 검토 완료",
+      "_coordinate_note": "API가 주는 것은 건물 위치다. 임시 정류장은 그 앞 도로변이라 수십 미터 차이가 날 수 있다.",
+      "_lookup": {
+        "source": "카카오 로컬 API 주소 검색 (주소로 좌표 변환)",
+        "queried_at": "2026-11-16",
+        "query": "서울 구로구 디지털로27길 33",
+        "matched_address": "서울 구로구 디지털로27길 33",
+        "candidates": 1,
+        "all_candidates": null,
+        "bounds_check": {
+          "checked": true,
+          "segment_span_m": 996,
+          "via_point_total_m": 1013,
+          "extra_m": 17,
+          "inside_corridor": true
+        }
+      },
+      "needs_review": false,
+      "_review_reasons": null,
+      "plan_stop_id": "TEMP-G02-13"
     }
   ],
   "_location_bounds": {
@@ -67,5 +105,25 @@
     "또는 도로명주소 좌표제공 API로 변환한다 (인증키 필요).",
     "또는 구로구 교통행정과(02-860-2475)에 임시 정류장 위치를 확인한다.",
     "좌표가 들어오면 plan.json의 r2를 12개 → 14개 정류장으로 갱신한다."
-  ]
+  ],
+  "_verification": {
+    "verified_at": "2026-11-16",
+    "verified_by": "giho999 (M07)",
+    "result": "통과 — plan.json에 반영",
+    "checks": [
+      {
+        "check": "반환 주소 = 입력 주소",
+        "result": "두 건 모두 정확히 일치, 후보 각 1개"
+      },
+      {
+        "check": "노선 순서대로 이어지는가",
+        "result": "구로시장→12번 410 m, 12→13번 449 m, 13번→지하이시티 208 m. 합 1,067 m. 직선 994 m 대비 1.07배로 도로 우회 범위 안"
+      },
+      {
+        "check": "기존 정류장과의 거리",
+        "result": "12번은 남구로역2번출구에서 48 m. 지도에 적힌 이름 '남구로역(상호)'과 일치해 역 앞 도로변임을 교차 확인. 13번은 가장 가까운 기존 정류장이 87 m로 독립 위치"
+      }
+    ],
+    "_caveat": "좌표는 건물 위치이고 정류장은 그 앞 도로변이다. 수십 미터 차이가 남아 있다. 정확한 위치가 필요하면 구로구 교통행정과에 확인한다."
+  }
 }
