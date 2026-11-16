@@ -191,6 +191,7 @@
   - 엔진을 고쳤다: 고정 일정 실행기(`engine.service_schedule`·`simulate`), M07 사건 로그, `demand_bins.csv` 입력 + M07 생성기(`arrivals.generate`), M07 지표(`metrics.py`), M07 폴더 writer(`run.write_m07`, `run.json` 없앰). `planning_bridge`의 검증 단계는 `busstrike.evaluation.verify.verify`를 쓴다. `curve.py`도 새 지표를 쓴다.
   - 손계산 T1–T5를 M07 의미로 다시 했다(simulator.md §9). T2b(지연 취소)는 고정 일정이라 일어나지 않아 "차내 여정 만료" 사례로 바꿨다. 교차 검증(§9.11)과 구로 규모 실행(§9.12) 테스트를 더했다.
   - `simulator.md`의 출력(§6)·검증(§8)·테스트(§9)를 새로 쓰고, §0.3·§2·§3·§4·§7.5·§10·§11·가정 목록에서 바뀐 곳을 고쳤다. `sim/README.md`도 고쳤다.
+  - PR #38을 연 뒤 giho999의 #37(비교 프로토콜)에 맞췄다. 최신 main을 병합하고, 검증기 README가 둘로 나뉘어 틀어진 계약 문서 근거 줄을 고쳤다. 비교 입력 `plan.json`(`experiments/plans/schema.md`: `routes[].stops`·`vehicles`, 한 방향, 출처 없음)을 받는 `sim/adapters/comparison_plan.py`를 더했다. 형식·C6·S1–S6를 검사하고, 영업 leg 1개 + 공차 복귀 leg로 바꾼다(simulator.md §1.8). 복귀 경로는 망 구간만 쓰는 최소 시간 경로이며 해석 지점으로 보고서에 남긴다. `TravelTimeTable`에 `stop_ids`·`successors`를 더했다. 강서 07–09시 망(구간 1,219개)에서 기준 노선을 방향별로 나눈 30개 노선·45대를 0.5초 안에 변환했다(번들 입력은 저장소 밖).
 - 설계와 달라진 점(의미를 바꾼 항목, 계약 §7)
 
   | # | 바꾼 것 | 이유 |
@@ -223,7 +224,7 @@
   - 멈춘 지점: 코디네이터에게 세 번 물었다. ① D1 정류장 집합 OD(공정성) ② D2 두 역 연결형과 V16 ③ `independently_verified`에 넣을 M07 필드. 셋 다 사용자가 A를 골랐고, 그대로 구현했다.
   - 1인당 정차·양방향 영업 노선·정류장 집합 OD를 다시 쓰려면 M07 형식 확장(검증기 쪽 결정)이 먼저다.
 - 테스트 실행 명령과 결과
-  - `PYTHONPATH=src:. python3 -m unittest discover -s tests -t . -v` → 214개 실행, 208개 통과, 6개 건너뜀, 실패 0(Python 3.14.4, WSL2 `/mnt/c`, 약 3–5분). 건너뛴 6개는 모두 환경변수가 필요한 선택 실행이다. 검증기 쪽 complex 5개(`BUSSTRIKE_COMPLEX_RUN`·`_10K`, 예전 엔진 `make_complex.sh` 산출물 필요)와 구로 규모 전체 곡선 1개(`BUSSTRIKE_SCALE_CURVES=1`)다.
+  - `PYTHONPATH=src:. python3 -m unittest discover -s tests -t . -v` → 228개 실행, 222개 통과, 6개 건너뜀, 실패 0(Python 3.14.4, WSL2 `/mnt/c`, 약 3분. 비교 입력 변환 테스트 14개 포함). 건너뛴 6개는 모두 환경변수가 필요한 선택 실행이다. 검증기 쪽 complex 5개(`BUSSTRIKE_COMPLEX_RUN`·`_10K`, 예전 엔진 `make_complex.sh` 산출물 필요)와 구로 규모 전체 곡선 1개(`BUSSTRIKE_SCALE_CURVES=1`)다.
     - giho999 검증기 테스트 `tests/evaluation/` 54개 통과(+5 건너뜀). `src/busstrike/evaluation/`·`tests/evaluation/`은 main 대비 변경 0.
     - 손계산 시나리오 T1·T2·T2b·T3·T4: 표와 승객·지표 단위로 일치. M07 검증기 `pass=true`, CLI 종료 코드 0(`test_scenarios.py`). T1 로그는 26줄·SHA-256 `72cc7ed1…`.
     - 교차 검증 F1·F1-w9·F1-j14·F1-drain12·F1-wj9·F2·F2-headway599: 7개 모두 handcalc와 승객·지표 단위로 일치하고 M07 `pass=true`(실패 0·미실행 0). 예전 엔진 fixture와 `passenger_outcomes.csv` 바이트·운행편도 같다(`test_m07_cross.py`).

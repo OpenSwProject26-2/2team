@@ -26,6 +26,7 @@ class TravelTimeTable:
         self.valid_until_s = valid_until_s
         self._segments = segments
         self._bin_starts = tuple(sorted({b for _, bins, _ in segments.values() for b in bins}))
+        self._adjacency: dict[str, tuple[str, ...]] | None = None
 
     @classmethod
     def from_dict(cls, raw: dict) -> "TravelTimeTable":
@@ -86,6 +87,19 @@ class TravelTimeTable:
 
     def has(self, from_stop_id: str, to_stop_id: str) -> bool:
         return (from_stop_id, to_stop_id) in self._segments
+
+    def stop_ids(self) -> frozenset[str]:
+        """구간 표에 한 번이라도 나오는 정류장. M05가 아는 망의 정류장은 이것뿐이다."""
+        return frozenset(s for key in self._segments for s in key)
+
+    def successors(self, from_stop_id: str) -> tuple[str, ...]:
+        """from_stop_id에서 바로 갈 수 있는 정류장(오름차순)."""
+        if self._adjacency is None:
+            adj: dict[str, list[str]] = {}
+            for a, b in sorted(self._segments):
+                adj.setdefault(a, []).append(b)
+            self._adjacency = {a: tuple(bs) for a, bs in adj.items()}
+        return self._adjacency.get(from_stop_id, ())
 
     def _segment(self, from_stop_id: str, to_stop_id: str):
         try:

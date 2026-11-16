@@ -18,8 +18,11 @@
 | `run.py`, `__main__.py` | 디렉터리 단위 실행 → M07 폴더(`scenario/`·`run/`), `measurement.json`(§6) |
 | `curve.py` | 노선별 대수 곡선 S(n)·한계효용, 정류장 공유 클러스터(§7.1·§7.2) |
 | `adapters/planning_bridge.py` | C `Inputs`·`Plan` → 시뮬 입력, `EvaluationPort`(M07 검증 포함), 근사–시뮬 비교표(§7.3·§7.5). `busstrike.planning`을 import하는 유일한 곳 |
+| `adapters/comparison_plan.py` | 비교 입력 `plan.json`(`experiments/plans/schema.md`) → S1–S6 검사 + M05 운행안(§1.8) |
 
 ```sh
+PYTHONPATH=src python3 -m busstrike.sim.adapters.comparison_plan --plan experiments/plans/plan-01/plan.json \
+    --scenario scenario.json --travel-times travel_times.json --out plan.json   # 비교 입력 → M05 운행안(0 성공·1 검사 실패)
 PYTHONPATH=src python3 -m busstrike.sim run --scenario scenario.json --run-inputs run_inputs.json \
     --plan plan.json --out out/                     # → out/scenario/, out/run/
 PYTHONPATH=src python3 -m busstrike.evaluation.verify out/run          # M07 독립 검증(종료 코드 0 = 통과)

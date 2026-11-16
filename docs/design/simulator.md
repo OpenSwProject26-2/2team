@@ -310,6 +310,23 @@ normalize_plan(plan, scenario, tt) -> Timetable
 - "마지막 출발이 W_e 이전"으로 운영시간 해석: C와 종료 규칙이 달라지고 검증 불변식이 복잡해진다. 필요하면 Scenario에서 `W_e`를 늘린다(§11).
 - 시뮬레이터가 최단경로로 차고지 공차 계산: 미확인 연결을 지어내게 된다.
 
+### 1.8 비교 입력 `plan.json` 변환(6단계, PR #37 프로토콜)
+
+M07 비교 프로토콜(`docs/design/evaluation-protocol.md` C2·C3·C5·C6)과 변환 규칙(`experiments/plans/schema.md`)은 운행안을 `routes[].stops`(방문 순서) + `routes[].vehicles`로만 받는다. 한 노선은 한 방향이고, 출처는 넣지 않는다. `sim/adapters/comparison_plan.py`가 이것을 M05 운행안으로 바꾼다.
+
+| 단계 | 규칙 |
+| --- | --- |
+| 형식 | 최상위 키는 `plan_id`·`revision`·`network_snapshot_id`·`routes`만, 노선 키는 `route_id`·`stops`·`vehicles`만 받는다. 다른 키(출처·주석 등)는 `FORMAT` 실패(C5) |
+| 망 | `network_snapshot_id` = `travel_times.json`의 값. 다르면 `C6` 실패 |
+| S1–S6 | schema.md §3 그대로. S1 "망의 정류장" = `travel_times.json` 구간에 나오는 정류장. S5의 "가용 대수" = scenario `fleet.vehicles` 수(C2) |
+| 노선 | 영업 leg 1개(`stops`) + 공차 leg 1개(종점 → 기점). 영업 leg가 1개라 M07 V16(D2)에 걸리지 않는다 |
+| 공차 복귀 | 망 구간만 써서 운영 시작 시각의 구간 시간 합이 최소인 경로, 같으면 정류장열 사전순. 경로가 없으면 `RETURN` 실패 |
+| 시간표 | `trips`·`vehicle_duties`는 비운다. 배차는 §1.6 생성기가 만든다(C3) |
+
+- 공차 복귀 경로는 비교 입력에 없는 값을 정하는 **해석 지점**이다. 모든 안에 같은 규칙을 쓰고, 경로를 보고서 `routes[].return_stops`에 남긴다. 변환자는 이것을 `conversion.md`에 옮겨 적는다. §1.7의 버린 대안(엔진이 공차를 계산)과 다른 점: 엔진이 아니라 실행 전 변환 단계에서 정하고, 망에 없는 구간을 지어내지 않는다.
+- 검사에 실패하면 M05 운행안을 쓰지 않는다(CLI 종료 코드 1). 고쳐서 통과시키지 않는다(schema.md §2.2).
+- 검증기 담당 확인 필요: 복귀 규칙(최소 시간 경로)을 프로토콜에 적을지, 순환 노선(S2 예외)을 어떻게 받을지(schema.md §5).
+
 ---
 
 ## 2. 승객 발생 실현기
@@ -1071,7 +1088,7 @@ src/busstrike/sim/
   models.py          불변 dataclass: Vehicle, Policy, Window, Leg, RouteSpec, PlanSpec, StopTime, Trip, Duty,
                      Timetable, Passenger, BinRow, DemandFlow, ServiceTrip, Event(M07), SimError
   io.py              JSON·JSONL·CSV 읽기/쓰기, canonical_json, sha256, 입력 검증(§0.3·§0.4), demand_bins.csv
-  traveltime.py      TravelTimeTable(lookup, distance, bin_starts)
+  traveltime.py      TravelTimeTable(lookup, distance, bin_starts, stop_ids, successors)
   timetable.py       planned_cycle, assign_vehicles, build_timetable, validate_timetable, normalize_plan
   arrivals.py        u_micro, realize_od, bin_counts, realize_bins(인원) · generate(M07 생성기) ·
                      source/realization checksum, build_run_inputs                        (6단계)
@@ -1083,6 +1100,7 @@ src/busstrike/sim/
   gtfs.py            export_gtfs                                         (4단계)
   curve.py           eligible_passengers, route_clusters, fleet_curve, cluster_eval   (5단계)
   adapters/planning_bridge.py   C Inputs·Plan → 시뮬 입력, evaluation_port, compare_with_estimate   (5단계)
+  adapters/comparison_plan.py   비교 입력 plan.json(schema.md) → S1–S6 검사 + M05 운행안(§1.8)     (6단계)
 src/busstrike/evaluation/   팀 공식 M07 검증기(giho999, main). 6단계에서 3단계 검증기 파일은 지웠다
   verify.py          verify(run_dir), CLI `python -m busstrike.evaluation.verify <run>`
 tests/sim/, tests/evaluation/(M07 검증기 테스트), tests/fixtures/sim/
