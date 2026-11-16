@@ -7,6 +7,7 @@
   브랜치 `feat/5-simulation-core` / PR #6), `docs/design/simulator.md`(M05 재설계,
   브랜치 `docs/simulator-design` / PR #28)
 - 자료 확보 상태: `docs/design/evaluation-data-inventory.md`
+- 결정 이유와 발표용 설명: `docs/design/evaluation-decisions.md`
 - 이 문서는 **무엇을 어떤 조건에서 재고 무엇을 재지 않는지**만 정한다. 어느 안이 좋은지
   주장하지 않는다.
 

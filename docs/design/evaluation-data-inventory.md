@@ -2,6 +2,7 @@
 
 - 상태: **초안 · 확보 진행 중**. 조사일 2026-11-15
 - 짝 문서: `docs/design/evaluation-protocol.md`(비교 절차), `experiments/plans/schema.md`(변환 규칙)
+- 결정 이유와 발표용 설명: `docs/design/evaluation-decisions.md`
 - 이 문서는 **무엇이 있고 무엇이 없는지**만 적는다. 없는 것을 추정으로 메우지 않는다.
 
 출처 조사 원문은 `프로젝트/bus-strike/sources/research-20261115.md`(저장소 밖)에 있다.
