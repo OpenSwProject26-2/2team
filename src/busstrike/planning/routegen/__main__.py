@@ -1,0 +1,165 @@
+"""후보 생성 + per_gu 배분 → 비교 입력 plan.json.
+
+    python -m busstrike.planning.routegen --root <guro_0610 폴더> --out <저장소 밖 폴더> [--fleets 11,13]
+        [--tau 0.2 --radius-m 3000 --c0-min 40 --l-max 20,30 --max-stops 8 --max-detour 1.6 ...]
+
+출력(`--out`)
+- bundle_check.json: 잔여 수요 → 시뮬레이터 정수화 결과가 묶음 demand_bins.csv와 같은지(다르면 중단)
+- candidates/<변형>.json: 후보 목록(route_id, kind, stops, C, 덮는 수요, origin …), 허브·군집·소요 시간
+- plans/<plan_id>.json: 비교 입력(experiments/plans/schema.md) — 변형 4개 × 차량 조건 × {ours, sp}
+- manifest.json: 안별 배분·근사 충족(κ=1)·파라미터·코드 커밋
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import time
+from dataclasses import asdict
+from pathlib import Path
+
+from busstrike.sim import io as sio
+
+from . import allocate as A
+from . import data as D
+from . import generate as G
+
+PLAN_LABELS = {"ours": "01", "sp": "02"}   # plan_id에 출처를 드러내지 않는다(schema.md §1)
+
+
+def _git(*args: str) -> str | None:
+    try:
+        p = subprocess.run(["git", *args], cwd=Path(__file__).resolve().parent, capture_output=True, text=True,
+                           check=False)
+    except OSError:
+        return None
+    return p.stdout.strip() if p.returncode == 0 else None
+
+
+def _ints(text: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in text.split(","))
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="python -m busstrike.planning.routegen")
+    ap.add_argument("--root", required=True, type=Path, help="구 실험 묶음 폴더(README.md, network/, demand/, bundles/)")
+    ap.add_argument("--out", required=True, type=Path)
+    ap.add_argument("--fleets", default="11,13", type=_ints)
+    ap.add_argument("--variants", default=",".join(D.VARIANTS))
+    d = G.Params()
+    ap.add_argument("--tau", type=float, default=d.tau)
+    ap.add_argument("--tau-step", type=float, default=d.tau_step)
+    ap.add_argument("--radius-m", type=float, default=d.radius_m)
+    ap.add_argument("--c0-min", type=int, default=d.c0_s // 60)
+    ap.add_argument("--l-max", type=_ints, default=d.l_max_min)
+    ap.add_argument("--sectors", type=_ints, default=d.sectors)
+    ap.add_argument("--max-stops", type=int, default=d.max_stops)
+    ap.add_argument("--max-detour", type=float, default=d.max_detour)
+    ap.add_argument("--sp-top", type=int, default=d.sp_top)
+    ap.add_argument("--jaccard", type=float, default=d.jaccard)
+    ap.add_argument("--revision", type=int, default=1)
+    args = ap.parse_args(argv)
+
+    root, out = args.root.resolve(), args.out.resolve()
+    (out / "candidates").mkdir(parents=True, exist_ok=True)
+    (out / "plans").mkdir(parents=True, exist_ok=True)
+    started = time.time()
+
+    net = D.load_network(root)
+    rows = D.load_flows(root)
+    check = D.check_bundles(root, rows)
+    (out / "bundle_check.json").write_text(json.dumps(check, ensure_ascii=False, indent=1), encoding="utf-8")
+    bad = [c["bundle"] for c in check if not c["match"]]
+    if bad:
+        print(f"잔여 수요가 묶음 demand_bins.csv와 다르다: {bad}", file=sys.stderr)
+        return 1
+
+    params = G.Params(c0_s=args.c0_min * 60, radius_m=args.radius_m, tau=args.tau, tau_step=args.tau_step,
+                      sectors=args.sectors, l_max_min=args.l_max, max_stops=args.max_stops,
+                      max_detour=args.max_detour, sp_top=args.sp_top, jaccard=args.jaccard)
+    ap_ = A.AllocParams()
+    manifest = {"root": str(root), "readme_title": (root / "README.md").read_text(encoding="utf-8").splitlines()[0],
+                "network_snapshot_id": net.tt.network_snapshot_id,
+                "commit": _git("rev-parse", "HEAD"),
+                "branch": _git("branch", "--show-current"),
+                "tracked_changes": bool(_git("status", "--porcelain", "--untracked-files=no")),
+                "code_sha256": {p.name: sio.sha256_file(p) for p in sorted(Path(__file__).resolve().parent.glob("*.py"))},
+                "python": sys.version.split()[0],
+                "params": asdict(params) | {"f_min": params.f_min}, "alloc_params": asdict(ap_),
+                "bundle_check": {"bundles": len(check), "all_match": not bad}, "variants": {}, "plans": []}
+
+    for variant in args.variants.split(","):
+        t0 = time.time()
+        demand = D.build_demand(rows, variant)
+        scen = {f: D.read_scenario(root / "bundles" / f"{variant}_{demand.dates[0]}", f) for f in args.fleets}
+        scen0 = scen[args.fleets[0]]
+        policy = scen0.policy
+        if policy.max_wait_s != ap_.wait_s or any(v.capacity != ap_.seat for v in scen0.vehicles):
+            raise SystemExit("시나리오 정책(대기 한도·좌석)이 배분 파라미터와 다르다")
+        res = G.generate(net, demand, scen0, params)
+        pools = G.pools(res.candidates, params.jaccard)
+        t_gen = time.time() - t0
+        vinfo = {
+            "demand_total_5day_avg": round(demand.total(), 2),
+            "hubs": {k: {"name": net.stations[k].name, "F": round(v, 2), "catchment": res.catchment_sizes[k]}
+                     for k, v in res.hubs.items()},
+            "overlaps": res.overlaps, "clusters": res.clusters, "dropped": res.dropped, "reasons": res.reasons,
+            "seconds": res.seconds | {"generate_total": round(t_gen, 2)},
+            "candidates": len(res.candidates),
+            "by_origin_kind": {}, "pools": {k: {"kept": len(v[0]), "removed_jaccard": v[1]} for k, v in pools.items()},
+        }
+        for c in res.candidates:
+            key = f"{c.origin}/{c.kind}"
+            vinfo["by_origin_kind"][key] = vinfo["by_origin_kind"].get(key, 0) + 1
+        cand_doc = {"variant": variant, "params": manifest["params"], **vinfo,
+                    "pool_members": {k: [c.route_id for c in v[0]] for k, v in pools.items()},
+                    "candidates": [c.record() for c in res.candidates]}
+        (out / "candidates" / f"{variant}.json").write_text(json.dumps(cand_doc, ensure_ascii=False, indent=1),
+                                                             encoding="utf-8")
+        by_id = {c.route_id: c for c in res.candidates}
+        vinfo["alloc_seconds"] = {}
+        for label, (pool, _) in pools.items():
+            model = A.Model([(c.route_id, c.cycle_s, c.cover_keys) for c in pool], demand.od, ap_)
+            for fleet in args.fleets:
+                t1 = time.time()
+                alloc = A.allocate(model, fleet)
+                vinfo["alloc_seconds"][f"{label}_f{fleet}"] = round(time.time() - t1, 2)
+                det = model.detail(alloc["n"])
+                plan_id = f"plan-{PLAN_LABELS[label]}-{variant}-f{fleet}"
+                routes = []
+                route_map = {}
+                for i, cid in enumerate(sorted(alloc["n"]), start=1):
+                    rid = f"r{i:02d}"
+                    route_map[rid] = cid
+                    routes.append({"route_id": rid, "stops": list(by_id[cid].stops), "vehicles": alloc["n"][cid]})
+                plan = {"plan_id": plan_id, "revision": args.revision,
+                        "network_snapshot_id": net.tt.network_snapshot_id, "routes": routes}
+                path = out / "plans" / f"{plan_id}.json"
+                sio.write_bytes(path, sio.json_bytes(plan))
+                manifest["plans"].append({
+                    "plan_id": plan_id, "label": label, "variant": variant, "fleet": fleet, "file": str(path),
+                    "sha256": sio.sha256_file(path),
+                    "routes": {rid: {"candidate": cid, "vehicles": alloc["n"][cid], "kind": by_id[cid].kind,
+                                     "origin": by_id[cid].origin, "cycle_s": by_id[cid].cycle_s,
+                                     "approx_served_by_hour": [round(x, 4) for x in det["by_route"][cid]]}
+                               for rid, cid in route_map.items()},
+                    "approx_served": round(det["total"], 4), "approx_demand_covered": round(det["demand_covered"], 4),
+                    "approx_cap_cut": round(det["cap_cut"], 4),
+                    "value_greedy": round(alloc["value_greedy"], 4), "value_filled": round(alloc["value_filled"], 4),
+                    "greedy": alloc["greedy"], "local_search": alloc["local_search"],
+                    "demand_total_5day_avg": round(demand.total(), 4)})
+        manifest["variants"][variant] = vinfo
+        print(f"{variant}: 허브 {len(res.hubs)} · 군집 {len(res.clusters)} · 후보 {len(res.candidates)} "
+              f"(ours {len(pools['ours'][0])}, sp {len(pools['sp'][0])}) · {time.time() - t0:.1f}s", flush=True)
+    manifest["wall_seconds"] = round(time.time() - started, 2)
+    (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
+    for p in manifest["plans"]:
+        print(f"  {p['plan_id']}: 노선 {len(p['routes'])} · 대수 "
+              f"{'/'.join(str(r['vehicles']) for r in p['routes'].values())} · 근사 충족 {p['approx_served']:.1f}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
