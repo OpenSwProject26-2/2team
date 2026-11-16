@@ -22,11 +22,11 @@
 | scenario 위치를 찾는 순서: `--scenario` → `<run>/../scenario` → `measurement.json`의 `scenario`(상대 경로는 run 디렉터리 기준) | `evaluation/inputs.py:277-305` |
 | **모르는 파일은 무시한다.** 검증기는 이름으로 정해진 파일만 열고, 보고서 digest도 `RUN_FILES`·`SCENARIO_FILES`만 계산한다. 그래서 `timetable.json`을 run/에 두어도 된다 | `evaluation/inputs.py:174-175`, `:269-272`; `evaluation/guards.py:11-14` |
 | 검증기는 기본적으로 `<run>/verifier_report.json`을 **쓴다**. 결정론 비교는 검증 전에 하거나 `--out`으로 다른 곳에 쓴다 | `evaluation/verify.py:86-87` |
-| 종료 코드: 0 통과 · 1 검사 실패 · 2 입력 오류 | `evaluation/verify.py:79-94`; `evaluation/README.md:21` |
+| 종료 코드: 0 통과 · 1 검사 실패 · 2 입력 오류 | `evaluation/verify.py:79-94`; `evaluation/README.md:51-55` |
 
 ## 2. 파일별 형식
 
-공통: 텍스트는 UTF-8이다(`evaluation/inputs.py:167`, `:208`, `:235`, `:256`). 시각은 정수 초, 인원은 정수다. JSON에서 정수 자리에 bool·실수·문자열이 오면 검사 위반이 아니라 입력 오류다(`evaluation/inputs.py:104-108`; `evaluation/README.md:115-116`). 아래 "형식" 열은 검증기가 실제로 읽는 타입이다.
+공통: 텍스트는 UTF-8이다(`evaluation/inputs.py:167`, `:208`, `:235`, `:256`). 시각은 정수 초, 인원은 정수다. JSON에서 정수 자리에 bool·실수·문자열이 오면 검사 위반이 아니라 입력 오류다(`evaluation/inputs.py:104-108`; `docs/design/evaluation-verifier.md:215-216`). 아래 "형식" 열은 검증기가 실제로 읽는 타입이다.
 
 ### 2.1 `scenario/network.json`
 
@@ -78,7 +78,7 @@
 
 순서와 개수:
 
-- 줄 순서는 키 `(time_s, phase, stable_id)`의 **약한 증가**다. 같은 키에 사건이 여럿 있어도 되는 것은 phase 0(하차 여럿 + 도착 1건, 하차가 먼저)과 phase 2(승차 여럿)뿐이다. phase 1·3·4의 키는 유일해야 한다. 근거: `evaluation/invariants.py:50-119`, `evaluation/README.md:109-114`. 명세의 "엄격 증가"(spec:51)와 다르다. 검증기 구현 쪽을 따른다.
+- 줄 순서는 키 `(time_s, phase, stable_id)`의 **약한 증가**다. 같은 키에 사건이 여럿 있어도 되는 것은 phase 0(하차 여럿 + 도착 1건, 하차가 먼저)과 phase 2(승차 여럿)뿐이다. phase 1·3·4의 키는 유일해야 한다. 근거: `evaluation/invariants.py:50-119`, `docs/design/evaluation-verifier.md:209-214`. 명세의 "엄격 증가"(spec:51)와 다르다. 검증기 구현 쪽을 따른다.
 - `time_s ≤ drain_s`인 사건만 쓴다(`evaluation/invariants.py:85-87`).
 - 방문마다 `arrivals[i] ≤ drain_s`이면 `vehicle_arrived`를 정확히 1건, `departures[i] ≤ drain_s`이면 `departed`를 정확히 1건 쓴다. 시각은 일정과 같아야 한다(`evaluation/invariants.py:124-153`). 하차·승차가 없는 방문도 포함한다.
 - 승객마다 `generated`는 정확히 1건이다(`evaluation/invariants.py:202-205`). **drain_s 뒤에 발생한 승객은 `generated`를 쓸 수 없어서 V4가 실패한다.** 그래서 엔진은 `drain_s ≥ 마지막 발생 시각`이어야 한다(**추론**: 명세 §2와 V4를 같이 읽은 결과).
@@ -169,7 +169,7 @@ checksum        = SHA-256(json.dumps([generator, seed, source_checksum], separat
                           + Σ "\n" + json.dumps([pid, origin, destination, time_s], separators=(',',':')))
 ```
 
-근거: `evaluation/arrivals_ref.py:16-85`, spec:50. 명세 문장으로는 base를 digest로 읽을 수도(A) 있고 해시 입력의 앞 바이트열로 읽을 수도(B) 있다. 검증기는 (B)로 구현했다(`evaluation/arrivals_ref.py:7-11`, `evaluation/README.md:122-125`). 엔진도 (B)를 따른다.
+근거: `evaluation/arrivals_ref.py:16-85`, spec:50. 명세 문장으로는 base를 digest로 읽을 수도(A) 있고 해시 입력의 앞 바이트열로 읽을 수도(B) 있다. 검증기는 (B)로 구현했다(`evaluation/arrivals_ref.py:7-11`, `docs/design/evaluation-verifier.md:222-225`). 엔진도 (B)를 따른다.
 
 ### 4.2 사건 키와 처리 순서
 
@@ -240,7 +240,7 @@ unserved 승객마다 배타적 우선순위로 정한다. 근거: `evaluation/m
 | I5 | drain_s와 발생 시각 | `drain_s ≥ 마지막 발생 시각`이어야 한다. 엔진 기본값은 `W_e + max_journey_s` | drain 뒤 발생 승객은 `generated`를 쓸 수 없어 V4가 실패한다(§2.4) |
 | I6 | 운행편 하나 = 출발 거점에서 출발해 거점으로 돌아오는 영업 구간 하나 | 영업 leg가 두 개 이상인 노선(두 역 연결형)은 V16 "같은 출발 거점" 때문에 이 형식으로 쓸 수 없다. 엔진은 `OUT_OF_SCOPE`로 막는다(사용자 결정, §7 D2) | `evaluation/guards.py:153-158`, spec:65 |
 | I7 | `spec.capacity` | 시나리오 차량 정원이 모두 같을 때만 쓴다. 섞이면 생략한다(R11 미검증) | 검증기는 값 하나와만 비교한다(`evaluation/guards.py:127-134`) |
-| I8 | 생성기 base 읽기 (B) | 엔진도 (B)로 구현한다 | 검증기 README가 명세 보완을 요청한 상태다(`evaluation/README.md:122-125`) |
+| I8 | 생성기 base 읽기 (B) | 엔진도 (B)로 구현한다 | 검증기 구현 기록이 명세 보완을 요청한 상태다(`docs/design/evaluation-verifier.md:222-225`) |
 | I10 | `independently_verified` 부여 | M07 보고서 `pass`(실패 0)를 C `Assessment.independently_verified`로 쓴다. `fully_verified`는 V16 때문에 늘 false라 쓰지 않는다 | 검증기 CAVEATS가 "부여는 M07 절차가 정한다(명세 §7)"라고 적었으나(`evaluation/report.py:21-23`) 명세 §7에 그 절차가 없다 |
 | I9 | 승객 OD | 정류장 1개 → 정류장 1개. 정류장 집합 OD는 표현하지 못한다(사용자 결정으로 단일 정류장만 받음, §7 D1) | §2.2, `evaluation/recompute.py:150-153` |
 
