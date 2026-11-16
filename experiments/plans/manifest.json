@@ -1,0 +1,17 @@
+{
+  "_what": "plan_id → 출처. 비교 실행에는 쓰지 않는다(프로토콜 C5 출처 숨김). 분석할 때만 읽는다.",
+  "fixed_at": null,
+  "plans": {
+    "plan-01": {
+      "origin": "municipal",
+      "publisher": "구로구",
+      "document": "무료 셔틀버스 세부 노선도 (주민 공지 첨부)",
+      "notice_url": "https://www.guro.go.kr/www/selectBbsNttView.do?bbsNo=662&key=1790&nttNo=228289",
+      "license": "공공누리 제4유형 (출처표시·상업적이용금지·변경금지)",
+      "service_period": "2026-01-13 ~ 파업 종료 시",
+      "collected_at": "2026-11-16",
+      "status": "transcribed_only",
+      "status_note": "정류장 매칭 모호 55건과 노선별 차량 배분 미상으로 plan.json 미작성. conversion.md 참고"
+    }
+  }
+}
