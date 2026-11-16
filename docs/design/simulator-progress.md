@@ -182,7 +182,7 @@
 
 ## 6단계 — M07 출력 형식 통일
 
-- PR: 미개설(사용자 검토 대기). 브랜치 `feat/sim-m07-output`(로컬 커밋만, push 안 함), 열면 base `main`. #28·#32·#33·#34·#36을 대체한다.
+- PR: [#38](https://github.com/OpenSwProject26-2/2team/pull/38)(draft), 브랜치 `feat/sim-m07-output`, base `main`. #28·#32·#33·#34·#36을 대체한다.
 - 한 일
   - 최신 `main`에서 `feat/sim-m07-output`을 따고 `pr/36`(5단계까지의 스택)을 병합했다. `evaluation/__init__.py` 충돌은 main(giho999) 버전을 그대로 썼다.
   - 3단계 검증기(`evaluation/validator.py`·`_checks.py`·`_inputs.py`, `tests/evaluation/test_validator.py`·`test_tamper.py`·`test_independence.py`·`runs.py`)를 지웠다. giho999 파일과 이름이 겹치는 것은 없었다.
