@@ -1,0 +1,97 @@
+"""Exercise the local D API through its HTTP boundary."""
+
+import json
+import sys
+import threading
+import unittest
+from http.server import ThreadingHTTPServer
+from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+
+from busstrike.api.d_dashboard import Store, make_handler
+
+
+class DashboardHttpTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(Store()))
+        cls.worker = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.worker.start()
+        cls.base = f"http://127.0.0.1:{cls.server.server_port}"
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.server.shutdown()
+        cls.worker.join(timeout=2)
+        cls.server.server_close()
+
+    def get_json(self, path: str) -> dict:
+        with urlopen(self.base + path, timeout=2) as response:
+            self.assertEqual(response.headers.get_content_type(), "application/json")
+            return json.load(response)
+
+    def post_scenario(self, routes: list[dict]) -> dict:
+        body = json.dumps(
+            {"hour": "07", "routes": routes, "active_normal_route_ids": []}
+        ).encode("utf-8")
+        request = Request(
+            self.base + "/api/d/demo/scenario/evaluate",
+            data=body,
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(request, timeout=2) as response:
+            self.assertEqual(response.headers.get_content_type(), "application/json")
+            return json.load(response)
+
+    def test_dashboard_routes_map_demand_and_sources(self) -> None:
+        dashboard = self.get_json("/api/d/dashboard?mode=demo")
+        routes = self.get_json("/api/d/routes?mode=demo")
+        selected = self.get_json("/api/d/routes?mode=demo&kind=strike")
+        map_data = self.get_json("/api/d/map?mode=demo")
+        demand = self.get_json("/api/d/demand?mode=demo&hour=07")
+        sources = self.get_json("/api/d/sources")
+
+        self.assertEqual(dashboard["snapshot_id"], routes["snapshot_id"])
+        self.assertEqual(dashboard["snapshot_id"], map_data["snapshot_id"])
+        self.assertEqual(len(routes["routes"]), 7)
+        self.assertTrue(selected["routes"])
+        self.assertTrue(all(r["kind"] == "strike" for r in selected["routes"]))
+        self.assertEqual(map_data["type"], "FeatureCollection")
+        self.assertEqual(len(map_data["features"]), 17)
+        self.assertEqual(demand["type"], "FeatureCollection")
+        self.assertEqual(len(demand["features"]), 80)
+        self.assertEqual(sources["demo"]["status"], "ready")
+        self.assertEqual(sources["B"]["status"], "unavailable")
+
+    def test_scenario_route_addition_and_removal_changes_unmet(self) -> None:
+        empty = self.post_scenario([])
+        shuttle = self.post_scenario(
+            [
+                {
+                    "route_id": "demo-shuttle-01",
+                    "stop_ids": ["d-a", "d-b", "d-c", "d-d"],
+                    "vehicles": 5,
+                }
+            ]
+        )
+        removed = self.post_scenario([])
+
+        self.assertEqual(empty, removed)
+        self.assertEqual(empty["total"], shuttle["total"])
+        self.assertGreater(shuttle["served"], empty["served"])
+        self.assertLess(shuttle["unmet"], empty["unmet"])
+
+    def test_real_mode_without_a_feed_reports_missing_data(self) -> None:
+        with self.assertRaises(HTTPError) as error:
+            urlopen(self.base + "/api/d/dashboard?mode=real", timeout=2)
+        with error.exception as response:
+            self.assertEqual(response.code, 503)
+            payload = json.load(response)
+        self.assertEqual(payload["code"], "DATA_INCOMPLETE")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -26,13 +26,30 @@ Python 3.10 이상이 필요합니다. 외부 의존성은 없습니다(표준 �
 
 ```bash
 pip install -e .
-python3 -m unittest discover -s tests -t . -v      # 105건
+python3 -m unittest discover -s tests -t . -v
 ```
 
 운행안 생성 (M04):
 
 ```bash
 python3 -m busstrike.planning --input tests/fixtures/planning/synthetic.json
+```
+
+### D팀 로컬 화면 (개발 미리보기)
+
+현재 worktree의 D팀 코드는 합성 경로 미리보기와 운영자 대시보드다. 실제 A/B/C 자료 연동, 공용 M08 API, 운행 검증은 완료된 기능이 아니다. 실행법과 데이터 제한은 [웹 실행 안내](web/README.md)를 참고한다.
+
+```powershell
+py -3 web/citizen/serve.py
+# 시민 미리보기: http://127.0.0.1:8765/
+
+py -3 web/operator/serve.py
+# 운영자 대시보드: http://127.0.0.1:8766/
+```
+
+```powershell
+py -3 -B -m unittest discover -s tests/routing -p "test_*.py" -v
+py -3 -B -m unittest discover -s tests/api -p "test_*.py" -v
 ```
 
 시뮬레이터 산출물 독립 검증 (M07):
