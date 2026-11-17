@@ -99,6 +99,7 @@
 | `drain_s` | int (선택, 6단계) | 엔진 | 관측 끝. 없으면 `W_e + max_journey_s`. 마지막 발생보다 이르면 `INPUT_INVALID` |
 | `max_headway_s` | int (선택, 6단계) | 지표 | R12 배차간격 상한(M07 G.R12). 없으면 R12를 싣지 않는다 |
 | `wait_threshold_s` | int (선택, 6단계) | 지표 | M3 대기 임계 |
+| `service_end_rule` | string (선택) | 생성기·검사·M07 출력 | 운영 종료 규칙(§1.3). `"cycle_within_window"`(기본, 없거나 null이면 이것) = 순환 전체가 `min(W_e, 가용 종료)` 안. `"start_within_window_return_by_available"` = 순환 시작(첫 영업 leg 출발) `< W_e`이고 순환 전체가 그 차량의 `available_end_s` 안. 그 밖의 값은 `INPUT_INVALID` |
 
 `scenario.json`의 선택 필드 `stop_area`(`{stop_id: 지역}`, 6단계)는 M07 M5 지역별 충족률에 쓴다.
 
@@ -186,7 +187,10 @@ M00 §4의 코드를 쓴다. `SimError(code, message, details)` 하나로 던진
 - 배차간격은 `P/n`이다(오프셋을 초 단위로 내림하므로 인접 간격은 `⌊P/n⌋` 또는 `⌈P/n⌉`). 첫차는 `start = max(W_s, 배정 차량의 가용 시작)`에 anchor를 떠난다.
 - 예정 시각은 "스냅숏 시각"이다: 정류장에 도착해 승차를 받는 순간. 정차는 다음 구간 출발 전에 붙는다.
 - cycle은 통째로만 편성한다. 마지막 정류장(anchor) 도착 + 승하차 여유가 종료 시각을 넘으면 그 cycle과 이후는 만들지 않는다.
-- 모든 차량 이동(공차 포함)은 `[max(W_s, 가용 시작), min(W_e, 가용 종료)]` 안에 있어야 한다.
+- 모든 차량 이동(공차 포함)은 `[max(W_s, 가용 시작), 종료 시각]` 안에 있어야 한다. 종료 시각은 `policy.service_end_rule`이 정한다(§1.3).
+  - `cycle_within_window`(기본): `min(W_e, 가용 종료)`.
+  - `start_within_window_return_by_available`: 그 차량의 `available_end_s`. 대신 cycle 시작(첫 영업 leg 첫 정류장 예정 시각)이 `W_e`보다 일러야 한다.
+  - 승객 발생은 두 규칙 모두 `[W_s, W_e]` 안이다. 새 규칙에서 `W_e` 전에 온 승객은 `W_e` 전에 출발해 아직 도는 차를 탈 수 있다(`W_e` 뒤에 출발하는 cycle은 없다).
 
 이유
 - C의 근사 평가(`evaluator.py`: `start + phase*cycle//count`, 주기 `cycle`, `departure + cycle <= end`)와 **같은 위상·같은 종료 규칙**이다. 1인당 정차가 0이고 구간 시간이 고정이면 시간표가 초 단위로 같아서, §7의 근사–시뮬 차이를 "탑승 규칙·정차 모델" 탓으로만 돌릴 수 있다.
@@ -224,7 +228,7 @@ build_route_trips(route, vehicles, window, policy, tt) -> trips
     P = max(planned_cycle(route, s).ready - s for s in samples)
     n_rev = 영업 leg 수
     for k, v in enumerate(vehicles):             # vehicles는 vehicle_id 오름차순
-        end   = min(W_e, v.available_end_s)
+        end   = min(W_e, v.available_end_s)      # service_end_rule = start_within_window_return_by_available이면 v.available_end_s
         allow = (dwell_per_boarding_s + dwell_per_alighting_s) * (v.seat_capacity + v.standing_capacity) * n_rev
         m = 0; prev_ready = None
         loop:
@@ -232,6 +236,7 @@ build_route_trips(route, vehicles, window, policy, tt) -> trips
             if prev_ready is not None: s = max(s, prev_ready)
             leg_times, finish, ready = planned_cycle(route, s)
             if finish + allow > end: break       # 이 cycle과 이후는 편성하지 않음
+            if 새 규칙 and 첫 영업 leg 출발 >= W_e: break
             for li, leg in enumerate(route.legs):
                 emit Trip(trip_id=f"{route_id}-{vehicle_id}-{m:03d}-{li}", route_id, vehicle_id,
                           cycle_index=m, leg_index=li, in_service=leg.in_service,
@@ -239,6 +244,12 @@ build_route_trips(route, vehicles, window, policy, tt) -> trips
             prev_ready = ready; m += 1
 ```
 
+- 운영 종료 규칙(`policy.service_end_rule`)
+  - `cycle_within_window`(기본): 위 의사코드 그대로. 순환이 긴 노선은 운영시간 후반이 빈다. 예: 순환 74.5분·3대·06–10시면 막차가 08:29다.
+  - `start_within_window_return_by_available`: `end = v.available_end_s`, 그리고 첫 영업 leg 출발이 `W_e` 이상인 cycle과 이후는 만들지 않는다. 같은 예에서 가용 종료가 11:00이면 마지막 시작은 09:43:30이다(`≤ 11:00 − 74.5분`).
+  - "순환 전체"는 두 규칙 모두 같은 값 `finish + allow`(마지막 leg 마지막 정류장 도착 + 승하차 여유)로 잰다. 피더형은 영업 + 종점 회차 + 공차 복귀가 모두 들어간다. 마지막 leg가 영업인 노선(순환형)의 끝 회차는 duty 밖이라 들어가지 않는다(기본 규칙과 같음).
+  - 주기 P의 표본 시각은 두 규칙 모두 `start < b < W_e`다. 새 규칙에서 `W_e` 뒤 구간 시간은 마지막 시간대 값을 쓴다(§3.5, 가정 A28).
+  - C 근사 평가(`departure + cycle <= end`)와 같은 시간표가 나오는 것은 기본 규칙일 때뿐이다(§7.3 비교는 기본 규칙으로 한다).
 - `allow`(승하차 여유): 실행 중 1인당 정차로 생기는 지연이 종료 시각을 넘기지 않게 잡는 여유. leg당 만차 1회분이다. 1인당 정차가 0이면 0이 되어 C의 규칙과 같아진다.
 - `route_id`·`vehicle_id`에는 `-`를 쓸 수 있지만 `trip_id`는 불투명 문자열로만 취급한다(파싱 금지).
 
@@ -282,6 +293,7 @@ assign_vehicles(plan, fleet) -> {route_id: [Vehicle]}
 | `stop_times[]` | `{stop_seq:int, stop_id:string, sched_s:int}` | `stop_seq`는 0부터. `sched_s`는 스냅숏 예정 시각 |
 
 `validate_timetable`(생성·제공 공통, 실패 시 `PLAN_INFEASIBLE`): 차량이 fleet에 있음 · 차량당 노선 1개 · 같은 차량의 trip이 예정 시각상 겹치지 않음 · 연속 trip은 앞의 마지막 정류장 = 뒤의 첫 정류장 · 모든 예정 시각이 차량의 유효 창 안 · 연속 정류장쌍이 `travel_times.json`에 있음(없으면 `DATA_INCOMPLETE`).
+유효 창은 `[max(W_s, 가용 시작), 종료 시각]`이고 종료 시각은 §1.3 운영 종료 규칙을 따른다. 새 규칙이면 cycle마다 첫 영업 leg 첫 정류장 예정 시각 `< W_e`도 본다(운행안이 준 시간표에도 같다).
 2단계 구현에서 더한 검사: trip의 정류장열·`in_service`가 `plan.json`의 해당 leg와 같음 · `stop_seq`가 0부터 연속 · trip 안 `sched_s` 비감소 · duty의 `trip_ids`·`start_s`·`end_s`가 trip과 일치 · 노선별 사용 차량 수 ≤ `vehicle_count`(명시 배정이면 그 안) · 차량의 `initial_stop_id`/`end_stop_id`가 있으면 duty의 첫/마지막 정류장과 같음.
 
 - `duties[]`에는 trip이 1개 이상인 차량만 넣는다. 배정됐지만 cycle이 하나도 들어가지 않은 차량은 `routes[].vehicle_ids`에만 남는다.
@@ -307,7 +319,7 @@ normalize_plan(plan, scenario, tt) -> Timetable
 - 평균 순환시간으로 P 결정: 혼잡 시간대에 지각이 누적된다.
 - `h = ceil(P/n)`로 간격을 먼저 반올림: C의 위상과 1초씩 어긋나 비교가 흐려진다.
 - 마지막 편도 trip만 추가 편성: 종료 조건(anchor 복귀)과 충돌하고 유형별 예외가 생긴다.
-- "마지막 출발이 W_e 이전"으로 운영시간 해석: C와 종료 규칙이 달라지고 검증 불변식이 복잡해진다. 필요하면 Scenario에서 `W_e`를 늘린다(§11).
+- "마지막 출발이 W_e 이전"으로 운영시간 해석: C와 종료 규칙이 달라지고 검증 불변식이 복잡해진다. 필요하면 Scenario에서 `W_e`를 늘린다(§11). → 구로 실험(순환이 긴 노선의 막차가 일찍 끊기는 편향)으로 **선택 규칙으로 되살렸다**: `policy.service_end_rule = "start_within_window_return_by_available"`(§1.3). 기본값은 여전히 기존 규칙이다. `W_e`를 늘리는 방법은 승객 발생 창까지 늘려서 쓰지 않았다.
 - 시뮬레이터가 최단경로로 차고지 공차 계산: 미확인 연결을 지어내게 된다.
 
 ### 1.8 비교 입력 `plan.json` 변환(6단계, PR #37 프로토콜)
@@ -504,7 +516,7 @@ start_next_trip(free, v, visit):
         s = max(nxt.sched_s[0], ready)
         dur   = cycle(nxt)의 마지막 trip 마지막 sched_s − nxt.sched_s[0]      # 시간표에서 읽음
         allow = (dwell_per_boarding_s + dwell_per_alighting_s) * capacity(v) * cycle(nxt)의 영업 trip 수
-        if s + dur + allow > min(W_e, v.available_end_s):
+        if s + dur + allow > min(W_e, v.available_end_s):          # 지금은 §1.3 운영 종료 규칙의 종료 시각
             emit cancel(t=ready, v, trip_id=nxt.trip_id, visit=visit+1, cause="LATE");  종료(이후 cycle도 실행 안 함)
     else:
         s = max(nxt.sched_s[0], ready)
@@ -667,7 +679,7 @@ finalize_waiting():
 
 ### 6.1 `scenario/` — 운행편·수요
 
-- `network.json`: 시간표의 cycle마다 M07 운행편 하나(계약 §2.1). `trip_id` = 영업 leg의 trip_id, `stops`·`arrivals` = 영업 leg 정류장과 예정 시각, `departures` = 도착 + `dwell_base_s`(마지막 정류장은 도착과 같다, 계약 I3), `return_s` = 뒤따르는 공차 leg의 마지막 예정 시각(공차가 없으면 마지막 도착, I1), `distance_m` = 영업 + 공차 구간 거리 합(I2), `capacity` = 좌석 + 입석. `route_of`는 trip → 노선, `stop_area`는 scenario 값 그대로이고, `spec`에는 운영창 `service_start_s`·`service_end_s`와 (정원이 하나일 때만) `capacity`가 들어간다(R11·R14, I7). trip은 `(vehicle_id, 첫 도착, trip_id)` 순서로 쓴다.
+- `network.json`: 시간표의 cycle마다 M07 운행편 하나(계약 §2.1). `trip_id` = 영업 leg의 trip_id, `stops`·`arrivals` = 영업 leg 정류장과 예정 시각, `departures` = 도착 + `dwell_base_s`(마지막 정류장은 도착과 같다, 계약 I3), `return_s` = 뒤따르는 공차 leg의 마지막 예정 시각(공차가 없으면 마지막 도착, I1), `distance_m` = 영업 + 공차 구간 거리 합(I2), `capacity` = 좌석 + 입석. `route_of`는 trip → 노선, `stop_area`는 scenario 값 그대로이고, `spec`에는 운영창 `service_start_s`·`service_end_s`와 (정원이 하나일 때만) `capacity`가 들어간다(R11·R14, I7). 운영 종료 규칙이 기본이 아니면 `service_end_rule`과 `vehicle_available_end_s`(`{vehicle_id: available_end_s}`, fleet 전체)를 더 넣는다(계약 §2.1, 검증기 R14가 읽는다). 기본 규칙이면 두 키를 넣지 않아 바이트가 이전과 같다. `measurement.json`의 `policy`와 `config_hash`에도 기본이 아닐 때만 `service_end_rule`을 넣는다. trip은 `(vehicle_id, 첫 도착, trip_id)` 순서로 쓴다.
 - `demand_bins.csv`: 입력 `demand_bins.csv`의 바이트를 그대로 복사한다(해시가 `run_inputs.arrival_meta.sha256`과 같다).
 - `scenario_manifest.json`: 두 파일의 sha256, 행·승객·trip·방문·정류장 수, `scenario_id`·`plan_id`·`plan_revision`.
 
@@ -1204,7 +1216,7 @@ def verify(run_dir, scenario_dir=None, *, recompute_limit=10_000, scan="full") -
 
 함께 정해야 하는 것(D 번호는 없지만 결과에 영향)
 
-- `W_e`: 수요 창은 06–10시다. `W_e=10:00`이면 09:40 이후 승객은 대부분 미충족(6단계부터 `service_end`·`wait`, 이전에는 `left_waiting`)이 된다. **권장 `W_e = 10:30`**(차량 가용도 같이). 세 안에 같은 값이어야 한다.
+- `W_e`: 수요 창은 06–10시다. `W_e=10:00`이면 09:40 이후 승객은 대부분 미충족(6단계부터 `service_end`·`wait`, 이전에는 `left_waiting`)이 된다. **권장 `W_e = 10:30`**(차량 가용도 같이). 세 안에 같은 값이어야 한다. 수요 창을 그대로 두고 운행만 늘리려면 `service_end_rule = "start_within_window_return_by_available"`과 차량 가용 종료를 쓴다(§1.3). 이 경우 `drain_s`(기본 `W_e + max_journey_s`)가 가용 종료보다 이르면 그 뒤 방문은 관측되지 않는다.
 - 정차·회차 값(가정 A5·A6): 권장 `dwell_base_s=10`, `dwell_per_boarding_s=3`, `dwell_per_alighting_s=2`, `turnaround_s=180`, `cycle_rest_s=0`. 근거 자료가 없는 추정이며 현장값으로 바꿔야 한다. 운수종사자 휴게시간 규정 적용 여부는 확인이 필요하다.
 - 차량 정원: 전세버스라면 좌석 45·입석 0, 시내버스형이라면 좌석+입석. 지자체 실제 투입 차종 확인 필요.
 
@@ -1217,7 +1229,7 @@ def verify(run_dir, scenario_dir=None, *, recompute_limit=10_000, scan="full") -
 | # | 가정 | 방향 | 비고 |
 | --- | --- | --- | --- |
 | A1 | 차량이 `W_s`에 이미 노선 기점에 있다(출고 공차 0, D03) | 좋게 | 차고지가 먼 노선일수록 유리해진다 → **순위 영향 가능**. 근거·민감도는 아래 「A1 근거」 |
-| A2 | 모든 차량 이동이 `W_e` 안에 끝나야 한다(마지막 cycle 통째로 제외) | 나쁘게 | `W_e`를 수요 종료보다 늦추면 완화 |
+| A2 | (기본 규칙 `cycle_within_window`) 모든 차량 이동이 `W_e` 안에 끝나야 한다(마지막 cycle 통째로 제외) | 나쁘게 | 순환이 긴 노선일수록 운영시간 후반이 비어 불리하다 → **순위 영향 가능**. `W_e`를 수요 종료보다 늦추거나 `service_end_rule = "start_within_window_return_by_available"`로 완화(A28) |
 | A3 | cycle 편성·시작 때 만차 1회분 승하차 여유(`allow`)를 뺀다 | 나쁘게(약함) | 마지막 cycle 하나가 빠질 수 있다 |
 | A4 | 정차 중 도착한 승객은 그 차를 못 탄다(도착 스냅숏) | 나쁘게(약함) | 기점에서 대기 중인 차에 늦게 온 승객도 못 탄다 |
 | A5 | 정차 = 기본 정차 고정(6단계: M07 고정 일정이라 1인당 정차는 0만 받는다). 값은 추정 | 좋게 | 승하차가 많은 정류장의 지연이 빠진다. 1인당 정차를 넣으려면 M07 일정 형식(고정 일정) 확장이 필요하다 |
@@ -1243,6 +1255,7 @@ def verify(run_dir, scenario_dir=None, *, recompute_limit=10_000, scan="full") -
 | A25 | (6단계, 사용자 결정) 승객 OD는 정류장 1개 → 1개다. 역에 딸린 정류장이 여럿이어도 상류(M03)가 운행안과 무관하게 하나를 정한다 | 나쁘게 | **공정성 손실**: 셔틀이 역의 다른 정류장에 서는 안은 그 수요를 못 태운다(정한 정류장에 서는 안이 유리하다) → **순위 영향 가능**. M07 검증기가 정류장 집합 OD를 표현하지 못해서다(계약 §7 D1) |
 | A26 | (6단계, 사용자 결정) M07 출력은 cycle당 영업 leg가 첫 leg 하나인 노선(피더형·순환형)만 받는다. 두 역 연결형은 `OUT_OF_SCOPE`다 | 중립 | M07 V16이 "같은 차량의 운행편은 같은 출발 거점"을 요구한다(계약 §7 D2). 양방향 영업 셔틀안은 지금 평가할 수 없다. 시간표 생성·GTFS 내보내기는 지원한다 |
 | A27 | (6단계) 관측 끝 `drain_s` 기본값은 `W_e + max_journey_s`이고, 모든 승객이 이 안에 기한을 맞는다 | 중립 | censored가 0이다. 운행 종료 뒤 남은 승객은 unserved(`service_end` 또는 `wait`)가 된다 |
+| A28 | (선택 규칙 `start_within_window_return_by_available`) `W_e` 전에 시작한 cycle은 차량 가용 종료까지 다 돈다. 승객 발생은 `[W_s, W_e]` 그대로이고 `W_e` 뒤 구간 시간은 마지막 시간대 값이다(§3.5) | 좋게(약함) | 차량을 가용 종료까지 쓴다는 가정이다(운전자 근무·차량 반납 시각 미확인). 기본 규칙(A2)보다 긴 노선에 덜 불리하다. ADR-001("복귀 완료가 운영 종료를 넘는 운행은 생성하지 않는다")은 기본 규칙을 적고 있어 이 규칙을 쓰려면 팀 결정이 필요하다([ADR-002](../adr/ADR-002.md) 초안) |
 
 ### A1 근거
 
