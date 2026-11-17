@@ -1,10 +1,13 @@
 """routegen이 만든 비교 입력 plan.json을 해당 변형·차량 조건의 5일 묶음으로 돌린다.
 
     python3 experiments/guro_routegen/run_sims.py --routegen-out <routegen --out 폴더> \
-        --root <guro_0610 폴더> [--jobs 6] [--data-label guro_0610.zip]
+        --root <구 실험 묶음 폴더> [--eval-root <같은 구 테스트 묶음 폴더>] [--jobs 6] [--data-label <zip 이름>]
 
-맨 앞에서 실험 묶음인지 확인한다(`routegen.data.check_root`: 망 ID guro-buf2km-0610-v2, README
-"실험 데이터 10/26~30", 묶음 날짜). 다르면 멈춘다.
+맨 앞에서 실험 묶음인지 확인한다(`routegen.data.check_root(split="exp")`: 망 ID `<구>-buf2km-0610-v2`, README
+실험 주간 10/26~30 문구, 묶음 날짜). 다르면 멈춘다.
+
+`--eval-root`를 주면 실험 주간에 만든 안을 **고치지 않고** 테스트 묶음(11/02~06, `check_root(split="test")`)으로
+돌린다. 테스트 묶음의 망 ID·구 이름이 실험 묶음과 같아야 한다. 결과는 `<routegen-out>/runs_test/`.
 
 실행은 **이 작업 폴더의** `experiments/guro_exp/run_matrix.py`(변환기 S1–S6 → M05 → M07 `--max-recompute 200000`)에
 맡기고, 패키지도 이 작업 폴더의 `src/`만 쓴다(다른 체크아웃의 파일을 부르지 않는다). 그 스크립트는
@@ -44,20 +47,29 @@ def main() -> int:
     ap.add_argument("--root", required=True, type=Path, help="실험 묶음 폴더(README.md, network/, bundles/)")
     ap.add_argument("--jobs", type=int, default=6)
     ap.add_argument("--data-label", default=None)
+    ap.add_argument("--eval-root", type=Path, default=None, help="테스트 묶음 폴더(실험 주간 안을 그대로 돌린다)")
     args = ap.parse_args()
 
-    root_check = check_root(args.root)
+    root_check = check_root(args.root, "exp")
+    eval_check = None
+    if args.eval_root is not None:
+        eval_check = check_root(args.eval_root, "test")
+        for k in ("network_snapshot_id", "gu"):
+            if eval_check[k] != root_check[k]:
+                sys.exit(f"테스트 묶음 {k} {eval_check[k]} != 실험 묶음 {root_check[k]} — 멈춘다")
     rg = args.routegen_out.resolve()
     manifest = json.loads((rg / "manifest.json").read_text(encoding="utf-8"))
     if Path(manifest["root"]).resolve() != args.root.resolve():
         sys.exit(f"manifest의 묶음 {manifest['root']} != --root {args.root}")
-    bundles = args.root.resolve() / "bundles"
-    readme = args.root.resolve() / "README.md"
+    eval_root = (args.eval_root or args.root).resolve()
+    runs_name, views_name = ("runs_test", "views_test") if args.eval_root else ("runs", "views")
+    bundles = eval_root / "bundles"
+    readme = eval_root / "README.md"
     by_variant: dict[str, list[dict]] = {}
     for p in manifest["plans"]:
         by_variant.setdefault(p["variant"], []).append(p)
 
-    log = {"root_check": root_check, "run_matrix": str(RUN_MATRIX), "run_matrix_sha256": sha256(RUN_MATRIX),
+    log = {"root_check": root_check, "eval_check": eval_check, "run_matrix": str(RUN_MATRIX), "run_matrix_sha256": sha256(RUN_MATRIX),
            "run_matrix_tracked": git(REPO, "ls-files", "--error-unmatch", str(RUN_MATRIX)) != "",
            "run_matrix_changed": bool(git(REPO, "status", "--porcelain", "--", str(RUN_MATRIX))),
            "repo_commit": git(REPO, "rev-parse", "HEAD"), "repo_branch": git(REPO, "branch", "--show-current"),
@@ -67,7 +79,7 @@ def main() -> int:
     if log["src_tracked_changes"] or log["run_matrix_changed"] or not log["run_matrix_tracked"]:
         sys.exit("시뮬레이터·검증기 또는 run_matrix.py가 커밋과 다르다 — 멈춘다")
     for variant in sorted(by_variant):
-        view = rg / "views" / variant
+        view = rg / views_name / variant
         (view / "bundles").mkdir(parents=True, exist_ok=True)
         if readme.exists() and not (view / "README.md").exists():
             (view / "README.md").symlink_to(readme)
@@ -81,7 +93,7 @@ def main() -> int:
         if len(dates) != 5:
             sys.exit(f"{variant}: 묶음이 5개가 아니다: {dates}")
         cmd = [sys.executable, str(RUN_MATRIX), "--bundles", str(view / "bundles"),
-               "--out", str(rg / "runs" / variant), "--src", str(SRC), "--jobs", str(args.jobs)]
+               "--out", str(rg / runs_name / variant), "--src", str(SRC), "--jobs", str(args.jobs)]
         if args.data_label:
             cmd += ["--data-label", args.data_label]
         for p in sorted(by_variant[variant], key=lambda x: (x["label"], x["fleet"])):
@@ -92,7 +104,7 @@ def main() -> int:
                                     "seconds": round(time.time() - t0, 1)}
         if done.returncode != 0:
             print(f"{variant}: run_matrix 종료 코드 {done.returncode}", file=sys.stderr)
-    (rg / "runs" / "run_sims.json").write_text(json.dumps(log, ensure_ascii=False, indent=1), encoding="utf-8")
+    (rg / runs_name / "run_sims.json").write_text(json.dumps(log, ensure_ascii=False, indent=1), encoding="utf-8")
     return 0 if all(v["returncode"] == 0 for v in log["variants"].values()) else 1
 
 

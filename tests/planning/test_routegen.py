@@ -2,6 +2,7 @@
 
 v1: 같은 후보 풀에서 결과 ≥ 피더안(근사), N_max = None이면 정차 수 미검사, 노선 교체 후 차량 합,
 거절 사유 진단, 실험 묶음 확인.
+v4: 구 공통 망 ID 형식·실험/테스트 README 구분, 시간대마다 다른 gg_reach를 (쌍, 시간) 단위로 거르기.
 
 합성 망만 쓴다(실제 묶음 자료는 저장소에 넣지 않는다).
 """
@@ -18,7 +19,8 @@ from pathlib import Path
 from busstrike.planning.routegen import allocate as A
 from busstrike.planning.routegen import generate as G
 from busstrike.planning.routegen.cycle import route_cycle, single_route_plan
-from busstrike.planning.routegen.data import Demand, Network, Station, Stop, check_root, haversine_m
+from busstrike.planning.routegen.data import (SPLITS, Demand, FlowRow, Network, Station, Stop, build_demand,
+                                              check_root, haversine_m, variant_rows)
 from busstrike.planning.routegen.graph import Graph, Limits
 from busstrike.sim import io as sio
 from busstrike.sim.adapters.comparison_plan import to_engine_plan
@@ -414,6 +416,46 @@ class CheckRootTest(unittest.TestCase):
                     self.make(Path(t), net_id, readme)
                 with self.assertRaises(SystemExit):
                     check_root(Path(t))
+
+
+    def test_v4_readme_other_gu_and_test_split(self):
+        exp = "# 동작구 06~10시 시뮬레이터 입력 묶음 v4 (실험)\n\n동작구 입력이다. 수요 날짜 10/26~30 (실험), 대수 20·40대.\n"
+        test = "# 동작구 v4 (테스트)\n\n동작구 입력이다. 수요 날짜 11/02~06 (테스트), 대수 20·40대.\n"
+        with tempfile.TemporaryDirectory() as t:
+            self.make(Path(t), "dongjak-buf2km-0610-v2", exp)
+            got = check_root(Path(t))
+            self.assertEqual((got["gu"], got["fleets"], got["split"]), ("동작구", [20, 40], "exp"))
+            with self.assertRaises(SystemExit):     # 실험 묶음을 테스트로 읽지 않는다
+                check_root(Path(t), "test")
+        with tempfile.TemporaryDirectory() as t:
+            self.make(Path(t), "dongjak-buf2km-0610-v2", test, SPLITS["test"]["dates"])
+            self.assertEqual(check_root(Path(t), "test")["dates"], list(SPLITS["test"]["dates"]))
+            with self.assertRaises(SystemExit):     # 테스트 묶음으로 후보를 만들지 않는다
+                check_root(Path(t), "exp")
+
+    def test_rejects_bundle_network_mismatch(self):
+        with tempfile.TemporaryDirectory() as t:
+            d = Path(t)
+            self.make(d, "guro-buf2km-0610-v2", "수요 날짜 10/26~30 (실험)")
+            doc = json.dumps({"schema_version": 1, "network_snapshot_id": "dongjak-buf2km-0610-v2", "segments": []})
+            (d / "bundles" / "affected_20261028" / "travel_times.json").write_text(doc, encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                check_root(d)
+
+
+class HourlyReachTest(unittest.TestCase):
+    """v4: gg_reach가 같은 정류장–역 쌍에서도 시간대마다 다를 수 있다. 행(= 쌍 × 날짜 × 시간)마다 거른다."""
+
+    def test_gg_reach_filtered_per_hour(self):
+        rows = []
+        for date in ("20261026", "20261027"):
+            for hour, gg in ((6, False), (7, True), (8, True), (9, False)):
+                rows.append(FlowRow(date, hour, "access", "S1", "K1", "KS", "10.0", False, gg))
+        self.assertEqual(len(variant_rows(rows, "affected_gg")), 4)
+        d = build_demand(rows, "affected_gg")
+        self.assertEqual(d.od[("S1", "KS")], [10.0, 0.0, 0.0, 10.0])
+        self.assertEqual(d.pair[("access", "S1", "K1")], [10.0, 0.0, 0.0, 10.0])
+        self.assertEqual(build_demand(rows, "affected").od[("S1", "KS")], [10.0] * 4)
 
 
 class SectorTest(unittest.TestCase):

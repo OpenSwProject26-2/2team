@@ -51,7 +51,7 @@ def main() -> int:
     ap.add_argument("--only", default=None, help="쉼표로 고른 조건 이름만")
     args = ap.parse_args()
 
-    info = check_root(args.root)
+    info = check_root(args.root, "exp")
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "PYTHONPATH": str(SRC)}

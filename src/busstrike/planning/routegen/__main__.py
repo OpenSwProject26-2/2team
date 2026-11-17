@@ -1,9 +1,11 @@
 """후보 생성 + per_gu 배분 → 비교 입력 plan.json.
 
-    python -m busstrike.planning.routegen --root <guro_0610 폴더> --out <저장소 밖 폴더> [--fleets 11,13]
+    python -m busstrike.planning.routegen --root <구 실험 묶음 폴더> --out <저장소 밖 폴더> [--fleets 11,13]
         [--tau 0.2 --radius-m 3000 --c0-min 40 --l-max 20,30 --max-stops 8|none --max-detour 1.6 ...]
 
-맨 앞에서 실험 묶음인지 확인한다(망 ID guro-buf2km-0610-v2, README "실험 데이터 10/26~30", 묶음 날짜). 다르면 멈춘다.
+맨 앞에서 실험 묶음인지 확인한다(`data.check_root(split="exp")`: 망 ID `<구>-buf2km-0610-v2`, README 실험 주간
+10/26~30 문구, 묶음 날짜). 다르면 멈춘다. 테스트 묶음으로는 후보를 만들지 않는다.
+`--fleets`·`--home-gu`를 주지 않으면 README의 대수("대수 11·13대")와 구 이름을 쓴다.
 
 출력(`--out`)
 - bundle_check.json: 잔여 수요 → 시뮬레이터 정수화 결과가 묶음 demand_bins.csv와 같은지(다르면 중단)
@@ -55,7 +57,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m busstrike.planning.routegen")
     ap.add_argument("--root", required=True, type=Path, help="구 실험 묶음 폴더(README.md, network/, demand/, bundles/)")
     ap.add_argument("--out", required=True, type=Path)
-    ap.add_argument("--fleets", default="11,13", type=_ints)
+    ap.add_argument("--fleets", default=None, type=_ints, help="기본: README의 대수")
+    ap.add_argument("--home-gu", default=None, help="cross_gu 표시 기준 구. 기본: README의 구 이름")
     ap.add_argument("--variants", default=",".join(D.VARIANTS))
     d = G.Params()
     ap.add_argument("--tau", type=float, default=d.tau)
@@ -73,14 +76,21 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     root, out = args.root.resolve(), args.out.resolve()
-    root_check = D.check_root(root)
+    root_check = D.check_root(root, "exp")
+    if args.fleets is None:
+        if not root_check["fleets"]:
+            raise SystemExit("README에서 대수를 못 읽었다 — --fleets를 준다")
+        args.fleets = tuple(root_check["fleets"])
+    home_gu = args.home_gu or root_check["gu"]
+    if not home_gu:
+        raise SystemExit("README에서 구 이름을 못 읽었다 — --home-gu를 준다")
     (out / "candidates").mkdir(parents=True, exist_ok=True)
     (out / "plans").mkdir(parents=True, exist_ok=True)
     started = time.time()
 
     net = D.load_network(root)
     rows = D.load_flows(root)
-    check = D.check_bundles(root, rows)
+    check = D.check_bundles(root, rows, args.fleets[0])
     (out / "bundle_check.json").write_text(json.dumps(check, ensure_ascii=False, indent=1), encoding="utf-8")
     bad = [c["bundle"] for c in check if not c["match"]]
     if bad:
@@ -89,9 +99,9 @@ def main(argv: list[str] | None = None) -> int:
 
     params = G.Params(c0_s=args.c0_min * 60, radius_m=args.radius_m, tau=args.tau, tau_step=args.tau_step,
                       sectors=args.sectors, l_max_min=args.l_max, max_stops=args.max_stops,
-                      max_detour=args.max_detour, sp_top=args.sp_top, jaccard=args.jaccard)
+                      max_detour=args.max_detour, sp_top=args.sp_top, jaccard=args.jaccard, home_gu=home_gu)
     ap_ = A.AllocParams()
-    manifest = {"condition": args.condition, "root_check": root_check, "root": str(root), "readme_title": (root / "README.md").read_text(encoding="utf-8").splitlines()[0],
+    manifest = {"condition": args.condition, "fleets": list(args.fleets), "root_check": root_check, "root": str(root), "readme_title": (root / "README.md").read_text(encoding="utf-8").splitlines()[0],
                 "network_snapshot_id": net.tt.network_snapshot_id,
                 "commit": _git("rev-parse", "HEAD"),
                 "branch": _git("branch", "--show-current"),

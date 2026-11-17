@@ -30,10 +30,18 @@ VARIANTS: dict[str, tuple[bool, bool]] = {   # 변형 → (마을 흡수 제외,
 }
 HOURS = (6, 7, 8, 9)
 
-# 실험 묶음 확인(실행마다 맨 앞에서): 망 ID와 README의 실험 데이터 기간 문구. 다르면 멈춘다.
-EXPECTED_NETWORK_ID = "guro-buf2km-0610-v2"
-EXPECTED_DATES = ("20261026", "20261027", "20261028", "20261029", "20261030")
-README_PATTERN = r"실험(?:\(조정\))?\s*데이터\s*10/26~30"   # README v3 원문: "**실험(조정) 데이터 10/26~30**"
+# 묶음 확인(실행마다 맨 앞에서): 망 ID 형식, README의 데이터 기간 문구, 묶음 날짜. 다르면 멈춘다.
+# 망 ID는 구마다 `<구>-buf2km-0610-v2`(v3 구로, v4 구로·동작·강서·강동 모두 같은 규칙). 망 v1(…-v1)은 받지 않는다.
+NETWORK_ID_PATTERN = r"^(?P<gu>[a-z]+)-buf2km-0610-v2$"
+SPLITS: dict[str, dict] = {
+    # 실험(조정) 주간. v3 README 원문 "**실험(조정) 데이터 10/26~30**", v4 "수요 날짜 10/26~30 (실험)"
+    "exp": {"dates": ("20261026", "20261027", "20261028", "20261029", "20261030"),
+            "readme": r"실험(?:\(조정\))?\s*데이터\s*10/26~30|수요\s*날짜\s*10/26~30\s*\(실험\)"},
+    # 테스트 주간. v4 "수요 날짜 11/02~06 (테스트)". 후보 생성·배분에는 쓰지 않고 실험 주간에 만든 안을 돌리기만 한다.
+    "test": {"dates": ("20261102", "20261103", "20261104", "20261105", "20261106"),
+             "readme": r"수요\s*날짜\s*11/02~06\s*\(테스트\)"},
+}
+EXPECTED_DATES = SPLITS["exp"]["dates"]
 KINDS = ("access", "egress")
 
 
@@ -189,7 +197,7 @@ def read_scenario(bundle_dir: Path, fleet: int) -> Scenario:
     return sio.scenario_from_dict(sio.read_json(bundle_dir / f"scenario_f{fleet}.json"))
 
 
-def check_bundles(root: Path, rows: list[FlowRow], seed: int = 42, bin_s: int = 3600) -> list[dict]:
+def check_bundles(root: Path, rows: list[FlowRow], fleet: int, seed: int = 42, bin_s: int = 3600) -> list[dict]:
     """변형·날짜마다 잔여 수요를 시뮬레이터 정수화(`realize_bins`)에 넣어 묶음 demand_bins.csv와 대조한다.
 
     정수화 함수는 시뮬레이터 것을 그대로 부른다. 결과 행이 한 줄이라도 다르면 match=False.
@@ -200,7 +208,7 @@ def check_bundles(root: Path, rows: list[FlowRow], seed: int = 42, bin_s: int = 
         vr = variant_rows(rows, variant)
         for date in sorted({r.date for r in rows}):
             bdir = bundles / f"{variant}_{date}"
-            scen = read_scenario(bdir, 11)
+            scen = read_scenario(bdir, fleet)   # 정책·창은 대수 조건과 무관하다(묶음 README)
             flows = [DemandFlow(r.kind, r.stop_id, r.station_stop_id, r.hour * 3600, f"{float(r.flow):.6f}")
                      for r in vr if r.date == date and float(r.flow) > 0]
             mine = realize_bins(flows, scen.policy, scen.window, seed, bin_s)
@@ -227,39 +235,51 @@ def _network_id(path: Path) -> str | None:
     return json.loads(path.read_text(encoding="utf-8")).get("network_snapshot_id")
 
 
-def check_root(root: Path) -> dict:
-    """실험 묶음인지 확인한다: 망 ID(망 폴더와 묶음 전부), README 문구, 묶음 날짜. 하나라도 다르면 SystemExit.
+def check_root(root: Path, split: str = "exp") -> dict:
+    """묶음이 `split`(exp = 실험 10/26~30, test = 테스트 11/02~06) 주간 자료인지 확인한다. 하나라도 다르면 SystemExit.
 
-    테스트 셋(11/02~06)이나 망 v1 자료로 잘못 돌리는 일을 막는다. 돌려주는 값은 실행 기록에 남긴다.
+    - README에 그 주간 문구가 있어야 한다(v3 "실험(조정) 데이터 10/26~30", v4 "수요 날짜 10/26~30 (실험)" 등).
+    - 망 폴더와 묶음 전부의 망 ID가 같고 `<구>-buf2km-0610-v2` 형식이어야 한다(망 v1 자료를 막는다).
+    - 변형마다 묶음 날짜가 그 주간 5일이어야 한다.
+    돌려주는 값(망 ID, README에서 읽은 구 이름·대수)은 실행 기록에 남기고 기본값으로 쓴다.
     """
     import re
+    if split not in SPLITS:
+        raise SystemExit(f"split은 {sorted(SPLITS)} 중 하나다: {split}")
+    spec = SPLITS[split]
     root = Path(root)
     problems = []
     readme = root / "README.md"
-    text = readme.read_text(encoding="utf-8") if readme.exists() else ""
-    hit = re.search(README_PATTERN, text.replace("**", ""))
+    text = readme.read_text(encoding="utf-8").replace("**", "") if readme.exists() else ""
+    hit = re.search(spec["readme"], text)
     if not hit:
-        problems.append(f"README에 '실험 데이터 10/26~30' 문구가 없다: {readme}")
+        problems.append(f"README에 {split} 주간 문구가 없다: {readme}")
     net_id = _network_id(root / "network" / "travel_times.json")
-    if net_id != EXPECTED_NETWORK_ID:
-        problems.append(f"network/travel_times.json 망 ID {net_id} != {EXPECTED_NETWORK_ID}")
+    if not (net_id and re.match(NETWORK_ID_PATTERN, net_id)):
+        problems.append(f"network/travel_times.json 망 ID {net_id}가 <구>-buf2km-0610-v2 형식이 아니다")
     bundle_ids = {}
     dates_by_variant: dict[str, list[str]] = {}
-    for b in sorted((root / "bundles").iterdir()):
+    bdir = root / "bundles"
+    for b in sorted(bdir.iterdir()) if bdir.is_dir() else []:
         if not b.is_dir():
             continue
         variant, date = b.name.rsplit("_", 1)
         dates_by_variant.setdefault(variant, []).append(date)
         bid = _network_id(b / "travel_times.json")
         bundle_ids[b.name] = bid
-        if bid != EXPECTED_NETWORK_ID:
-            problems.append(f"{b.name}/travel_times.json 망 ID {bid} != {EXPECTED_NETWORK_ID}")
+        if bid != net_id:
+            problems.append(f"{b.name}/travel_times.json 망 ID {bid} != 망 폴더 {net_id}")
     for variant, dates in dates_by_variant.items():
-        if tuple(dates) != EXPECTED_DATES:
-            problems.append(f"{variant} 묶음 날짜 {dates} != {list(EXPECTED_DATES)}")
+        if tuple(dates) != spec["dates"]:
+            problems.append(f"{variant} 묶음 날짜 {dates} != {list(spec['dates'])}")
     if not dates_by_variant:
-        problems.append(f"묶음이 없다: {root / 'bundles'}")
+        problems.append(f"묶음이 없다: {bdir}")
     if problems:
-        raise SystemExit("실험 묶음 확인 실패 — 멈춘다:\n  " + "\n  ".join(problems))
-    return {"root": str(root.resolve()), "network_snapshot_id": net_id, "readme_match": hit.group(0),
-            "bundles": len(bundle_ids), "variants": sorted(dates_by_variant), "dates": list(EXPECTED_DATES)}
+        raise SystemExit(f"{split} 묶음 확인 실패 — 멈춘다:\n  " + "\n  ".join(problems))
+    gu = re.search(r"(\S+구)\s*(?:06~10시|입력)", text)
+    fleets = re.search(r"대수\s*(\d+(?:·\d+)*)\s*대", text)
+    return {"root": str(root.resolve()), "split": split, "network_snapshot_id": net_id,
+            "readme_match": hit.group(0), "readme_title": text.splitlines()[0] if text else None,
+            "gu": gu.group(1) if gu else None,
+            "fleets": [int(x) for x in fleets.group(1).split("·")] if fleets else None,
+            "bundles": len(bundle_ids), "variants": sorted(dates_by_variant), "dates": list(spec["dates"])}
