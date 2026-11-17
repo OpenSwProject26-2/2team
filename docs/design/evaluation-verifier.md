@@ -229,6 +229,11 @@ T1–T20을 표로 두고 각 사례가 명세가 적은 검사에 걸리는지 
 - **V16은 통과하지 않는다**: R10(가용 fleet 대수)은 `Scenario.fleet`이 산출물에 없고,
   R13(방향별 구간)은 명세 §3이 직접 "미검증(통과 아님)"으로 정했다. 검사 가능한 R11 정원·
   R14 운영창·차량 duty 비중첩·출발 거점 일치에 위반이 없어도 상태는 `not_verified`다.
+- **V16 R14 운영 종료 규칙**: `network.json` `spec.service_end_rule`이 없으면(기본 `cycle_within_window`)
+  지금처럼 `arrivals[0] ≥ service_start_s`, `return_s ≤ service_end_s`를 본다.
+  `start_within_window_return_by_available`이면 `service_start_s ≤ arrivals[0] < service_end_s`와
+  `return_s ≤ spec.vehicle_available_end_s[vehicle_id]`를 본다. 가용 종료 표가 없거나 차량이 빠졌거나
+  규칙 값을 모르면 fail이다(m07-output-contract.md §2.1·§4.9, simulator.md §1.3).
 - **V14 하차 순서**: 한 방문에서 여러 명이 내릴 때의 순서를 명세가 정하지 않았다. 재계산은
   승차 순서로 내린다. 지표에는 영향이 없으나 로그 바이트 비교에는 영향이 있다.
 - **명세 §4 규모 상한**: 명세는 1만 명 초과에도 V11(만차 거절)을 적용한다고 적었으나,
