@@ -42,7 +42,9 @@
 | `route_of` | `{trip_id: route_id}` | R12 배차간격을 셀 노선. 없거나 비면 V15는 `not_verified` | `evaluation/inputs.py:138`; `evaluation/guards.py:33-36`, `:65-68` |
 | `stop_area` | `{stop_id: area}` | M5 지역. 매핑이 없는 정류장은 `unknown` | `evaluation/inputs.py:137`; `evaluation/metrics_ref.py:11`, `:239` |
 | `spec.capacity` | int (선택) | R11 기준 정원. 있으면 모든 운행편 정원이 이 값과 같아야 한다 | `evaluation/guards.py:117-134` |
-| `spec.service_start_s`, `spec.service_end_s` | int (선택) | R14 운영창. 있으면 `arrivals[0] ≥ start`, `return_s ≤ end` | `evaluation/guards.py:136-146` |
+| `spec.service_start_s`, `spec.service_end_s` | int (선택) | R14 운영창. 있으면 운영 종료 규칙(아래)에 따라 검사한다. 기본 규칙은 `arrivals[0] ≥ start`, `return_s ≤ end` | `evaluation/guards.py` `check_fleet_rules` R14 |
+| `spec.service_end_rule` | string (선택) | R14 운영 종료 규칙. 없으면 `cycle_within_window`(위 기본 검사). `start_within_window_return_by_available`이면 `start ≤ arrivals[0] < end`이고 `return_s ≤ spec.vehicle_available_end_s[vehicle_id]`. 그 밖의 값은 V16 fail | `evaluation/guards.py` `RULE_*` |
+| `spec.vehicle_available_end_s` | `{vehicle_id: int}` (새 규칙일 때 필수) | 차량별 가용 종료. 새 규칙인데 없거나 운행편 차량이 빠져 있으면 V16 fail. 엔진은 시나리오 fleet 전체를 쓴다 | `evaluation/guards.py` R14 |
 | `routes`, `stops`, `seed`, `spec`의 나머지 키 | 아무 값 | 읽기는 하지만 어떤 검사에도 쓰지 않는다(기록용) | `evaluation/inputs.py:139-140` |
 
 ### 2.2 `scenario/demand_bins.csv`
@@ -217,7 +219,7 @@ unserved 승객마다 배타적 우선순위로 정한다. 근거: `evaluation/m
 
 ### 4.9 운행 제약 (V16, 늘 `not_verified`)
 
-`spec.capacity`가 있으면 정원이 같은지, `spec.service_*_s`가 있으면 운영창 안인지 본다. 차량별로 운행편을 첫 도착 순으로 늘어놓았을 때 **모든 운행편의 첫 정류장이 같은 출발 거점**이어야 하고, `다음 운행편 첫 도착 ≥ 앞 운행편 return_s`여야 한다. 위반이 있으면 fail, 없으면 `not_verified`다. 근거: `evaluation/guards.py:108-168`, spec:65.
+`spec.capacity`가 있으면 정원이 같은지, `spec.service_*_s`가 있으면 운영창 안인지 본다. 운영창 검사는 `spec.service_end_rule`을 따른다: 기본(`cycle_within_window`, 키 없음)은 `arrivals[0] ≥ start`·`return_s ≤ end`, `start_within_window_return_by_available`은 `start ≤ arrivals[0] < end`·`return_s ≤ spec.vehicle_available_end_s[vehicle_id]`다. 엔진은 기본 규칙이면 두 키를 쓰지 않는다(이전 출력과 바이트가 같다). 새 규칙 출력을 이 키를 모르는 이전 검증기에 넣으면 `return_s > end`라 V16이 fail한다(안전한 쪽으로 실패). 차량별로 운행편을 첫 도착 순으로 늘어놓았을 때 **모든 운행편의 첫 정류장이 같은 출발 거점**이어야 하고, `다음 운행편 첫 도착 ≥ 앞 운행편 return_s`여야 한다. 위반이 있으면 fail, 없으면 `not_verified`다. 근거: `evaluation/guards.py:108-168`, spec:65.
 
 ## 5. 엔진이 따르는 결정(검증기가 보지 않는 부분)
 

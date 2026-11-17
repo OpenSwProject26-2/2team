@@ -46,6 +46,15 @@ class Vehicle:
         return self.seat_capacity + self.standing_capacity
 
 
+# 운영 종료 규칙(policy.service_end_rule, simulator.md §1.3).
+# - cycle_within_window: 순환 전체(영업 + 공차 복귀)가 min(W_e, 차량 가용 종료) 안에 끝나야 한다. 기본값.
+# - start_within_window_return_by_available: 순환 시작(첫 영업 leg 출발)이 W_e보다 이르면 넣고,
+#   순환 전체는 그 차량의 available_end_s 안에 끝나야 한다. 승객 발생 창은 그대로 [W_s, W_e]다.
+SERVICE_END_CYCLE_WITHIN_WINDOW = "cycle_within_window"
+SERVICE_END_START_WITHIN_WINDOW = "start_within_window_return_by_available"
+SERVICE_END_RULES = (SERVICE_END_CYCLE_WITHIN_WINDOW, SERVICE_END_START_WITHIN_WINDOW)
+
+
 @dataclass(frozen=True)
 class Policy:
     max_wait_s: int
@@ -62,6 +71,7 @@ class Policy:
     drain_s: int | None = None
     max_headway_s: int | None = None
     wait_threshold_s: int | None = None
+    service_end_rule: str = SERVICE_END_CYCLE_WITHIN_WINDOW
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,2 @@
+route_id,route_short_name,route_type
+s1,합성 셔틀,3

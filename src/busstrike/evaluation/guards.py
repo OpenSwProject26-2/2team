@@ -13,6 +13,13 @@ DIGEST_FIELDS = (('events.jsonl', 'log_sha256', 'log_bytes'),
                  ('metrics.json', 'metrics_sha256', None),
                  ('realization.jsonl', 'realization_sha256', None))
 
+# R14 운영 종료 규칙(network.json spec.service_end_rule). 키가 없으면 기본 규칙이다.
+# - cycle_within_window: 첫 도착 ≥ service_start_s, return_s ≤ service_end_s
+# - start_within_window_return_by_available: service_start_s ≤ 첫 도착 < service_end_s,
+#   return_s ≤ spec.vehicle_available_end_s[차량]
+RULE_CYCLE_WITHIN_WINDOW = 'cycle_within_window'
+RULE_START_WITHIN_WINDOW = 'start_within_window_return_by_available'
+
 
 # ---------- V15 R12 배차간격 ----------
 
@@ -135,15 +142,37 @@ def check_fleet_rules(scenario, run):
 
     # R14 운영창
     start, end = spec.get('service_start_s'), spec.get('service_end_s')
+    rule = spec.get('service_end_rule', RULE_CYCLE_WITHIN_WINDOW)
     if start is None or end is None:
         unverified.append('R14 운영창 (network.json spec에 service_start_s·service_end_s가 없다)')
-    else:
+    elif rule == RULE_CYCLE_WITHIN_WINDOW:
         for trip_id, visits in scenario.visits_by_trip.items():
             trip = scenario.trips[trip_id]
             if visits[0].arrival_s < start or trip.return_s > end:
                 result.add(f'운행편이 운영창 [{start}, {end}] 밖이다',
                            trip_id=trip_id, first_arrival_s=visits[0].arrival_s,
                            return_s=trip.return_s)
+    elif rule == RULE_START_WITHIN_WINDOW:
+        # 첫 정류장 출발이 [start, end) 안이고, 복귀가 그 차량의 가용 종료 안이어야 한다.
+        available_end = spec.get('vehicle_available_end_s')
+        if not isinstance(available_end, dict):
+            result.add(f'R14 운영 종료 규칙 {rule}인데 spec.vehicle_available_end_s가 없다')
+        else:
+            for trip_id, visits in scenario.visits_by_trip.items():
+                trip = scenario.trips[trip_id]
+                vehicle_end = available_end.get(trip.vehicle_id)
+                if vehicle_end is None:
+                    result.add('spec.vehicle_available_end_s에 운행편 차량이 없다',
+                               trip_id=trip_id, vehicle_id=trip.vehicle_id)
+                    continue
+                if not start <= visits[0].arrival_s < end:
+                    result.add(f'운행편 시작이 운영창 [{start}, {end}) 밖이다',
+                               trip_id=trip_id, first_arrival_s=visits[0].arrival_s)
+                if trip.return_s > vehicle_end:
+                    result.add(f'운행편 복귀가 차량 가용 종료 {vehicle_end} 뒤다',
+                               trip_id=trip_id, vehicle_id=trip.vehicle_id, return_s=trip.return_s)
+    else:
+        result.add(f'spec.service_end_rule 값을 모른다: {rule!r}')
 
     # 차량 duty: 비중첩 + 같은 출발 거점
     by_vehicle = {}
