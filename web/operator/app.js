@@ -1,7 +1,7 @@
 /* D 운영자 지도 개발 화면. API와 지도 데이터의 출처를 분리한다. */
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
-const colors = {strike:'#ed3d51', city:'#2563eb', gyeonggi:'#f39b28', village:'#17a56c', metro:'#864ad7', shuttle:'#0eaaad', unknown_bus:'#64748b', unknown:'#64748b'};
+const colors = {strike:'#ed3d51', city:'#2563eb', gyeonggi:'#f39b28', village:'#17a56c', metro:'#864ad7', shuttle:'#1e293b', unknown_bus:'#64748b', unknown:'#64748b'};
 const labels = {strike:'파업 노선', city:'정상 시내버스', gyeonggi:'경기버스', village:'마을버스', metro:'지하철', shuttle:'대체 셔틀', unknown_bus:'미분류 버스', unknown:'미분류 노선'};
 const demoNormalKinds = new Set(['city','gyeonggi','village','metro']);
 const state = {mode:'demo', listmode:'strike', selectedRouteId:null, hoveredStopId:null, hoverMarker:null, query:'', hour:'07', demandMode:'total', visible:new Set(['strike','city','gyeonggi','village','metro','shuttle','unknown_bus','unknown','busStops','metroStops','demand']), summary:null, routes:[], geo:null, demand:null, demandRequestSeq:0, scenarioRoutes:null, scenarioResult:null, scenarioBefore:null, unmetValues:null, unmetAnimation:0, sources:null, map:null, maplibregl:null, popup:null};
@@ -123,7 +123,7 @@ function renderScenarioControls(sourceRows) {
   for(const entry of state.scenarioRoutes) {
     const row=document.createElement('div');row.className='scenario-row';
     const route=state.routes.find(item=>item.route_id===entry.route_id);
-    row.innerHTML=`<span class="scenario-swatch" style="background:#0eaaad"></span><span class="scenario-name"><b>${esc(entry.name||route?.short_name||entry.route_id)}</b><small>${entry.vehicles}대 · ${entry.stop_ids.length}개 정차점 · ${entry.active?'운행 가정':'시나리오 제외'}</small></span>`;
+    row.innerHTML=`<span class="scenario-swatch" style="background:#1e293b"></span><span class="scenario-name"><b>${esc(entry.name||route?.short_name||entry.route_id)}</b><small>${entry.vehicles}대 · ${entry.stop_ids.length}개 정차점 · ${entry.active?'운행 가정':'시나리오 제외'}</small></span>`;
     const toggle=document.createElement('button');toggle.type='button';toggle.className='pill';toggle.textContent=entry.active?'제외':'다시 추가';toggle.onclick=async()=>{entry.active=!entry.active;try{await recalculateScenario();}catch(error){entry.active=!entry.active;toast(error.message);}};row.append(toggle);panel.append(row);
   }
   const form=document.createElement('form');form.className='scenario-form';
@@ -177,7 +177,7 @@ function renderDetail() {
   $$('#detailPanel [data-route-stop]').forEach(button=>button.onclick=()=>{const feature=stops.get(button.dataset.routeStop);if(!feature||!state.map){toast('정류장 좌표를 사용할 수 없습니다.');return;}state.map.flyTo({center:feature.geometry.coordinates,zoom:15.3,duration:550});state.popup?.remove();state.popup=new state.maplibregl.Popup({closeOnMove:false}).setLngLat(feature.geometry.coordinates).setText(`${feature.properties.name} · ${feature.properties.stop_id} · ${sourceText()}`).addTo(state.map);});
 }
 function renderLayers() {
-  const options=[['strike','파업','#ed3d51'],['city','시내버스','#2563eb'],['gyeonggi','경기버스','#f39b28'],['village','마을버스','#17a56c'],['metro','지하철','#864ad7'],['shuttle','셔틀','#0eaaad'],['unknown_bus','미분류 버스','#64748b'],['busStops','버스 정류장','#546a80'],['metroStops','지하철역','#864ad7'],['demand','수요 원','#d85790']];
+  const options=[['strike','파업','#ed3d51'],['city','시내버스','#2563eb'],['gyeonggi','경기버스','#f39b28'],['village','마을버스','#17a56c'],['metro','지하철','#864ad7'],['shuttle','셔틀','#1e293b'],['unknown_bus','미분류 버스','#64748b'],['busStops','버스 정류장','#546a80'],['metroStops','지하철역','#864ad7'],['demand','수요 원','#d85790']];
   const list=$('#layerList'); list.replaceChildren();
   for(const [id,name,color] of options) {
     const label=document.createElement('label'); label.style.cssText='display:flex;align-items:center;gap:7px;margin:7px 0;font-size:11px;color:#4d5c72;cursor:pointer';
