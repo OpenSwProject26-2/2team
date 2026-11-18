@@ -63,7 +63,9 @@ class RoadNetTest(unittest.TestCase):
             self.assertEqual(stats["bus_segments_matched"], 2)
             keys = {(s["from_stop_id"], s["to_stop_id"]) for s in rn.road_doc["segments"]}
             self.assertIn(("W", "N"), keys)          # 교차로에서 꺾는 구간이 생긴다
-            self.assertIn(("E", "W"), keys)          # 양방향 도로라 반대 방향도 생긴다
+            # W·E는 동쪽으로 가는 버스의 정류장(진행 방향별 정차 노드)이라, E에서 W로 바로 되돌아가는 구간은 없다
+            # (예전 노드 붙이기에서는 생겼다 — 정류장 U턴). 서쪽 방향 정류장이 있어야 그쪽 구간이 생긴다.
+            self.assertNotIn(("E", "W"), keys)
             seg = next(s for s in rn.road_doc["segments"] if (s["from_stop_id"], s["to_stop_id"]) == ("W", "N"))
             self.assertGreater(seg["distance_m"], 350)   # 도로 거리(약 400m) — 직선(약 280m)이 아니다
             # 시간 = 거리 ÷ 그 도로 버스 속도(400m를 60초 → 약 6.7m/s) → 약 60초

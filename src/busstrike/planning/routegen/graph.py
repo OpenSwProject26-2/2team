@@ -6,7 +6,13 @@
 - `distance_basis`
   - "crow"(기본, v1·v4 결과 재현): 우회율 분모 = 첫·끝 정류장 직선거리.
   - "network": 우회율 분모 = 망 위 첫 → 끝 최단 거리(구간 `distance_m` 합). 직선거리를 쓰지 않는다.
-- 망에 `turns`(구간별 첫·끝 도로 조각)가 있으면, 정류장에서 앞 구간의 마지막 도로 조각을 되돌아가는 이음(U턴)을 위반 "uturn"으로 센다.
+- 망에 `turns`(구간별 도로 조각 기록)가 있으면, 정류장에서 되돌아가는 이음(U턴)을 위반 "uturn"으로 센다(`is_uturn`).
+  - turns-v2(`roadnet` edge 망, `{"_meta": {"format": "turns-v2"}, "a>b": {"s", "e", "tail", "head"}}`):
+    a→b→c가 b에서 U턴 ⇔ (1) a→b 도착 정차 노드 ≠ b→c 출발 정차 노드(양방향 정차 정류장에서 길 건너편으로 바꿔 탐), 또는
+    (2) b→c 앞부분(head)이 a→b 끝부분(tail)이 지난 OSM 도로 조각을 반대 방향으로 되짚는다.
+  - 예전 형식(`"a>b": [첫 조각 u, v, 마지막 조각 u, v]`, node 망): b→c 첫 조각 = a→b 마지막 조각의 역방향일 때.
+    옛 파일은 예전 규칙 그대로 읽는다(옛 결과 재현용). 정류장이 곁길 노드에 붙은 곳에서 직진도 U턴으로 잡는 오탐이 있다.
+  - 조각 기록이 없는 구간(도로 경로를 못 찾은 기존 버스 구간)이 끼면 판단하지 않는다(U턴 아님으로 본다).
 """
 
 from __future__ import annotations
@@ -24,6 +30,32 @@ class Limits:
     max_detour: float = 1.6      # 경로 길이 ÷ 첫·끝 정류장 직선거리
 
 
+TURNS_V2 = "turns-v2"
+
+
+def parse_turns(turns: dict | None):
+    """turns 기록을 읽어 (형식, 구간 → 판정용 값)으로. 형식 = None(기록 없음) | "v1"(예전) | "v2".
+
+    v2 값 = (출발 정차 노드, 도착 정차 노드, tail 조각 집합, head 조각을 뒤집은 집합).
+    """
+    if not turns:
+        return None, {}
+    meta = turns.get("_meta")
+    if isinstance(meta, dict):
+        if meta.get("format") != TURNS_V2:
+            raise ValueError(f"모르는 turns 형식: {meta.get('format')}")
+        out = {}
+        for k, r in turns.items():
+            if k == "_meta":
+                continue
+            out[k] = (r["s"], r["e"], frozenset(tuple(x) for x in r["tail"]),
+                      frozenset((x[1], x[0]) for x in r["head"]))
+        return "v2", out
+    if all(isinstance(v, list) and len(v) == 4 for v in turns.values()):
+        return "v1", turns
+    raise ValueError("turns 형식을 알 수 없다(예전 [u, v, u, v] 목록도 turns-v2도 아님)")
+
+
 class Graph:
     def __init__(self, net: Network, dwell_s: int, cutoff_s: int, distance_basis: str = "crow"):
         if distance_basis not in ("crow", "network"):
@@ -33,6 +65,7 @@ class Graph:
         self.dwell_s = dwell_s
         self.cutoff_s = cutoff_s
         self.distance_basis = distance_basis
+        self.turns_format, self._turns = parse_turns(net.turns)
         self._dfrom: dict[str, dict[str, int]] = {}
         self._dto: dict[str, dict[str, int]] = {}
         self._w: dict[tuple[str, str], int] = {}
@@ -108,12 +141,15 @@ class Graph:
         return done
 
     def is_uturn(self, a: str, b: str, c: str) -> bool:
-        """a→b→c가 정류장 b에서 U턴인가(도로 조각 기록이 있을 때만 판단)."""
-        turns = self.net.turns
-        if not turns:
+        """a→b→c가 정류장 b에서 U턴인가(두 구간 모두 도로 조각 기록이 있을 때만 판단). 규칙은 모듈 설명."""
+        if self.turns_format is None:
             return False
-        e1, e2 = turns.get(f"{a}>{b}"), turns.get(f"{b}>{c}")
-        return bool(e1 and e2 and e2[0] == e1[3] and e2[1] == e1[2])
+        e1, e2 = self._turns.get(f"{a}>{b}"), self._turns.get(f"{b}>{c}")
+        if not (e1 and e2):
+            return False
+        if self.turns_format == "v1":
+            return e2[0] == e1[3] and e2[1] == e1[2]
+        return e1[1] != e2[0] or not e1[2].isdisjoint(e2[3])
 
     def path_continue(self, prev: str | None, a: str, b: str, avoid: set[str] | frozenset[str] = frozenset()
                       ) -> tuple[str, ...] | None:
@@ -205,14 +241,7 @@ class Graph:
         return self.length_m(stops) / base
 
     def has_uturn(self, stops: tuple[str, ...]) -> bool:
-        turns = self.net.turns
-        if not turns:
-            return False
-        for a, b, c in zip(stops, stops[1:], stops[2:]):
-            e1, e2 = turns.get(f"{a}>{b}"), turns.get(f"{b}>{c}")
-            if e1 and e2 and e2[0] == e1[3] and e2[1] == e1[2]:
-                return True
-        return False
+        return any(self.is_uturn(a, b, c) for a, b, c in zip(stops, stops[1:], stops[2:]))
 
     def violations(self, stops: tuple[str, ...], station_stops: frozenset[str], lim: Limits) -> list[str]:
         """제약 위반 목록(비면 통과). station_stops = 이 패턴의 역 지정 정류장(정차 수에서 뺀다)."""

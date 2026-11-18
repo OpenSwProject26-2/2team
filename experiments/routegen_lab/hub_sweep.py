@@ -3,7 +3,8 @@
     python3 experiments/routegen_lab/hub_sweep.py --region <zip_v4/region> --osm-dir <저장소 밖>/osm \
         --gu guro --out <저장소 밖>/hub_sweep/guro [--jobs 7]
 
-- 망: `roadnet.RoadNet`(OSM 차도 위 버스 구간), 거리 기준은 망 위 버스 노선 거리, 정류장 U턴 금지.
+- 망: `roadnet.RoadNet`(OSM 차도 위 버스 구간, 정류장은 선분 투영 + 진행 방향별 정차 노드), 거리 기준은 망 위 버스 노선 거리,
+  정류장 U턴 금지. `<out>/net/`에 road.json·turns.json(turns-v2)·roadnet_stats.json·snap.json(정류장 배치)을 쓴다.
 - 수요: 정밀 흡수(마을 정원, 경기 정차·역·정원, 기본 가정) 뒤 남은 셔틀 수요(`precise_affected_maeul_gg`).
 - 생성 설정·흡수 가정은 구별 설정 파일(`--params`, 기본 gu_params.json)에서 읽는다(구마다 덮어쓸 수 있음).
   실제로 쓴 값은 hub_sweep.json의 params에 남긴다. 역 보장(cover)은 끈 안만.
@@ -56,8 +57,15 @@ def main() -> int:
     rn = RoadNet(args.osm_dir / f"{args.gu}_roads.json", root)
     stats = rn.build()
     sio.write_bytes(road_path, sio.json_bytes(rn.road_doc))
+    turns = rn.turn_edges()
+    (out / "net" / "turns.json").write_text(json.dumps(turns, separators=(",", ":")), encoding="utf-8")
+    (out / "net" / "roadnet_stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=1), encoding="utf-8")
+    if rn.proj:   # edge 망: 정류장마다 붙인 선분·진행 방향·근거
+        (out / "net" / "snap.json").write_text(json.dumps(
+            {s: {k: v for k, v in p.items() if k not in ("lat", "lon")} for s, p in sorted(rn.proj.items())},
+            ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     base = D.load_network(root)
-    net = D.Network(TravelTimeTable.from_dict(rn.road_doc), base.stops, base.stations, rn.turn_edges())
+    net = D.Network(TravelTimeTable.from_dict(rn.road_doc), base.stops, base.stations, turns)
     ap0 = cfg.absorb_params()
     parts = {}
     for split, sroot in (("exp", root), ("test", test_root)):
