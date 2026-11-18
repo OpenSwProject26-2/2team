@@ -66,6 +66,7 @@ function render() {
   const p = shown(), isLive = p && p === S.live;
   $('#planTitle').innerHTML = p ? `${isLive ? '<span class="tag live">직접 실행</span>' : '<span class="tag">사전 계산</span>'} ${S.net === 'road' ? '도로 망' : '원래 망'} · ${VARIANT_LABEL[v]} · ${p.fleet}대` : '안 없음';
   const sim = isLive ? S.live.sim : p?.exp;
+  renderCoverage(p, isLive);
   const cards = [];
   if (isLive) {
     cards.push(['하루 시뮬레이션', S.live.sim?.rate != null ? `${S.live.sim.rate.toFixed(2)}%` : S.live.sim?.reason ? '실패' : '미실행', S.live.sim?.date ? `${S.live.sim.date} · 충족 ${fmt(S.live.sim.served)}명` : '아래 버튼으로 실행']);
@@ -94,6 +95,27 @@ function render() {
   updateMap();
 }
 
+function renderCoverage(p, isLive) {
+  // 전체 = 파업 노선 승객 중 걸어서 갈 수 없는 사람(affected, 하루 5일 평균).
+  // 마을·경기가 맡는 몫 = 체크한 흡수로 빠지는 수요. 둘 다 체크하면 마을로 갈 수 있는 사람은 마을 몫, 나머지 중 경기로 갈 수 있는 사람은 경기 몫.
+  const sum = (v) => Object.values(D.demand[v]).reduce((a, b) => a + b, 0);
+  const A = sum('affected'), M = sum('affected_maeul'), G = sum('affected_gg'), MG = sum('affected_maeul_gg');
+  const m = $('#noMaeul').checked, g = $('#noGg').checked;
+  const maeul = m ? A - M : 0, gg = g ? (m ? M - MG : A - G) : 0;
+  const target = A - maeul - gg;
+  const rate = isLive ? S.live.sim?.rate : p?.exp?.rate;
+  const el = $('#coverage');
+  if (!p || rate == null) { el.innerHTML = `<p class="hint">${isLive ? '하루 시뮬레이션을 돌리면 전체 충족률이 나옵니다.' : '시뮬레이션 결과가 없습니다.'}</p>`; return; }
+  const shuttle = rate / 100 * target, unmet = target - shuttle;
+  const pct = (x) => (100 * x / A).toFixed(1);
+  const segs = [['마을버스가 맡음', maeul, 'var(--maeul)'], ['경기버스가 맡음', gg, 'var(--gg)'], ['대체 셔틀이 태움', shuttle, 'var(--plan)'], ['남은 미충족', unmet, '#e2e8f0']];
+  const total = maeul + gg + shuttle;
+  el.innerHTML = `<div class="cov-top"><b>전체 충족률 ${pct(total)}%</b><span>파업 노선 승객 하루 ${fmt(A)}명 기준${isLive ? ` · ${S.live.sim.date.slice(4, 6)}/${S.live.sim.date.slice(6)} 하루` : ' · 실험 5일 평균'}</span></div>
+    <div class="cov-bar" role="img" aria-label="전체 충족 구성">${segs.filter(([, v]) => v > 0).map(([n, v, c]) => `<span style="width:${100 * v / A}%;background:${c}" title="${n} ${fmt(v)}명 (${pct(v)}%)"></span>`).join('')}</div>
+    <div class="cov-rows">${segs.map(([n, v, c]) => `<span><i style="background:${c}"></i>${n}</span><span>${fmt(v)}명</span><span>${pct(v)}%</span>`).join('')}</div>
+    <div class="cov-shuttle">대체 셔틀만 보면: 셔틀 대상 ${fmt(target)}명 중 <b>${rate.toFixed(2)}%</b> 충족</div>
+    ${m || g ? '<p class="hint">마을·경기 몫은 그 노선으로 갈 수 있으면 모두 탄다는 가정이다(여유 정원 미확인).</p>' : '<p class="hint">마을·경기 흡수를 체크하지 않으면 셔틀이 전체를 맡는다고 본다. 왼쪽 2번에서 체크하면 그 몫을 따로 보여 준다.</p>'}`;
+}
 const T0 = 21600, T1 = 39600, WEND = 36000;
 const hhmm = (t) => `${String(Math.floor(t / 3600)).padStart(2, '0')}:${String(Math.floor(t % 3600 / 60)).padStart(2, '0')}`;
 function renderSchedule() {
