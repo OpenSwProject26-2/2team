@@ -6,11 +6,11 @@
 `<lab>/layers/`에 쓴다.
 - meta.json: 구, 대수, 변형, 지도 범위, 도로망 통계
 - stops.json: 정류장 좌표·이름, stations.json: 망 안의 모든 지하철역(지정 정류장, 변형별 잔여 수요. 수요 0인 역 포함)
-- bus_roads.json: 버스 통행 가능 도로(=1) 선
+- bus_roads.json: 버스 통행 가능 도로(=1) 선, boundaries.json: 시·군·구 경계(OSM admin_level 6, 있을 때)
 - strike_routes.json: 파업 노선(노선·패턴마다 정류장이 가장 많은 운행편), absorbing_routes.json: 마을·경기 흡수 노선
 - demand.json: 변형별 정류장 잔여 수요(5일 평균, 하루 인원). 역 쪽이 아닌 동네 정류장 기준
 - segpaths.json: 도로 망 구간마다 도로 모양(원래 구간은 매칭 경로, 새 구간은 버스 도로 경로)
-- results.json: 사전 계산 안(망 × 변형 × 대수)의 노선·근사·시뮬레이터 결과(실험·테스트)
+- results.json: 사전 계산 안(망 × 변형 × 대수)의 노선·근사·시뮬레이터 결과(실험·테스트), 차량별 하루 동선(실험 주간 가운데 날)
 """
 
 from __future__ import annotations
@@ -31,6 +31,8 @@ sys.path.insert(0, str(HERE.parent))
 from busstrike.planning.routegen import data as D  # noqa: E402
 
 from roadnet import RoadNet  # noqa: E402
+
+from busstrike.api.routegen_lab import vehicle_schedule  # noqa: E402
 
 
 def dump(path: Path, obj) -> None:
@@ -69,6 +71,7 @@ def main() -> int:
     ap.add_argument("--osm", required=True, type=Path)
     ap.add_argument("--gu", required=True)
     ap.add_argument("--lab", required=True, type=Path)
+    ap.add_argument("--boundaries", type=Path, help="fetch_osm.py --boundaries 출력(시·군·구 경계)")
     args = ap.parse_args()
     root = args.region / f"{args.gu}_0610_v4"
     info = D.check_root(root, "exp")
@@ -103,6 +106,18 @@ def main() -> int:
     dump(out / "stations.json", stations)
 
     dump(out / "bus_roads.json", rn.bus_roads_geojson())
+    bounds = []
+    if args.boundaries and args.boundaries.exists():
+        for e in json.loads(args.boundaries.read_text(encoding="utf-8"))["elements"]:
+            lines = [[[round(g["lon"], 6), round(g["lat"], 6)] for g in m["geometry"]]
+                     for m in e.get("members", []) if m["type"] == "way" and m.get("role") == "outer" and m.get("geometry")]
+            if not lines:
+                continue
+            pts = [c for ln in lines for c in ln]
+            name = e["tags"].get("name", "")
+            bounds.append({"name": name, "home": name == info["gu"], "lines": lines,
+                           "label": [round(sum(c[0] for c in pts) / len(pts), 6), round(sum(c[1] for c in pts) / len(pts), 6)]})
+    dump(out / "boundaries.json", bounds)
     segpaths = {f"{a}>{b}": rn.path_any(a, b) for (a, b) in sorted(rn.seg_path)}
     dump(out / "segpaths.json", segpaths)
 
@@ -139,6 +154,7 @@ def main() -> int:
 
     # 사전 계산 결과
     log = json.loads((lab / "run_networks.json").read_text(encoding="utf-8"))
+    sched_date = D.SPLITS["exp"]["dates"][2]
     results = []
     for p in log["plans"]:
         plan = json.loads(Path(p["file"]).read_text(encoding="utf-8"))
@@ -151,6 +167,8 @@ def main() -> int:
                                              for a, b in zip(r["stops"], r["stops"][1:])])})
         results.append({"net": p["net"], "variant": p["variant"], "fleet": p["fleet"], "approx": p["approx"],
                         "pool_cover": p["pool_cover"], "demand_total": p["demand_total"], "routes": routes,
+                        "schedule_date": sched_date,
+                        "schedule": vehicle_schedule(vdir / "runs_exp" / "ours" / f"{p['variant']}_{sched_date}" / f"f{p['fleet']}" / "run"),
                         "exp": runs_summary(vdir / "runs_exp" / "runs.json", p["fleet"]),
                         "test": runs_summary(vdir / "runs_test" / "runs.json", p["fleet"])})
     dump(out / "results.json", results)

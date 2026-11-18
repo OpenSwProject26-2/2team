@@ -44,7 +44,23 @@ label.chk i.dot { width: 10px; height: 10px; border-radius: 50%; }
 .btn { font: 600 12.5px var(--f); border: 0; border-radius: 7px; padding: 8px 10px; cursor: pointer; background: var(--accent); color: #fff; width: 100%; }
 .btn.alt { background: #eef3fb; color: var(--accent); border: 1px solid #d3e0f3; }
 .btn:disabled { opacity: .55; cursor: progress; }
-#map { position: relative; min-height: 420px; }
+.center { display: grid; grid-template-rows: minmax(320px, 1fr) auto; min-height: 0; min-width: 0; }
+#map { position: relative; min-height: 320px; }
+#schedPanel { background: var(--panel); border-top: 1px solid var(--rule); padding: 10px 14px; max-height: 42vh; overflow-y: auto; }
+#schedPanel.closed #sched { display: none; }
+.sched-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
+.sched-key { font-size: 11.5px; color: var(--ink-3); display: flex; gap: 6px; align-items: center; margin-left: auto; }
+.sched-key i { display: inline-block; width: 16px; height: 9px; border-radius: 2px; }
+.k-svc { background: #1e293b; } .k-ret { background: #cbd5e1; } .k-end { width: 0 !important; height: 12px !important; border-left: 2px dashed #b91c1c; border-radius: 0 !important; }
+.sg { margin-top: 8px; }
+.sg-h { font-size: 12.5px; font-weight: 600; display: flex; gap: 10px; align-items: baseline; padding: 3px 0; border-bottom: 1px solid var(--rule); }
+.sg-h small { font-weight: 400; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.vrow { display: grid; grid-template-columns: 150px minmax(0, 1fr) 92px; gap: 8px; align-items: center; padding: 2px 0; cursor: pointer; border-radius: 4px; }
+.vrow:hover, .vrow.sel { background: #fff3d6; }
+.vrow .lab { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.vrow .num { font-size: 11.5px; color: var(--ink-2); text-align: right; font-variant-numeric: tabular-nums; }
+.vrow svg, .axis svg { display: block; width: 100%; height: 18px; }
+.axis { display: grid; grid-template-columns: 150px minmax(0, 1fr) 92px; gap: 8px; font-size: 10.5px; color: var(--ink-3); }
 #mapc { position: absolute; inset: 0; }
 .legend { position: absolute; left: 10px; bottom: 26px; background: #ffffffe8; border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px; font-size: 11.5px; color: var(--ink-2); display: grid; gap: 3px; z-index: 2; }
 .legend i { display: inline-block; width: 16px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
@@ -119,6 +135,7 @@ tbody tr.sel td { background: #fff3d6; font-weight: 600; }
       <p class="hint">생성은 근사 계산(배분기 모델)이다. 충족률은 시뮬레이션 결과로만 말한다.</p>
     </section>
   </aside>
+  <div class="center">
   <div id="map"><div id="mapc"></div>
     <div class="status" id="status">지도 준비 중</div>
     <div class="legend">
@@ -128,7 +145,17 @@ tbody tr.sel td { background: #fff3d6; font-weight: 600; }
       <span><i style="background:var(--plan);height:4px"></i>셔틀 안(사전 계산) · <i style="background:var(--live);height:4px"></i>직접 실행</span>
       <span>🚏 셔틀 정차 정류장 · 🚇 지하철역 · <span class="seq" style="min-width:14px;height:14px;font-size:9px">1</span> 선택 노선 정차 순서</span>
       <span>● 분홍 원 = 정류장 잔여 수요 · ○ 회색 = 흡수로 빠진 수요</span>
+      <span><i style="background:#334155;height:0;border-top:2px dashed #334155"></i>구 경계</span>
     </div>
+  </div>
+  <section id="schedPanel">
+    <div class="sched-head">
+      <h2 style="margin:0">차량 동선 <span class="hint" id="schedSub"></span></h2>
+      <span class="sched-key"><i class="k-svc"></i>영업(진할수록 승객 많음) <i class="k-ret"></i>빈 차 복귀 <i class="k-end"></i>운영 종료 10:00</span>
+      <button type="button" class="btn alt" id="schedToggle" style="width:auto;padding:4px 10px">접기</button>
+    </div>
+    <div id="sched"></div>
+  </section>
   </div>
   <aside class="right">
     <section>

@@ -29,7 +29,7 @@ from busstrike.sim.traveltime import TravelTimeTable
 
 ROOT = Path(__file__).resolve().parents[3]
 WEB = ROOT / "web" / "operator"
-LAYERS = ("meta", "stops", "stations", "demand", "bus_roads", "strike_routes", "absorbing_routes", "results")
+LAYERS = ("meta", "stops", "stations", "demand", "bus_roads", "strike_routes", "absorbing_routes", "results", "boundaries")
 NETS = ("orig", "road")
 
 
@@ -37,6 +37,46 @@ class LabError(Exception):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
+
+
+def vehicle_schedule(run_dir: Path) -> dict:
+    """M05 실행 폴더(`run/`) → 차량별 하루 동선.
+
+    회차마다 [첫 정류장 출발, 마지막 정류장(영업 끝) 도착, 공차 복귀 끝, 탑승 인원, 최대 재차 인원].
+    탑승·재차는 사건 로그(`events.jsonl`)의 boarded·occupancy에서 센다.
+    """
+    run_dir = Path(run_dir)
+    tt = json.loads((run_dir / "timetable.json").read_text(encoding="utf-8"))
+    trips = {t["trip_id"]: t for t in tt["trips"]}
+    boarded: dict[str, int] = {}
+    maxocc: dict[str, int] = {}
+    with open(run_dir / "events.jsonl", encoding="utf-8") as f:
+        for line in f:
+            e = json.loads(line)
+            tid = (e.get("stable_id") or "").split(":", 1)[0]
+            if tid not in trips:
+                continue
+            if e["kind"] == "boarded":
+                boarded[tid] = boarded.get(tid, 0) + 1
+            occ = e.get("occupancy")
+            if isinstance(occ, int):
+                maxocc[tid] = max(maxocc.get(tid, 0), occ)
+    vehicles = []
+    for d in tt["duties"]:
+        cyc: dict[int, list] = {}
+        for tid in d["trip_ids"]:
+            t = trips[tid]
+            st = t["stop_times"]
+            c = cyc.setdefault(t["cycle_index"], [None, None, None, 0, 0])
+            if t["in_service"]:
+                c[0], c[1] = st[0]["sched_s"], st[-1]["sched_s"]
+                c[3], c[4] = boarded.get(tid, 0), maxocc.get(tid, 0)
+            else:
+                c[2] = st[-1]["sched_s"]
+        cycles = [v if v[2] is not None else v[:2] + [v[1]] + v[3:] for _, v in sorted(cyc.items()) if v[0] is not None]
+        vehicles.append({"vehicle": d["vehicle_id"], "route": d["route_id"], "cycles": cycles})
+    return {"routes": {r["route_id"]: {"period_s": r["period_s"], "vehicles": r["vehicle_ids"]} for r in tt["routes"]},
+            "vehicles": vehicles}
 
 
 def _load_run_matrix():
@@ -173,7 +213,8 @@ class Lab:
                 m = json.loads((Path(job["dir"]) / "run" / "metrics.json").read_text(encoding="utf-8"))
                 out.update({"served": m["M1"]["served"], "total": m["M1"]["total"],
                             "rate": round(100 * m["M1"]["served"] / m["M1"]["total"], 2),
-                            "unserved": m["M2"]["unserved_by_reason"], "refusals": m["M2"]["refusal_events"]})
+                            "unserved": m["M2"]["unserved_by_reason"], "refusals": m["M2"]["refusal_events"],
+                            "schedule": vehicle_schedule(Path(job["dir"]) / "run")})
             return out
 
 

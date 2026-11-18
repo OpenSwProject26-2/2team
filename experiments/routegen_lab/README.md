@@ -24,11 +24,11 @@
 
 ```sh
 W=<저장소 밖 작업 폴더>; R=$W/zip_v4/region     # region_bundles_0610_v4.zip을 푼 곳
-python3 experiments/routegen_lab/fetch_osm.py --root $R/guro_0610_v4 --out $W/osm/guro_roads.json   # 1) OSM 도로(한 번)
+python3 experiments/routegen_lab/fetch_osm.py --root $R/guro_0610_v4 --out $W/osm/guro_roads.json --boundaries $W/osm/guro_boundaries.json   # 1) OSM 도로·구 경계(한 번)
 # 2) 사전 계산(망 2 × 변형 4 × 대수 × 실험·테스트 5일)
 python3 experiments/routegen_lab/run_networks.py --region $R --osm $W/osm/guro_roads.json --gu guro --out $W/lab_guro --jobs 7
 # 3) 화면 레이어
-python3 experiments/routegen_lab/build_lab_data.py --region $R --osm $W/osm/guro_roads.json --gu guro --lab $W/lab_guro
+python3 experiments/routegen_lab/build_lab_data.py --region $R --osm $W/osm/guro_roads.json --gu guro --lab $W/lab_guro --boundaries $W/osm/guro_boundaries.json
 # 4) 대시보드 서버(실험실 포함)
 python3 web/operator/serve.py --lab-dir $W/lab_guro --lab-region $R
 # → http://127.0.0.1:8766/lab

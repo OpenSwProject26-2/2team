@@ -4,9 +4,9 @@ const VARIANT_LABEL = {affected: '흡수 제외 없음', affected_maeul: '마을
 const LAYERS = [
   ['busRoads', '버스 통행 가능 도로(=1)', '--road'], ['strike', '파업 노선', '--strike'], ['maeul', '마을버스', '--maeul'],
   ['gg', '경기버스', '--gg'], ['demand', '잔여 수요', '--strike', true], ['stations', '🚇 지하철역', '--ink', true], ['plan', '셔틀 안', '--plan'],
-  ['planStops', '🚏 셔틀 정차 정류장', '--plan', true],
+  ['planStops', '🚏 셔틀 정차 정류장', '--plan', true], ['bounds', '구 경계', '--ink-2'],
 ];
-const S = {net: 'orig', fleet: null, visible: new Set(['busRoads', 'strike', 'demand', 'stations', 'plan', 'planStops']), live: null, hover: null, sel: null};
+const S = {net: 'orig', fleet: null, visible: new Set(['busRoads', 'strike', 'demand', 'stations', 'plan', 'planStops', 'bounds']), live: null, hover: null, sel: null};
 // 이모지를 그릴 수 없는 환경의 대체 아이콘(운영자 대시보드와 같은 그림)
 const FALLBACK_SVG = {
   bus:`<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><circle cx="24" cy="24" r="22" fill="#fff" stroke="#405b77" stroke-width="3"/><rect x="12" y="12" width="24" height="22" rx="5" fill="#2b679c"/><rect x="15" y="15" width="18" height="9" rx="2" fill="#d9f4ff"/><path d="M12 26h24" stroke="#fff" stroke-width="2"/><circle cx="18" cy="30" r="2" fill="#fff"/><circle cx="30" cy="30" r="2" fill="#fff"/><path d="M17 34v3m14-3v3" stroke="#405b77" stroke-width="3"/></svg>`,
@@ -89,10 +89,53 @@ function render() {
   $('#stopSeqTitle').textContent = sr ? `${sr.id} 정류장 순서 · ${sr.stops.length}곳 (${sr.kind === 'access' ? '역으로' : '역에서'})` : '정류장 순서';
   $('#stopSeq').innerHTML = sr ? sr.stops.map((sid, k) => `<li><button type="button" data-sid="${esc(sid)}"><span class="seq">${k + 1}</span>${esc(D.stops[sid]?.[2] ?? sid)}${station(sid) ? ` <span class="hint">🚇 ${esc(station(sid))}</span>` : ''}</button></li>`).join('') : '<li class="hint">노선을 지도나 표에서 클릭하세요</li>';
   $('#runSim').disabled = !p;
+  renderSchedule();
   $('#sub').textContent = `${D.meta.gu} · 망 ${D.meta.network_snapshot_id} · 도로 구간 +${fmt(D.meta.roadnet.added_segments)}개(버스 도로 기준)`;
   updateMap();
 }
 
+const T0 = 21600, T1 = 39600, WEND = 36000;
+const hhmm = (t) => `${String(Math.floor(t / 3600)).padStart(2, '0')}:${String(Math.floor(t % 3600 / 60)).padStart(2, '0')}`;
+function renderSchedule() {
+  const p = shown(), live = p && p === S.live;
+  const sc = live ? S.live.sim?.schedule : p?.schedule;
+  const date = live ? S.live.sim?.date : p?.schedule_date;
+  $('#schedSub').textContent = sc ? `· ${date.slice(4, 6)}/${date.slice(6)} 시뮬레이터 시간표 · 역별로 묶음` : '';
+  if (!p || !sc) { $('#sched').innerHTML = `<p class="hint">${live ? '직접 실행한 안은 하루 시뮬레이션을 돌리면 동선이 나옵니다.' : '이 안의 시간표가 없습니다.'}</p>`; return; }
+  const x = (t) => ((Math.min(Math.max(t, T0), T1) - T0) / (T1 - T0) * 1000).toFixed(1);
+  const idx = new Map(p.routes.map((r, i) => [r.id, i]));
+  const groups = new Map();
+  for (const v of sc.vehicles) {
+    const i = idx.get(v.route); if (i == null) continue;
+    const r = p.routes[i], key = r.hubs.join('·');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({v, r, i});
+  }
+  const ticks = []; for (let t = T0; t <= T1; t += 1800) ticks.push(t);
+  const axis = `<div class="axis"><span></span><svg viewBox="0 0 1000 18" preserveAspectRatio="none">${ticks.map((t) => `<line x1="${x(t)}" x2="${x(t)}" y1="12" y2="18" stroke="#c3cad4"/>`).join('')}</svg><span></span></div>
+    <div class="axis"><span></span><div style="position:relative;height:14px">${ticks.filter((t) => t % 3600 === 0).map((t) => `<span style="position:absolute;left:${x(t) / 10}%;transform:translateX(-50%)">${hhmm(t)}</span>`).join('')}</div><span></span></div>`;
+  let html = axis;
+  const order = [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+  for (const [name, rows] of order) {
+    const pax = rows.reduce((a, {v}) => a + v.cycles.reduce((b, c) => b + c[3], 0), 0);
+    const rids = new Set(rows.map(({r}) => r.id));
+    html += `<div class="sg"><div class="sg-h">🚇 ${esc(name)}역 <small>노선 ${rids.size}개 · 차량 ${rows.length}대 · 하루 탑승 ${fmt(pax)}명</small></div>`;
+    rows.sort((a, b) => a.i - b.i || a.v.vehicle.localeCompare(b.v.vehicle));
+    for (const {v, r, i} of rows) {
+      const n = v.cycles.reduce((b, c) => b + c[3], 0);
+      const bars = v.cycles.map((c) => {
+        const op = (0.3 + 0.7 * Math.min(1, c[4] / 45)).toFixed(2);
+        const tip = `${v.vehicle} ${r.id} · ${hhmm(c[0])} 출발 → ${hhmm(c[1])} ${r.kind === 'access' ? '역 도착' : '종점 도착'} · 탑승 ${c[3]}명 · 최대 재차 ${c[4]}/45 · 복귀 끝 ${hhmm(c[2])}`;
+        return `<rect x="${x(c[0])}" y="3" width="${Math.max(2, x(c[1]) - x(c[0]))}" height="12" rx="1.5" fill="#1e293b" fill-opacity="${op}"><title>${esc(tip)}</title></rect>`
+          + `<rect x="${x(c[1])}" y="6" width="${Math.max(0, x(c[2]) - x(c[1]))}" height="6" fill="#cbd5e1"><title>${esc(`${v.vehicle} 빈 차 복귀 ${hhmm(c[1])} → ${hhmm(c[2])}`)}</title></rect>`;
+      }).join('');
+      const end = `<line x1="${x(WEND)}" x2="${x(WEND)}" y1="0" y2="18" stroke="#b91c1c" stroke-dasharray="3 2"/>`;
+      html += `<div class="vrow${S.sel === i ? ' sel' : ''}" data-i="${i}"><span class="lab"><b>${v.vehicle}</b> · ${r.id} ${r.kind === 'access' ? '→ 역' : '← 역'}</span><svg viewBox="0 0 1000 18" preserveAspectRatio="none">${end}${bars}</svg><span class="num">${v.cycles.length}회 · ${fmt(n)}명</span></div>`;
+    }
+    html += '</div>';
+  }
+  $('#sched').innerHTML = html;
+}
 function station(sid) { const t = D.stations.find((x) => x.access === sid || x.egress === sid); return t ? t.name + '역' : null; }
 function updateMap() {
   const m = D.map; if (!m || !m.getSource('demand')) return;
@@ -102,7 +145,7 @@ function updateMap() {
   m.getSource('selStops').setData(selStopFeatures());
   const live = shown() === S.live;
   m.setPaintProperty('plan', 'line-color', live ? css('--live') : css('--plan'));
-  const vis = {busRoads: ['busRoads'], strike: ['strike'], maeul: ['maeul'], gg: ['gg'], demand: ['demand-now', 'demand-removed'], stations: ['stations', 'station-labels'], plan: ['plan', 'plan-casing'], planStops: ['plan-stops']};
+  const vis = {busRoads: ['busRoads'], strike: ['strike'], maeul: ['maeul'], gg: ['gg'], demand: ['demand-now', 'demand-removed'], stations: ['stations', 'station-labels'], plan: ['plan', 'plan-casing'], planStops: ['plan-stops'], bounds: ['bounds', 'bounds-home', 'bounds-labels']};
   for (const [k, ids] of Object.entries(vis)) for (const id of ids) m.setLayoutProperty(id, 'visibility', S.visible.has(k) ? 'visible' : 'none');
   $('#status').textContent = shown() ? `${live ? '직접 실행 안' : '사전 계산 안'} 표시 중 · 노선 ${shown().routes.length}개` : '이 조합의 안이 없음';
 }
@@ -134,6 +177,12 @@ async function initMap() {
   D.map = m;
   m.addControl(new maplibregl.NavigationControl({showCompass: false}), 'top-left');
   await new Promise((r) => m.on('load', r));
+  m.addSource('bounds', {type: 'geojson', data: fc(D.bounds.map((b) => ({type: 'Feature', properties: {name: b.name, home: b.home ? 1 : 0}, geometry: {type: 'MultiLineString', coordinates: b.lines}})))});
+  m.addLayer({id: 'bounds', type: 'line', source: 'bounds', paint: {'line-color': '#334155', 'line-width': 1.6, 'line-dasharray': [3, 2], 'line-opacity': 0.75}});
+  m.addLayer({id: 'bounds-home', type: 'line', source: 'bounds', filter: ['==', ['get', 'home'], 1], paint: {'line-color': '#334155', 'line-width': 3, 'line-opacity': 0.9}});
+  m.addSource('boundLabels', {type: 'geojson', data: fc(D.bounds.map((b) => ({type: 'Feature', properties: {name: b.name, home: b.home ? 1 : 0}, geometry: {type: 'Point', coordinates: b.label}})))});
+  m.addLayer({id: 'bounds-labels', type: 'symbol', source: 'boundLabels', layout: {'text-field': ['get', 'name'], 'text-size': ['case', ['==', ['get', 'home'], 1], 16, 13], 'text-font': ['Noto Sans Bold'], 'text-allow-overlap': false},
+    paint: {'text-color': '#334155', 'text-opacity': 0.75, 'text-halo-color': '#ffffff', 'text-halo-width': 2}});
   m.addSource('strike', {type: 'geojson', data: fc(D.strike.map((r) => line(r.coords, {name: r.name})))});
   m.addLayer({id: 'strike', type: 'line', source: 'strike', paint: {'line-color': css('--strike'), 'line-width': 3, 'line-opacity': 0.18}});
   m.addSource('busRoads', {type: 'geojson', data: fc([D.busRoads])});
@@ -217,9 +266,9 @@ async function runSim() {
 }
 
 async function main() {
-  const [meta, stops, stations, demand, busRoads, strike, absorbing, results] = await Promise.all(
-    ['meta', 'stops', 'stations', 'demand', 'bus_roads', 'strike_routes', 'absorbing_routes', 'results'].map((n) => get(n === 'meta' ? '/api/lab/meta' : `/api/lab/layer/${n}`)));
-  Object.assign(D, {meta, stops, stations, demand, busRoads, strike, absorbing, results});
+  const [meta, stops, stations, demand, busRoads, strike, absorbing, results, bounds] = await Promise.all(
+    ['meta', 'stops', 'stations', 'demand', 'bus_roads', 'strike_routes', 'absorbing_routes', 'results', 'boundaries'].map((n) => get(n === 'meta' ? '/api/lab/meta' : `/api/lab/layer/${n}`)));
+  Object.assign(D, {meta, stops, stations, demand, busRoads, strike, absorbing, results, bounds});
   S.fleet = meta.fleets[0]; $('#pF').value = S.fleet;
   $('#simDate').innerHTML = meta.dates_exp.map((d) => `<option value="${d}" ${d === meta.dates_exp[2] ? 'selected' : ''}>${d.slice(4, 6)}/${d.slice(6)}</option>`).join('');
   layersPanel();
@@ -228,6 +277,8 @@ async function main() {
   $('#routes').onmouseover = (e) => { const tr = e.target.closest('tr'); if (tr) focus(Number(tr.dataset.i)); };
   $('#routes').onmouseleave = () => focus(S.sel);
   $('#routes').onclick = (e) => { const tr = e.target.closest('tr'); if (tr) select(Number(tr.dataset.i)); };
+  $('#sched').onclick = (e) => { const row = e.target.closest('.vrow'); if (row) select(Number(row.dataset.i)); };
+  $('#schedToggle').onclick = () => { const c = $('#schedPanel').classList.toggle('closed'); $('#schedToggle').textContent = c ? '펼치기' : '접기'; setTimeout(() => D.map?.resize(), 50); };
   $('#stopSeq').onclick = (e) => { const b = e.target.closest('button[data-sid]'); const s = b && D.stops[b.dataset.sid]; if (s && D.map) D.map.flyTo({center: s.slice(0, 2), zoom: 16, duration: 600}); };
   render();
   await initMap();
