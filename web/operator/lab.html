@@ -12,7 +12,7 @@
 /* 지도가 첫 화면을 채운다. 조작 패널은 왼쪽에서 접고, 결과·노선·동선은 지도 아래로 */
 :root {
   --bg: #f3f5f8; --panel: #ffffff; --ink: #17202c; --ink-2: #4f5b6b; --ink-3: #8994a3; --rule: #e1e6ed;
-  --accent: #1f5fa8; --strike: #ed3d51; --maeul: #17a56c; --gg: #f39b28; --road: #8b95a3; --plan: #1e293b; --live: #6250d6;
+  --accent: #1f5fa8; --strike: #ed3d51; --maeul: #17a56c; --gg: #f39b28; --road: #8b95a3; --plan: #1d4ed8; --live: #6250d6; --muni: #0891b2;
   --warn: #9a5200; --warn-bg: #fff4e2;
   --f: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", system-ui, sans-serif;
 }
@@ -22,6 +22,7 @@ body { background: var(--bg); color: var(--ink); font: 13px/1.5 var(--f); }
 header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 14px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--rule); }
 header h1 { font-size: 16px; margin: 0; font-weight: 700; }
 header .sub { color: var(--ink-3); font-size: 12px; }
+header select { font: 13px var(--f); padding: 3px 6px; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); color: var(--ink); }
 header a { margin-left: auto; color: var(--accent); font-size: 12px; text-decoration: none; }
 .top { display: grid; grid-template-columns: 290px minmax(0, 1fr); height: calc(100vh - 49px); min-height: 520px; transition: grid-template-columns .22s ease; }
 body.left-closed .top { grid-template-columns: 0 minmax(0, 1fr); }
@@ -104,6 +105,11 @@ tbody tr.sel td { background: #fff3d6; font-weight: 600; }
 .cov-bar span { display: block; height: 100%; }
 .cov-rows { display: grid; grid-template-columns: 1fr auto auto; gap: 1px 14px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .cov-rows i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.cmp { width: 100%; border-collapse: collapse; margin: 4px 0 10px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.cmp th, .cmp td { padding: 4px 6px; border-bottom: 1px solid var(--rule); text-align: right; }
+.cmp th:first-child, .cmp td:first-child { text-align: left; }
+.cmp tr.muni td:first-child { color: var(--muni); font-weight: 600; }
+.cmp tr.cur td { background: #eef4fd; font-weight: 600; }
 .cov-shuttle { margin: 8px 0 10px; font-size: 12.5px; padding: 6px 8px; background: #f1f5f9; border-radius: 6px; }
 .reasons { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .note { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 8px 10px; font-size: 11.5px; }
@@ -115,6 +121,7 @@ tbody tr.sel td { background: #fff3d6; font-weight: 600; }
 <body>
 <header>
   <h1>셔틀 노선 실험실</h1>
+  <label for="guSel" class="sub">자치구</label><select id="guSel" aria-label="자치구 선택"></select>
   <span class="sub" id="sub">불러오는 중…</span>
   <a href="/">운영자 대시보드로</a>
 </header>
@@ -143,8 +150,12 @@ tbody tr.sel td { background: #fff3d6; font-weight: 600; }
       <p class="hint" id="demandHint"></p>
     </section>
     <section>
-      <h2><span class="step">3</span>노선을 만들 망</h2>
+      <h2><span class="step">3</span>노선을 만들 망 · 생성 설정</h2>
       <span class="seg" id="netSeg"></span>
+      <div id="configRow" style="margin-top:6px" hidden><div class="form"><label for="configSel">생성 설정</label><select id="configSel"></select></div>
+        <p class="hint">허브 = 하루 수요가 기준 이상인 역(이 역으로만 노선을 만든다). 기본 540명·정차 8곳.</p></div>
+      <div id="assumeRow" style="margin-top:6px" hidden><span class="hint">시뮬레이터 가정</span><br><span class="seg" id="assumeSeg"></span>
+        <p class="hint">걷기 400m = 원래 정류장에서 탈 수 없으면 도로를 따라 400m 안 셔틀 정류장까지 걸어가 탄다(걷기·형평·여러 역 경유 실험 안에만 있음).</p></div>
       <p class="hint">원래 = 기존 버스가 다니는 정류장 순서만. 도로 = 버스가 다니는 도로(=1)면 어디든.</p>
     </section>
     <section>
@@ -156,6 +167,7 @@ tbody tr.sel td { background: #fff3d6; font-weight: 600; }
     <section>
       <h2><span class="step">5</span>직접 실행 <span class="tag live">근사</span></h2>
       <div class="form">
+        <label for="pH">허브 기준(하루 명)</label><input id="pH" type="number" min="20" max="5000" step="5" value="540">
         <label for="pR">역 권역 반경(km)</label><input id="pR" type="number" min="0.5" max="6" step="0.5" value="3">
         <label for="pN">정차 수 상한</label><select id="pN"><option value="8">8</option><option value="12">12</option><option value="16">16</option><option value="none">없음</option></select>
         <label for="pD">우회율 상한</label><input id="pD" type="number" min="1" max="5" step="0.1" value="1.6">
@@ -179,8 +191,10 @@ tbody tr.sel td { background: #fff3d6; font-weight: 600; }
       <span><i style="background:var(--strike)"></i>파업 노선</span>
       <span><i style="background:var(--maeul)"></i>마을버스 · <i style="background:var(--gg)"></i>경기버스</span>
       <span><i style="background:var(--plan);height:4px"></i>셔틀 안(사전 계산) · <i style="background:var(--live);height:4px"></i>직접 실행</span>
+      <span id="muniLegend" hidden><i style="background:var(--muni);height:0;border-top:3px dashed var(--muni)"></i>지자체 셔틀안(1월 실운행)</span>
       <span>🚏 셔틀 정차 정류장 · 🚇 지하철역 · <span class="seq" style="min-width:14px;height:14px;font-size:9px">1</span> 선택 노선 정차 순서</span>
       <span>● 분홍 원 = 정류장 잔여 수요 · ○ 회색 = 흡수로 빠진 수요</span>
+      <span><i style="width:10px;height:10px;border-radius:50%;border:2px solid #d03b3b;background:transparent"></i>걸어서 400m 안에 셔틀 정류장이 없는 수요(표시 중인 안 기준)</span>
       <span><i style="background:#334155;height:0;border-top:2px dashed #334155"></i>구 경계</span>
     </details>
   </div>
@@ -190,6 +204,7 @@ tbody tr.sel td { background: #fff3d6; font-weight: 600; }
     <details class="box" open>
       <summary id="planTitle">표시 중인 안</summary>
       <div id="coverage"></div>
+      <div id="muniBox"></div>
       <div class="cards" id="cards"></div>
       <h2>미충족 사유 <span class="hint" id="reasonDays"></span></h2>
       <div class="reasons" id="reasons"></div>

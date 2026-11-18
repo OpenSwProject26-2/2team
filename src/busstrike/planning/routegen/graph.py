@@ -107,6 +107,48 @@ class Graph:
         cache[src] = done
         return done
 
+    def is_uturn(self, a: str, b: str, c: str) -> bool:
+        """a→b→c가 정류장 b에서 U턴인가(도로 조각 기록이 있을 때만 판단)."""
+        turns = self.net.turns
+        if not turns:
+            return False
+        e1, e2 = turns.get(f"{a}>{b}"), turns.get(f"{b}>{c}")
+        return bool(e1 and e2 and e2[0] == e1[3] and e2[1] == e1[2])
+
+    def path_continue(self, prev: str | None, a: str, b: str, avoid: set[str] | frozenset[str] = frozenset()
+                      ) -> tuple[str, ...] | None:
+        """a에서 b까지 최단경로. 직전 정류장 prev에서 a로 들어온 뒤 a·경로 중간 어디서도 U턴하지 않고, avoid 정류장을 지나지 않는다.
+
+        상태 = (직전 정류장, 현재 정류장). 비용 상한 cutoff_s. 여러 역을 차례로 잇는 노선의 구간 연결에 쓴다.
+        """
+        start = (prev, a)
+        best = {start: 0}
+        back: dict[tuple, tuple | None] = {start: None}
+        h = [(0, prev or "", a)]
+        while h:
+            c, pv, u = heapq.heappop(h)
+            st = (pv or None, u)
+            if c > best.get(st, 1 << 62):
+                continue
+            if u == b:
+                out = []
+                while st is not None:
+                    out.append(st[1])
+                    st = back[st]
+                return tuple(reversed(out))
+            for v in self.tt.successors(u):
+                if v in avoid or v == st[0]:
+                    continue
+                if st[0] is not None and self.is_uturn(st[0], u, v):
+                    continue
+                nc = c + self._w[(u, v)]
+                ns = (u, v)
+                if nc <= self.cutoff_s and nc < best.get(ns, 1 << 62):
+                    best[ns] = nc
+                    back[ns] = st
+                    heapq.heappush(h, (nc, u, v))
+        return None
+
     def path(self, a: str, b: str) -> tuple[str, ...] | None:
         if a == b:
             return (a,)

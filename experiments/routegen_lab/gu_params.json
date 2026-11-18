@@ -1,0 +1,22 @@
+{
+  "_설명": "구별 노선 생성·평가 설정. default 위에 gu.<slug>의 값만 덮어쓴다. 형식은 src/busstrike/planning/routegen/gu_config.py",
+  "default": {
+    "generate": {"distance_basis": "network"},
+    "configs": {
+      "base": {},
+      "hub135": {"hub_min": 135},
+      "hub135_s12": {"hub_min": 135, "max_stops": 12}
+    },
+    "absorb": {},
+    "walk": {
+      "radius_m": 400,
+      "near_m": 800,
+      "near_discount": 1.0,
+      "lambdas": [0],
+      "targets": [0.6, 0.7, 0.8],
+      "multi": false,
+      "generate": {"hub_min": 135, "max_stops": 12}
+    }
+  },
+  "gu": {}
+}

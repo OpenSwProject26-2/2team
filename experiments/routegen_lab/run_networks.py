@@ -58,11 +58,12 @@ def bundles_for(src_root: Path, dst: Path, doc_path: Path, variant: str, fleets:
     return out
 
 
-def plan_and_run(args, log, base, info, net_name, net, variant, demand, exp_b, test_b, vdir, extra=None) -> None:
+def plan_and_run(args, log, base, info, net_name, net, variant, demand, exp_b, test_b, vdir, extra=None,
+                 params=None, run=True, covers=(False, True)) -> None:
     """한 (망, 변형): 후보 생성 → 역 보장 끔/켬 × 대수 배분 → 실험·테스트 묶음 실행."""
     fleets = info["fleets"]
     scen = D.read_scenario(next(exp_b.iterdir()), fleets[0])
-    p = G.Params(home_gu=info["gu"], distance_basis="network")
+    p = params or G.Params(home_gu=info["gu"], distance_basis="network")
     res = G.generate(net, demand, scen, p)
     pool = G.pools(res.candidates, p.jaccard)["ours"][0]
     by = {c.route_id: c for c in pool}
@@ -72,7 +73,7 @@ def plan_and_run(args, log, base, info, net_name, net, variant, demand, exp_b, t
     for c in pool:
         keys.update(c.cover_keys)
     plan_args = []
-    for cover, f in [(cv, f) for cv in (False, True) for f in fleets]:
+    for cover, f in [(cv, f) for cv in covers for f in fleets]:
         m = A.Model([(c.route_id, c.cycle_s, c.cover_keys) for c in pool], demand.od,
                     A.AllocParams(cover_groups=cover), groups, weight)
         a = A.allocate(m, f)
@@ -94,7 +95,7 @@ def plan_and_run(args, log, base, info, net_name, net, variant, demand, exp_b, t
                                                       "hubs": [base.stations[h].name for h in by[k].hubs],
                                                       "approx": round(sum(det["by_route"][k]), 1)}
                                         for i, k in enumerate(sorted(a["n"]), 1)}})
-    for split, b in (("exp", exp_b), ("test", test_b)):
+    for split, b in ((("exp", exp_b), ("test", test_b)) if run else ()):
         cmd = [sys.executable, str(RUN_MATRIX), "--bundles", str(b), "--out", str(vdir / f"runs_{split}"),
                "--src", str(REPO / "src"), "--jobs", str(args.jobs), *plan_args]
         rc = subprocess.run(cmd, check=False).returncode

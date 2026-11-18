@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -17,6 +19,21 @@ from pathlib import Path
 HIGHWAYS = ("motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|"
             "tertiary_link|unclassified|residential|living_street|service|road|busway")
 URL = "https://overpass-api.de/api/interpreter"
+
+
+def post(q: str, tries: int = 5) -> bytes:
+    """Overpass에 질의(혼잡 응답 429·502·503·504면 30초·60초… 기다렸다 다시)."""
+    for i in range(tries):
+        req = urllib.request.Request(URL, data=urllib.parse.urlencode({"data": q}).encode(),
+                                     headers={"User-Agent": "busstrike-routegen-lab/0.1"})
+        try:
+            with urllib.request.urlopen(req, timeout=600) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 502, 503, 504) or i == tries - 1:
+                raise
+            time.sleep(30 * (i + 1))
+    raise RuntimeError("unreachable")
 
 
 def main() -> int:
@@ -31,20 +48,14 @@ def main() -> int:
     la = [float(r["stop_lat"]) for r in rows]
     lo = [float(r["stop_lon"]) for r in rows]
     s, w, n, e = min(la) - args.pad, min(lo) - args.pad, max(la) + args.pad, max(lo) + args.pad
-    q = f'[out:json][timeout:180];way["highway"~"^({HIGHWAYS})$"]({s},{w},{n},{e});(._;>;);out body;'
-    req = urllib.request.Request(URL, data=urllib.parse.urlencode({"data": q}).encode(),
-                                 headers={"User-Agent": "busstrike-routegen-lab/0.1"})
-    with urllib.request.urlopen(req, timeout=300) as r:
-        body = r.read()
+    q = f'[out:json][timeout:600];way["highway"~"^({HIGHWAYS})$"]({s},{w},{n},{e});(._;>;);out body;'
+    body = post(q)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_bytes(body)
     print(f"bbox {s:.4f},{w:.4f},{n:.4f},{e:.4f} → {args.out} ({len(body):,} bytes)")
     if args.boundaries:
-        q = f'[out:json][timeout:180];rel["boundary"="administrative"]["admin_level"="6"]({s},{w},{n},{e});out geom;'
-        req = urllib.request.Request(URL, data=urllib.parse.urlencode({"data": q}).encode(),
-                                     headers={"User-Agent": "busstrike-routegen-lab/0.1"})
-        with urllib.request.urlopen(req, timeout=300) as r:
-            body = r.read()
+        q = f'[out:json][timeout:600];rel["boundary"="administrative"]["admin_level"="6"]({s},{w},{n},{e});out geom;'
+        body = post(q)
         args.boundaries.write_bytes(body)
         print(f"경계 → {args.boundaries} ({len(body):,} bytes)")
     return 0

@@ -141,7 +141,7 @@ def make_handler(store: Store, lab=None):
             self.end_headers()
             self.wfile.write(payload)
 
-        def _lab_get(self, path: str) -> bool:
+        def _lab_get(self, path: str, query: str = "") -> bool:
             from .routegen_lab import LabError, handle_get
             if lab is None:
                 if path == "/lab" or path.startswith("/api/lab/"):
@@ -150,7 +150,7 @@ def make_handler(store: Store, lab=None):
                     return True
                 return False
             try:
-                got = handle_get(lab, path)
+                got = handle_get(lab, path, query)
             except (LabError, OSError) as error:
                 self._json({"code": getattr(error, "code", "DATA_INCOMPLETE"), "message": str(error)},
                            HTTPStatus.BAD_REQUEST)
@@ -168,7 +168,7 @@ def make_handler(store: Store, lab=None):
 
         def do_GET(self) -> None:
             parts = urlsplit(self.path)
-            if self._lab_get(parts.path):
+            if self._lab_get(parts.path, parts.query):
                 return
             if parts.path in {"/", "/operator", "/operator/"}:
                 return self._asset(WEB / "index.html", "text/html; charset=utf-8")
@@ -293,10 +293,14 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--lab-dir", type=Path, help="routegen 실험실 데이터 폴더(build_lab_data.py 출력)")
     parser.add_argument("--lab-region", type=Path, help="구 묶음을 푼 region 폴더(<구>_0610_v4가 들어 있음)")
+    parser.add_argument("--lab-all", type=Path, help="구별 실험실 폴더들의 부모(<slug>/layers/meta.json, build_lab_data --sweep 출력)")
     args = parser.parse_args()
     store = Store(args.a_gtfs, args.service_date)
     lab = None
-    if args.lab_dir:
+    if args.lab_all:
+        from .routegen_lab import LabSet
+        lab = LabSet.scan(args.lab_all)
+    elif args.lab_dir:
         from .routegen_lab import Lab
         if not args.lab_region:
             parser.error("--lab-dir에는 --lab-region이 필요하다")

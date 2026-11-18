@@ -4,10 +4,17 @@ const VARIANT_LABEL = {affected: '흡수 제외 없음', affected_maeul: '마을
 const LAYERS = [
   ['busRoads', '버스 통행 가능 도로(=1)', '--road'], ['strike', '파업 노선', '--strike'], ['maeul', '마을버스', '--maeul'],
   ['gg', '경기버스', '--gg'], ['demand', '잔여 수요', '--strike', true], ['stations', '🚇 지하철역', '--ink', true], ['plan', '셔틀 안', '--plan'],
-  ['planStops', '🚏 셔틀 정차 정류장', '--plan', true], ['bounds', '구 경계', '--ink-2'],
+  ['planStops', '🚏 셔틀 정차 정류장', '--plan', true], ['muni', '지자체 셔틀안(1월 실운행)', '--muni'], ['walkGap', '걸어서 400m 밖 수요(셔틀 안 기준)', '--strike', true], ['bounds', '구 경계', '--ink-2'],
 ];
+const CONFIG_LABEL = {base: '기본(허브 540·정차 8)', hub135: '허브 135', hub135_s12: '허브 135·정차 12'};
+const cfgName = (c) => CONFIG_LABEL[c] || D.meta?.configs?.[c]?.name || c;
+// 시뮬레이터 가정: nowalk = 원래 정류장에서만 탄다, walk = 도보 400m 안 셔틀 정류장까지 걸어가 탄다(walk_eval 결과가 있을 때)
+const SIM = (p, split) => (p && S.assume === 'walk' && p[split + '_walk']) ? p[split + '_walk'] : p?.[split];
+const hasWalk = () => D.results.some((r) => r.exp_walk) || D.muni?.exp_walk;
+const GU = new URLSearchParams(location.search).get('gu') || '';
+const q = (p) => GU ? `${p}${p.includes('?') ? '&' : '?'}gu=${encodeURIComponent(GU)}` : p;
 const DEF_AP = {maeul_cap: 35, maeul_load_ratio: 0.6, gg_cap: 60, gg_busy_ratio: 0.6, maeul_exact_stop: false, gg_exact_stop: true};
-const S = {absorb: 'bundle', net: 'orig', fleet: null, visible: new Set(['busRoads', 'strike', 'demand', 'stations', 'plan', 'planStops', 'bounds']), live: null, hover: null, sel: null};
+const S = {absorb: 'bundle', net: 'orig', fleet: null, config: null, assume: 'nowalk', visible: new Set(['busRoads', 'strike', 'demand', 'stations', 'plan', 'planStops', 'muni', 'walkGap', 'bounds']), live: null, hover: null, sel: null};
 // 이모지를 그릴 수 없는 환경의 대체 아이콘(운영자 대시보드와 같은 그림)
 const FALLBACK_SVG = {
   bus:`<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><circle cx="24" cy="24" r="22" fill="#fff" stroke="#405b77" stroke-width="3"/><rect x="12" y="12" width="24" height="22" rx="5" fill="#2b679c"/><rect x="15" y="15" width="18" height="9" rx="2" fill="#d9f4ff"/><path d="M12 26h24" stroke="#fff" stroke-width="2"/><circle cx="18" cy="30" r="2" fill="#fff"/><circle cx="30" cy="30" r="2" fill="#fff"/><path d="M17 34v3m14-3v3" stroke="#405b77" stroke-width="3"/></svg>`,
@@ -28,7 +35,8 @@ function apKey() { return absorbMode() === 'precise' ? JSON.stringify(absorbPara
 function precomputed() {
   const cv = $('#cover').checked, mode = absorbMode();
   if (mode === 'precise' && apKey() !== JSON.stringify(DEF_AP)) return null;          // 가정값을 바꾸면 사전 계산 없음
-  return D.results.find((r) => r.net === S.net && r.variant === variant() && r.fleet === S.fleet && Boolean(r.cover) === cv && (r.absorb || 'bundle') === mode);
+  return D.results.find((r) => r.net === S.net && r.variant === variant() && r.fleet === S.fleet && Boolean(r.cover) === cv && (r.absorb || 'bundle') === mode
+    && (S.config == null || r.config === S.config));
 }
 function shown() { return S.live && S.live.net === S.net && S.live.variant === variant() && Boolean(S.live.cover) === $('#cover').checked && (S.live.absorb || 'bundle') === absorbMode() && (S.live.apKey || '') === apKey() ? S.live : precomputed(); }
 
@@ -67,6 +75,22 @@ function selStopFeatures() {
   const p = shown(); if (!p || S.sel == null || !p.routes[S.sel]) return fc([]);
   return fc(p.routes[S.sel].stops.filter((sid) => D.stops[sid]).map((sid, k) => ({type: 'Feature', properties: {seq: k + 1, name: D.stops[sid][2]}, geometry: {type: 'Point', coordinates: D.stops[sid].slice(0, 2)}})));
 }
+function walkGapFeatures() {
+  // 표시 중인 셔틀 안의 정류장에서 도로를 따라 400m 안에 들지 않는 동네 수요
+  const p = shown(); if (!p || !D.walk) return fc([]);
+  const stops = new Set(p.routes.flatMap((r) => r.stops));
+  return fc(Object.entries(D.walk.weight).filter(([k]) => !(D.walk.nb[k] || [k]).some((x) => stops.has(x)) && D.stops[k])
+    .map(([k, w]) => ({type: 'Feature', properties: {name: D.stops[k][2], w}, geometry: {type: 'Point', coordinates: D.stops[k].slice(0, 2)}})));
+}
+function muniFeatures() {
+  return D.muni ? fc(D.muni.routes.map((r, i) => line(r.coords, {id: r.id, v: r.vehicles}, 1000 + i))) : fc([]);
+}
+function muniStopFeatures() {
+  if (!D.muni) return fc([]);
+  const seen = new Set(), out = [];
+  for (const r of D.muni.routes) for (const sid of r.stops) if (!seen.has(sid) && D.stops[sid]) { seen.add(sid); out.push({type: 'Feature', properties: {name: D.stops[sid][2], route: r.id}, geometry: {type: 'Point', coordinates: D.stops[sid].slice(0, 2)}}); }
+  return fc(out);
+}
 function planFeatures() {
   const p = shown(); if (!p) return fc([]);
   return fc(p.routes.map((r, i) => line(r.coords, {i, id: r.id, live: p === S.live ? 1 : 0}, i + 1)));
@@ -74,26 +98,38 @@ function planFeatures() {
 
 function render() {
   const v = variant();
-  seg('#netSeg', [['orig', '원래 망'], ['road', '도로 망']], S.net, (x) => { S.net = x; render(); });
+  seg('#netSeg', (D.meta.nets || ['orig', 'road']).map((n) => [n, n === 'road' ? '도로 망' : '원래 망']), S.net, (x) => { S.net = x; render(); });
+  if (S.config != null) {
+    const cs = Object.keys(D.meta.configs).filter((c) => D.results.some((r) => r.config === c && r.fleet === S.fleet));
+    if (!cs.includes(S.config)) S.config = cs.at(-1);
+    $('#configSel').innerHTML = cs.map((c) => `<option value="${esc(c)}" ${c === S.config ? 'selected' : ''}>${esc(cfgName(c))}${D.results.find((r) => r.config === c && r.fleet === S.fleet)?.exp_walk ? ' · 걷기 결과 있음' : ''}</option>`).join('');
+    $('#configSel').onchange = (e) => { S.config = e.target.value; S.sel = null; render(); };
+  }
+  if (hasWalk()) seg('#assumeSeg', [['nowalk', '걷기 없음'], ['walk', '걷기 400m']], S.assume, (x) => { S.assume = x; render(); });
+  $('#assumeRow').hidden = !hasWalk();
   seg('#fleetSeg', D.meta.fleets.map((f) => [f, `${f}대`]), S.fleet, (x) => { S.fleet = Number(x); $('#pF').value = x; render(); });
   seg('#absorbSeg', [['bundle', '기존 흡수 판정'], ['precise', '정밀 흡수(정원·정차)']], S.absorb, (x) => { S.absorb = x; render(); });
   const tot = Object.values(currentStopDemand() || {}).reduce((a, b) => a + b, 0), all = Object.values(D.demand.affected).reduce((a, b) => a + b, 0);
   $('#demandHint').textContent = `셔틀 대상 하루 ${fmt(tot)}명${v !== 'affected' ? ` (흡수로 ${fmt(all - tot)}명 제외)` : ''} · ${VARIANT_LABEL[v]}`;
   const p = shown(), isLive = p && p === S.live;
   $('#planTitle').innerHTML = p ? `${isLive ? '<span class="tag live">직접 실행</span>' : '<span class="tag">사전 계산</span>'} ${S.net === 'road' ? '도로 망' : '원래 망'} · ${VARIANT_LABEL[v]}${absorbMode() === 'precise' ? '(정밀)' : ''} · ${p.fleet}대${p.cover ? ' · 역마다 1노선' : ''}` : (absorbMode() === 'precise' && apKey() !== JSON.stringify(DEF_AP) ? '가정값을 바꿨다 — 왼쪽 5번 노선 생성으로 직접 실행' : '안 없음');
-  const sim = isLive ? S.live.sim : p?.exp;
+  const sim = isLive ? S.live.sim : SIM(p, 'exp');
   renderCoverage(p, isLive);
+  renderMuni(p, isLive);
   const cards = [];
   if (isLive) {
     cards.push(['하루 시뮬레이션', S.live.sim?.rate != null ? `${S.live.sim.rate.toFixed(2)}%` : S.live.sim?.reason ? '실패' : '미실행', S.live.sim?.date ? `${S.live.sim.date} · 충족 ${fmt(S.live.sim.served)}명` : '아래 버튼으로 실행']);
     cards.push(['근사 충족(하루)', fmt(p.approx), `${p.seconds}초 · 후보 ${p.candidates}개`]);
   } else if (p) {
-    cards.push(['충족률 · 실험', p.exp?.rate != null ? `${p.exp.rate.toFixed(2)}%` : '—', p.exp ? `5일 평균 ${fmt(p.exp.served)}명` : '']);
-    cards.push(['충족률 · 테스트', p.test?.rate != null ? `${p.test.rate.toFixed(2)}%` : '—', p.test ? `5일 평균 ${fmt(p.test.served)}명` : '']);
+    const e = SIM(p, 'exp'), t = SIM(p, 'test'), tag = S.assume === 'walk' && p.exp_walk ? ' · 걷기 400m' : '';
+    cards.push(['셔틀만 충족률 · 실험' + tag, e?.rate != null ? `${e.rate.toFixed(2)}%` : '—', e ? `5일 평균 ${fmt(e.served)}명` : (S.assume === 'walk' ? '이 안은 걷기 가정 결과 없음' : '')]);
+    cards.push(['셔틀만 충족률 · 테스트' + tag, t?.rate != null ? `${t.rate.toFixed(2)}%` : '—', t ? `5일 평균 ${fmt(t.served)}명` : '']);
   }
   if (p) {
-    cards.push(['후보 풀이 덮는 수요', `${(100 * p.pool_cover / p.demand_total).toFixed(1)}%`, `${fmt(p.pool_cover)} / ${fmt(p.demand_total)}명`]);
-    cards.push(['노선 수', fmt(p.routes.length), `근사 ${fmt(p.approx)}명`]);
+    if (p.coverage_walk != null) cards.push(['걸어서 400m 안 수요', `${(100 * p.coverage_walk).toFixed(0)}%`, p.coverage_far != null ? `역에서 800m 밖 동네만: ${(100 * p.coverage_far).toFixed(0)}%` : '셔틀 정류장까지 도로를 따라 400m(형평)']);
+    if (p.pool_cover != null) cards.push(['후보 풀이 덮는 수요', `${(100 * p.pool_cover / p.demand_total).toFixed(1)}%`, `${fmt(p.pool_cover)} / ${fmt(p.demand_total)}명`]);
+    cards.push(['노선 수', fmt(p.routes.length), p.approx != null ? `근사 ${fmt(p.approx)}명` : '']);
+    if (p.outside_stops != null) cards.push(['다른 구 정차', `${p.outside_stops}곳`, p.outside_stops ? `${D.meta.gu} 밖 정류장에 선다` : `모두 ${D.meta.gu} 안`]);
   }
   $('#cards').innerHTML = cards.map(([b, s, sm]) => `<div class="card"><b>${b}</b><span>${s}</span><small>${sm}</small></div>`).join('');
   const un = sim?.unserved;
@@ -101,7 +137,7 @@ function render() {
   $('#reasons').innerHTML = un ? [['노선 없음', un.no_connection], ['운행 종료', un.service_end], ['대기 초과', un.wait], ['통행 초과', un.journey], ['만차 거절(사건)', sim.refusals]]
     .map(([k, x]) => `<span>${k}</span><span>${fmt(x)}</span>`).join('') : '<span class="hint">시뮬레이션 결과 없음</span>';
   if (S.sel != null && (!p || !p.routes[S.sel])) S.sel = null;
-  $('#routes').innerHTML = p ? p.routes.map((r, i) => `<tr data-i="${i}" class="${S.sel === i ? 'sel' : ''}"><td>${r.id}</td><td>${r.kind === 'access' ? '→ ' : r.kind === 'egress' ? '← ' : '↔ '}${esc(r.hubs.join('·'))}</td><td class="n">${r.vehicles}</td><td class="n">${Math.round(r.cycle_s / 60)}분</td><td class="n">${fmt(r.approx)}</td></tr>`).join('') : '';
+  $('#routes').innerHTML = p ? p.routes.map((r, i) => `<tr data-i="${i}" class="${S.sel === i ? 'sel' : ''}"><td>${r.id}</td><td>${r.kind === 'access' ? '→ ' : r.kind === 'egress' ? '← ' : '↔ '}${esc(r.hubs.join('·'))}</td><td class="n">${r.vehicles}</td><td class="n">${r.cycle_s ? Math.round(r.cycle_s / 60) + '분' : '—'}</td><td class="n">${r.approx != null ? fmt(r.approx) : (r.outside ? `구 밖 ${r.outside}곳` : '—')}</td></tr>`).join('') : '';
   const sr = p && S.sel != null ? p.routes[S.sel] : null;
   $('#stopSeqTitle').textContent = sr ? `${sr.id} 정류장 순서 · ${sr.stops.length}곳 (${sr.kind === 'access' ? '역으로' : '역에서'})` : '정류장 순서';
   $('#stopSeq').innerHTML = sr ? sr.stops.map((sid, k) => `<li><button type="button" data-sid="${esc(sid)}"><span class="seq">${k + 1}</span>${esc(D.stops[sid]?.[2] ?? sid)}${station(sid) ? ` <span class="hint">🚇 ${esc(station(sid))}</span>` : ''}</button></li>`).join('') : '<li class="hint">노선을 지도나 표에서 클릭하세요</li>';
@@ -111,6 +147,28 @@ function render() {
   updateMap();
 }
 
+function overall(sim, ab) {
+  // 전체 = (마을 흡수 + 경기 흡수 + 셔틀 완료) ÷ 파업 노선 승객
+  const A = Object.values(D.demand.affected).reduce((a, b) => a + b, 0);
+  return sim?.served == null || !ab ? null : 100 * (ab.maeul + ab.gg + sim.served) / A;
+}
+function renderMuni(p, isLive) {
+  const M = D.muni, el = $('#muniBox');
+  if (!M) { el.innerHTML = '<p class="hint">이 구의 지자체 셔틀안은 아직 전사 중입니다.</p>'; return; }
+  if (M.pending) { el.innerHTML = `<h2>지자체 셔틀안 <span class="hint">${M.fleet}대 · 노선 ${M.routes.length}개 · 지도에 청록 점선</span></h2><p class="hint">충족률은 이 구의 실험이 끝나면 같은 조건(도로 망·정밀 흡수)으로 계산해 여기에 나옵니다.</p>`; return; }
+  const rows = [['지자체 셔틀안(1월)', M, 'muni']];
+  for (const r of D.results.filter((x) => x.fleet === M.fleet && x.variant === 'affected_maeul_gg' && x.absorb === 'precise' && !x.cover))
+    rows.push([`우리 생성기 · ${cfgName(r.config)}`, r, r === p ? 'cur' : '']);
+  const pc = (x) => x == null ? '—' : `${x.toFixed(1)}%`;
+  const walk = S.assume === 'walk';
+  el.innerHTML = `<h2>지자체안과 비교 <span class="hint">같은 ${M.fleet}대 · 도로 망 · 정밀 흡수 · 실험 주간 5일 평균 · 시뮬레이터 가정: ${walk ? '걷기 400m' : '걷기 없음'}</span></h2>
+    <table class="cmp"><thead><tr><th>안</th><th>노선</th><th>걸어서 400m 안</th><th>역 800m 밖만</th><th>다른 구 정차</th><th>셔틀 태움</th><th>셔틀만</th><th>전체</th><th>셔틀만(테스트)</th></tr></thead><tbody>
+    ${rows.map(([n, x, cls]) => { const e = SIM(x, 'exp'), t = SIM(x, 'test'), miss = walk && !x.exp_walk;
+      return `<tr class="${cls}"><td>${esc(n)}</td><td>${x.routes.length}</td><td>${x.coverage_walk != null ? (100 * x.coverage_walk).toFixed(0) + '%' : '—'}</td><td>${x.coverage_far != null ? (100 * x.coverage_far).toFixed(0) + '%' : '—'}</td><td>${x.outside_stops ?? (cls === 'muni' ? 0 : '—')}</td><td>${miss ? '—' : fmt(e?.served) + '명'}</td><td>${miss ? '—' : pc(e?.rate)}</td><td>${miss ? '—' : pc(overall(e, x.absorbed))}</td><td>${miss ? '—' : pc(t?.rate)}</td></tr>`; }).join('')}
+    </tbody></table>
+    ${walk ? '<p class="hint">걷기 400m: 원래 정류장에서 탈 수 없으면 도로를 따라 400m 안의 셔틀 정류장까지 걸어가 탄다고 본 시뮬레이션(역 쪽도 지정 정류장 400m 안). 도보 시간은 넣지 않았다. 걷기 가정 결과가 없는 안은 —.</p>' : ''}
+    <p class="hint">지자체안: 원본 노선도를 전사해 정류장 ID로 옮긴 것(중간 정류장을 건너뛰는 구간은 도로 최단 경로로 이음${M.added_segments ? `, ${M.added_segments}구간` : ''}${Object.keys(M.dropped_stops || {}).length ? `, 망에 없는 정류장 ${Object.values(M.dropped_stops).flat().length}곳 뺌` : ''}${M.plan_vehicles !== M.fleet ? `, 원래 ${M.plan_vehicles}대를 ${M.fleet}대로 비례 조정` : ''}).</p>`;
+}
 function renderCoverage(p, isLive) {
   // 전체 = 파업 노선 승객 중 걸어서 갈 수 없는 사람(affected, 하루 5일 평균).
   // 마을·경기가 맡는 몫 = 체크한 흡수로 빠지는 수요. 둘 다 체크하면 마을로 갈 수 있는 사람은 마을 몫, 나머지 중 경기로 갈 수 있는 사람은 경기 몫.
@@ -121,7 +179,7 @@ function renderCoverage(p, isLive) {
   const ab = absorbMode() === 'precise' ? p?.absorbed : null;
   if (ab) { maeul = ab.maeul || 0; gg = ab.gg || 0; }
   const target = A - maeul - gg;
-  const rate = isLive ? S.live.sim?.rate : p?.exp?.rate;
+  const rate = isLive ? S.live.sim?.rate : SIM(p, 'exp')?.rate;
   const el = $('#coverage');
   if (!p || rate == null) { el.innerHTML = `<p class="hint">${isLive ? '하루 시뮬레이션을 돌리면 전체 충족률이 나옵니다.' : '시뮬레이션 결과가 없습니다.'}</p>`; return; }
   const shuttle = rate / 100 * target, unmet = target - shuttle;
@@ -183,17 +241,19 @@ function updateMap() {
   m.getSource('plan').setData(planFeatures());
   m.getSource('planStops').setData(planStopFeatures());
   m.getSource('selStops').setData(selStopFeatures());
+  if (m.getSource('muni')) m.getSource('muni').setData(muniFeatures());
+  if (m.getSource('walkGap')) m.getSource('walkGap').setData(walkGapFeatures());
   const live = shown() === S.live;
   m.setPaintProperty('plan', 'line-color', live ? css('--live') : css('--plan'));
-  const vis = {busRoads: ['busRoads'], strike: ['strike'], maeul: ['maeul'], gg: ['gg'], demand: ['demand-now', 'demand-removed'], stations: ['stations', 'station-labels'], plan: ['plan', 'plan-casing'], planStops: ['plan-stops'], bounds: ['bounds', 'bounds-home', 'bounds-labels']};
+  const vis = {busRoads: ['busRoads'], strike: ['strike'], maeul: ['maeul'], gg: ['gg'], demand: ['demand-now', 'demand-removed'], stations: ['stations', 'station-labels'], plan: ['plan', 'plan-casing'], planStops: ['plan-stops'], muni: D.muni ? ['muni', 'muni-stops'] : [], walkGap: D.walk ? ['walk-gap'] : [], bounds: ['bounds', 'bounds-home', 'bounds-labels']};
   for (const [k, ids] of Object.entries(vis)) for (const id of ids) m.setLayoutProperty(id, 'visibility', S.visible.has(k) ? 'visible' : 'none');
-  $('#status').textContent = shown() ? `${live ? '직접 실행 안' : '사전 계산 안'} 표시 중 · 노선 ${shown().routes.length}개` : '이 조합의 안이 없음';
+  $('#status').textContent = shown() ? `${live ? '직접 실행 안' : '사전 계산 안'} 표시 중 · 노선 ${shown().routes.length}개` : D.meta.results === false ? '미리보기 · 이 구 실험이 아직 돌고 있음(지도 레이어만)' : '이 조합의 안이 없음';
 }
 
 function focus(i) {
   const m = D.map; if (!m) return;
   m.setPaintProperty('plan', 'line-opacity', i == null ? 0.9 : ['case', ['==', ['get', 'i'], i], 1, 0.15]);
-  m.setPaintProperty('plan', 'line-width', i == null ? 3.5 : ['case', ['==', ['get', 'i'], i], 6, 3]);
+  m.setPaintProperty('plan', 'line-width', i == null ? 4.5 : ['case', ['==', ['get', 'i'], i], 7, 3.5]);
   document.querySelectorAll('#routes tr').forEach((tr) => tr.classList.toggle('on', Number(tr.dataset.i) === i));
 }
 
@@ -218,8 +278,8 @@ async function initMap() {
   m.addControl(new maplibregl.NavigationControl({showCompass: false}), 'top-left');
   await new Promise((r) => m.on('load', r));
   m.addSource('bounds', {type: 'geojson', data: fc(D.bounds.map((b) => ({type: 'Feature', properties: {name: b.name, home: b.home ? 1 : 0}, geometry: {type: 'MultiLineString', coordinates: b.lines}})))});
-  m.addLayer({id: 'bounds', type: 'line', source: 'bounds', paint: {'line-color': '#334155', 'line-width': 1.6, 'line-dasharray': [3, 2], 'line-opacity': 0.75}});
-  m.addLayer({id: 'bounds-home', type: 'line', source: 'bounds', filter: ['==', ['get', 'home'], 1], paint: {'line-color': '#334155', 'line-width': 3, 'line-opacity': 0.9}});
+  m.addLayer({id: 'bounds', type: 'line', source: 'bounds', paint: {'line-color': '#94a3b8', 'line-width': 1.2, 'line-dasharray': [3, 2], 'line-opacity': 0.8}});
+  m.addLayer({id: 'bounds-home', type: 'line', source: 'bounds', filter: ['==', ['get', 'home'], 1], paint: {'line-color': '#64748b', 'line-width': 2.2, 'line-opacity': 0.8}});
   m.addSource('boundLabels', {type: 'geojson', data: fc(D.bounds.map((b) => ({type: 'Feature', properties: {name: b.name, home: b.home ? 1 : 0}, geometry: {type: 'Point', coordinates: b.label}})))});
   m.addLayer({id: 'bounds-labels', type: 'symbol', source: 'boundLabels', layout: {'text-field': ['get', 'name'], 'text-size': ['case', ['==', ['get', 'home'], 1], 16, 13], 'text-font': ['Noto Sans Bold'], 'text-allow-overlap': false},
     paint: {'text-color': '#334155', 'text-opacity': 0.75, 'text-halo-color': '#ffffff', 'text-halo-width': 2}});
@@ -236,9 +296,18 @@ async function initMap() {
     paint: {'circle-radius': ['interpolate', ['linear'], ['sqrt', ['+', ['get', 'now'], ['get', 'removed']]], 0, 0, 20, 16], 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': '#8a94a3', 'circle-stroke-width': 1.2}});
   m.addLayer({id: 'demand-now', type: 'circle', source: 'demand', filter: ['>', ['get', 'now'], 0.5],
     paint: {'circle-radius': ['interpolate', ['linear'], ['sqrt', ['get', 'now']], 0, 0, 20, 16], 'circle-color': '#e3508e', 'circle-opacity': 0.35, 'circle-stroke-color': '#c2306f', 'circle-stroke-width': 0.6}});
+  m.addSource('walkGap', {type: 'geojson', data: walkGapFeatures()});
+  m.addLayer({id: 'walk-gap', type: 'circle', source: 'walkGap', paint: {'circle-radius': ['interpolate', ['linear'], ['sqrt', ['get', 'w']], 0, 2, 20, 14],
+    'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': '#d03b3b', 'circle-stroke-width': 1.8}});
+  m.on('mousemove', 'walk-gap', (e) => { const q = e.features[0].properties; popup.setLngLat(e.lngLat).setHTML(`${esc(q.name)}<br>셔틀 수요 ${fmt(q.w, 1)}명/일 · 걸어서 400m 안 셔틀 정류장 없음`).addTo(m); });
+  m.on('mouseleave', 'walk-gap', () => popup.remove());
+  m.addSource('muni', {type: 'geojson', data: muniFeatures()});
+  m.addLayer({id: 'muni', type: 'line', source: 'muni', paint: {'line-color': css('--muni'), 'line-width': 3, 'line-opacity': 0.85, 'line-dasharray': [2, 1.2]}, layout: {'line-join': 'round'}});
+  m.addSource('muniStops', {type: 'geojson', data: muniStopFeatures()});
+  m.addLayer({id: 'muni-stops', type: 'circle', source: 'muniStops', paint: {'circle-radius': 3.5, 'circle-color': '#ffffff', 'circle-stroke-color': css('--muni'), 'circle-stroke-width': 2}});
   m.addSource('plan', {type: 'geojson', data: planFeatures()});
   m.addLayer({id: 'plan-casing', type: 'line', source: 'plan', paint: {'line-color': '#ffffff', 'line-width': 6.5, 'line-opacity': 0.85}, layout: {'line-cap': 'round', 'line-join': 'round'}});
-  m.addLayer({id: 'plan', type: 'line', source: 'plan', paint: {'line-color': css('--plan'), 'line-width': 3.5, 'line-opacity': 0.9}, layout: {'line-cap': 'round', 'line-join': 'round'}});
+  m.addLayer({id: 'plan', type: 'line', source: 'plan', paint: {'line-color': css('--plan'), 'line-width': 4.5, 'line-opacity': 0.95}, layout: {'line-cap': 'round', 'line-join': 'round'}});
   m.addImage('ic-bus', await iconImage('🚏', FALLBACK_SVG.bus), {pixelRatio: 2});
   m.addImage('ic-metro', await iconImage('🚇', FALLBACK_SVG.metro), {pixelRatio: 2});
   m.addSource('planStops', {type: 'geojson', data: planStopFeatures()});
@@ -258,7 +327,7 @@ async function initMap() {
   m.on('mousemove', 'plan', (e) => {
     const i = e.features[0].properties.i, r = shown().routes[i];
     focus(i);
-    popup.setLngLat(e.lngLat).setHTML(`<b>${r.id}</b> ${r.kind === 'access' ? '→' : '←'} ${esc(r.hubs.join('·'))}<br>${r.vehicles}대 · 주기 ${Math.round(r.cycle_s / 60)}분 · 정류장 ${r.stops.length}개<br>근사 ${fmt(r.approx)}명/일`).addTo(m);
+    popup.setLngLat(e.lngLat).setHTML(`<b>${r.id}</b> ${r.kind === 'access' ? '→' : '←'} ${esc(r.hubs.join('·'))}<br>${r.vehicles}대 · 주기 ${r.cycle_s ? Math.round(r.cycle_s / 60) + '분' : '—'} · 정류장 ${r.stops.length}개<br>근사 ${fmt(r.approx)}명/일`).addTo(m);
   });
   m.on('mouseleave', 'plan', () => { focus(S.sel); popup.remove(); });
   m.on('click', 'plan', (e) => select(e.features[0].properties.i));
@@ -267,6 +336,10 @@ async function initMap() {
   for (const l of ['plan', 'plan-stops']) { m.on('mouseenter', l, () => { m.getCanvas().style.cursor = 'pointer'; }); m.on('mouseleave', l, () => { m.getCanvas().style.cursor = ''; }); }
   m.on('mousemove', 'demand-now', (e) => { if (m.queryRenderedFeatures(e.point, {layers: ['plan']}).length) return; const p = e.features[0].properties; popup.setLngLat(e.lngLat).setHTML(`${esc(p.name)}<br>잔여 수요 ${fmt(p.now, 1)}명/일${p.removed > 0.5 ? ` · 흡수 제외 ${fmt(p.removed, 1)}명` : ''}`).addTo(m); });
   m.on('mouseleave', 'demand-now', () => popup.remove());
+  m.on('mousemove', 'muni', (e) => { if (m.queryRenderedFeatures(e.point, {layers: ['plan']}).length) return; const p = e.features[0].properties; popup.setLngLat(e.lngLat).setHTML(`<b style="color:${css('--muni')}">지자체 셔틀 ${esc(p.id)}</b><br>${p.v}대`).addTo(m); });
+  m.on('mouseleave', 'muni', () => popup.remove());
+  m.on('mousemove', 'muni-stops', (e) => { const p = e.features[0].properties; popup.setLngLat(e.lngLat).setHTML(`지자체 셔틀 정차 · ${esc(p.name)}<br><span style="color:#667">${esc(p.route)}</span>`).addTo(m); });
+  m.on('mouseleave', 'muni-stops', () => popup.remove());
   updateMap();
 }
 
@@ -285,8 +358,8 @@ function select(i) {
 async function runGen() {
   const b = $('#runGen'); b.disabled = true; b.textContent = '생성 중… (수 초~수십 초)';
   try {
-    const params = {radius_m: Number($('#pR').value) * 1000, max_stops: $('#pN').value === 'none' ? null : Number($('#pN').value), max_detour: Number($('#pD').value), l_max_min: Number($('#pL').value)};
-    const res = await post('/api/lab/generate', {net: S.net, variant: variant(), fleet: Number($('#pF').value), params, cover: $('#cover').checked, absorb: absorbMode(), absorb_params: absorbParams()});
+    const params = {hub_min: Number($('#pH').value), radius_m: Number($('#pR').value) * 1000, max_stops: $('#pN').value === 'none' ? null : Number($('#pN').value), max_detour: Number($('#pD').value), l_max_min: Number($('#pL').value)};
+    const res = await post('/api/lab/generate', {gu: GU || D.meta.gu_key, net: S.net, variant: variant(), fleet: Number($('#pF').value), params, cover: $('#cover').checked, absorb: absorbMode(), absorb_params: absorbParams()});
     S.live = {...res, sim: null, apKey: apKey()}; S.sel = null;
     toast(`노선 ${res.routes.length}개 · 근사 ${fmt(res.approx)}명 · ${res.seconds}초`);
     render();
@@ -297,7 +370,7 @@ async function runSim() {
   const p = shown(); if (!p) return;
   const b = $('#runSim'); b.disabled = true; b.textContent = '시뮬레이션 중… (10~30초)';
   try {
-    const res = await post('/api/lab/simulate', {net: S.net, variant: variant(), fleet: p.fleet, date: $('#simDate').value, routes: p.routes.map((r) => ({stops: r.stops, vehicles: r.vehicles})), absorb: absorbMode(), absorb_params: absorbParams()});
+    const res = await post('/api/lab/simulate', {gu: GU || D.meta.gu_key, net: S.net, variant: variant(), fleet: p.fleet, date: $('#simDate').value, routes: p.routes.map((r) => ({stops: r.stops, vehicles: r.vehicles})), absorb: absorbMode(), absorb_params: absorbParams()});
     if (res.verify_pass !== true) { toast(`실행 실패: ${res.reason || res.stage_failed}`); return; }
     if (p === S.live) S.live.sim = res;
     toast(`${res.date} 충족률 ${res.rate.toFixed(2)}% (충족 ${fmt(res.served)} / ${fmt(res.total)}명) · M07 pass · ${res.seconds}초`);
@@ -307,10 +380,21 @@ async function runSim() {
 }
 
 async function main() {
-  const [meta, stops, stations, demand, busRoads, strike, absorbing, results, bounds] = await Promise.all(
-    ['meta', 'stops', 'stations', 'demand', 'bus_roads', 'strike_routes', 'absorbing_routes', 'results', 'boundaries'].map((n) => get(n === 'meta' ? '/api/lab/meta' : `/api/lab/layer/${n}`)));
-  Object.assign(D, {meta, stops, stations, demand, busRoads, strike, absorbing, results, bounds});
-  S.fleet = meta.fleets[0]; $('#pF').value = S.fleet;
+  const gus = await get('/api/lab/gus');
+  $('#guSel').innerHTML = gus.map((g) => `<option value="${esc(g.slug)}">${esc(g.gu)}</option>`).join('');
+  $('#guSel').value = GU || gus[0]?.slug;
+  $('#guSel').onchange = (e) => { location.search = `?gu=${encodeURIComponent(e.target.value)}`; };
+  const [meta, stops, stations, demand, busRoads, strike, absorbing, results, bounds, muni, walk] = await Promise.all(
+    ['meta', 'stops', 'stations', 'demand', 'bus_roads', 'strike_routes', 'absorbing_routes', 'results', 'boundaries', 'municipal', 'walk'].map((n) => get(q(n === 'meta' ? '/api/lab/meta' : `/api/lab/layer/${n}`))));
+  Object.assign(D, {meta, stops, stations, demand, busRoads, strike, absorbing, results, bounds, muni, walk});
+  S.fleet = muni?.fleet ?? meta.fleets[0]; $('#pF').value = S.fleet;
+  if (meta.mode === 'sweep') {
+    // 구별 실험: 도로 망 · 마을·경기 정밀 흡수만 사전 계산했다
+    S.net = 'road'; S.absorb = 'precise'; S.config = Object.keys(meta.configs).at(-1);
+    if (results.some((r) => r.exp_walk)) S.assume = 'walk';   // 걷기·형평 실험 안이 있으면 그 가정으로 시작
+    $('#noMaeul').checked = true; $('#noGg').checked = true; $('#configRow').hidden = false;
+  }
+  $('#muniLegend').hidden = !muni;
   $('#simDate').innerHTML = meta.dates_exp.map((d) => `<option value="${d}" ${d === meta.dates_exp[2] ? 'selected' : ''}>${d.slice(4, 6)}/${d.slice(6)}</option>`).join('');
   layersPanel();
   for (const id of ['#noMaeul', '#noGg', '#cover', '#aMx']) $(id).onchange = render;

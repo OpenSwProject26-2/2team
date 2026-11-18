@@ -52,6 +52,7 @@ class Model:
         self.groups = dict(groups or {})            # 노선 → 그룹(역)
         self.group_weight = dict(group_weight or {})
         self.required: set[str] = set()             # 덮어야 하는 그룹(cover_groups일 때 allocate가 정한다)
+        self.fixed: dict[str, int] = {}             # 반드시 열어 둘 노선 → 최소 대수(형평 먼저 단계가 정한다)
         self.ids = sorted(r for r, _, _ in routes)
         self.cycle = {r: c for r, c, _ in routes}
         keys = sorted({k for _, _, ks in routes for k in ks})
@@ -95,6 +96,8 @@ class Model:
         if self.p.respect_n0 and any(k < self.n0[r] for r, k in n.items() if k > 0):
             return False
         if self.required and not self.required <= {self.groups.get(r) for r, k in n.items() if k > 0}:
+            return False
+        if any(n.get(r, 0) < k for r, k in self.fixed.items()):
             return False
         return True
 
@@ -285,10 +288,14 @@ def allocate(model: Model, budget: int, starts: dict[str, dict[str, int]] | None
 
     starts: 추가 초기해(이름 → 배분). 예산과 차량 합이 같고 이 모델의 노선만 써야 한다.
     """
-    seed: dict[str, int] = {}
+    seed: dict[str, int] = dict(model.fixed)          # 고정 노선(형평 먼저)은 처음부터 열고 줄이지 않는다
+    if sum(seed.values()) > budget:
+        raise ValueError(f"고정 노선 대수 {sum(seed.values())}가 예산 {budget}보다 많다")
     model.required = set()
     if model.p.cover_groups and model.groups:
-        seed, model.required = cover_seed(model, budget)
+        cs, model.required = cover_seed(model, budget - sum(seed.values()))
+        for r, k in cs.items():
+            seed[r] = max(seed.get(r, 0), k)
     g = greedy(model, budget, seed)
     v_greedy = model.value(g)
     f = fill(model, budget, g)

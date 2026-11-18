@@ -3,9 +3,10 @@
 정식 M08 계약이 아니다. 외부 주소에 바인딩하지 않는 `d_dashboard` 서버 안에서만 동작한다.
 
 - GET  /lab, /lab.js                 화면
-- GET  /api/lab/meta                 구·대수·변형·도로망 통계
-- GET  /api/lab/layer/<name>         stops · stations · demand · bus_roads · strike_routes · absorbing_routes · results
-- POST /api/lab/generate             {net, variant, fleet, params} → 후보 생성 + 배분(근사)
+- GET  /api/lab/gus                  고를 수 있는 구 목록(--lab-all)
+- GET  /api/lab/meta?gu=<slug>       구·대수·변형·도로망 통계
+- GET  /api/lab/layer/<name>?gu=     stops · stations · demand · bus_roads · strike_routes · absorbing_routes · results · municipal
+- POST /api/lab/generate             {gu, net, variant, fleet, params} → 후보 생성 + 배분(근사)
 - POST /api/lab/simulate             {net, variant, fleet, date, routes:[{stops, vehicles}]} → 변환기 → M05 → M07 하루
 
 데이터는 `experiments/routegen_lab/run_networks.py`·`build_lab_data.py`가 저장소 밖 폴더(`--lab-dir`)에 만든 것을 읽는다.
@@ -35,7 +36,8 @@ from busstrike.sim.traveltime import TravelTimeTable
 
 ROOT = Path(__file__).resolve().parents[3]
 WEB = ROOT / "web" / "operator"
-LAYERS = ("meta", "stops", "stations", "demand", "bus_roads", "strike_routes", "absorbing_routes", "results", "boundaries")
+LAYERS = ("meta", "stops", "stations", "demand", "bus_roads", "strike_routes", "absorbing_routes", "results", "boundaries",
+          "municipal", "walk")
 NETS = ("orig", "road")
 
 
@@ -142,11 +144,13 @@ def _load_run_matrix():
 
 
 class Lab:
-    def __init__(self, lab_dir: Path, region: Path):
+    def __init__(self, lab_dir: Path, region: Path | None = None):
         self.dir = Path(lab_dir).resolve()
         self.layers = self.dir / "layers"
         self.meta = json.loads((self.layers / "meta.json").read_text(encoding="utf-8"))
-        self.root = Path(region).resolve() / f"{self.meta['gu_key']}_0610_v4"
+        # 구별 실험(hub_sweep)으로 만든 실험실은 meta에 묶음 위치(region_root)가 있다
+        self.root = (Path(self.meta["region_root"]) if self.meta.get("region_root")
+                     else Path(region).resolve() / f"{self.meta['gu_key']}_0610_v4")
         self.lock = Lock()
         self._net: dict[str, D.Network] = {}
         self._rows = None
@@ -159,7 +163,10 @@ class Lab:
     def layer_bytes(self, name: str) -> bytes:
         if name not in LAYERS:
             raise LabError("INPUT_INVALID", f"레이어 이름을 모른다: {name}")
-        return (self.layers / f"{name}.json").read_bytes()
+        path = self.layers / f"{name}.json"
+        if name in ("municipal", "walk") and not path.exists():
+            return b"null"
+        return path.read_bytes()
 
     def network(self, net: str) -> D.Network:
         if net not in NETS:
@@ -223,12 +230,14 @@ class Lab:
                               max_stops=None if prm.get("max_stops") in (None, "", "none", 0) else int(prm["max_stops"]),
                               max_detour=float(prm.get("max_detour", d.max_detour)),
                               l_max_min=tuple(sorted({20, l_max})) if l_max > 20 else (l_max,),
-                              home_gu=self.meta["gu"], distance_basis="network")
+                              home_gu=self.meta["gu"], distance_basis="network",
+                              hub_min=None if prm.get("hub_min") in (None, "", 0) else float(prm["hub_min"]))
             cover = bool(req.get("cover", False))
         except (TypeError, ValueError) as error:
             raise LabError("INPUT_INVALID", f"매개변수가 잘못되었다: {error}") from error
-        if not (500 <= params.radius_m <= 6000 and 1.0 <= params.max_detour <= 5.0 and 10 <= l_max <= 60):
-            raise LabError("INPUT_INVALID", "범위: R 500~6000m, 우회율 1.0~5.0, 편도 10~60분")
+        if not (500 <= params.radius_m <= 6000 and 1.0 <= params.max_detour <= 5.0 and 10 <= l_max <= 60
+                and 20 <= params.f_min <= 5000):
+            raise LabError("INPUT_INVALID", "범위: R 500~6000m, 우회율 1.0~5.0, 편도 10~60분, 허브 기준 20~5000명")
         absorb = req.get("absorb", "bundle")
         if absorb not in ("bundle", "precise"):
             raise LabError("INPUT_INVALID", "absorb는 bundle 또는 precise다.")
@@ -318,22 +327,93 @@ class Lab:
             return out
 
 
-def handle_get(lab: Lab, path: str):
-    """(status, content_type, body) 또는 None(이 모듈 경로가 아님)."""
+class LabSet:
+    """여러 구 실험실(`<all>/<slug>/layers/meta.json`)을 구 이름(slug)으로 고른다. 실험실은 처음 쓸 때 연다."""
+
+    def __init__(self, labs: dict[str, tuple[Path, Path | None]], all_dir: Path | None = None):
+        self.all_dir = all_dir
+        self.spec: dict = {}
+        self.open: dict[str, Lab] = {}
+        self.lock = Lock()
+        self.info: list[dict] = []
+        self._set(labs)
+
+    def _set(self, labs: dict) -> None:
+        info = []
+        for slug, (d, _) in sorted(labs.items()):
+            m = json.loads((Path(d) / "layers" / "meta.json").read_text(encoding="utf-8"))
+            info.append({"slug": slug, "gu": m["gu"], "fleets": m["fleets"], "mtime": (Path(d) / "layers" / "meta.json").stat().st_mtime,
+                         "preview": not m.get("results", True)})
+        before = {y["slug"]: (y["mtime"], Path(self.spec[y["slug"]][0]).resolve()) for y in self.info if self.spec.get(y["slug"])}
+        for x in info:   # 레이어를 다시 만든 구(미리보기 → 실험 완료)는 다시 연다
+            if before.get(x["slug"]) != (x["mtime"], Path(labs[x["slug"]][0]).resolve()):
+                self.open.pop(x["slug"], None)
+        self.spec, self.info = dict(sorted(labs.items())), info
+
+    def refresh(self) -> None:
+        """--lab-all이면 폴더를 다시 훑어 새로 생긴 구를 더한다(서버를 다시 켜지 않아도 된다)."""
+        if self.all_dir is not None:
+            with self.lock:
+                self._set(self._scan(self.all_dir))
+
+    @classmethod
+    def single(cls, lab: Lab) -> "LabSet":
+        """--lab-dir 하나(예전 방식)를 구 하나짜리 묶음으로."""
+        ls = cls.__new__(cls)
+        ls.spec, ls.open, ls.lock, ls.all_dir = {lab.meta["gu_key"]: None}, {lab.meta["gu_key"]: lab}, Lock(), None
+        ls.info = [{"slug": lab.meta["gu_key"], "gu": lab.meta["gu"], "fleets": lab.meta["fleets"]}]
+        return ls
+
+    @staticmethod
+    def _scan(all_dir: Path) -> dict:
+        return {p.parent.parent.name: (p.parent.parent, None) for p in sorted(Path(all_dir).glob("*/layers/meta.json"))}
+
+    @classmethod
+    def scan(cls, all_dir: Path) -> "LabSet":
+        return cls(cls._scan(all_dir), Path(all_dir))
+
+    def get(self, slug: str | None) -> Lab:
+        if slug and slug not in self.spec:
+            self.refresh()
+        if not self.spec:
+            raise LabError("DATA_INCOMPLETE", "실험실 데이터가 없다.")
+        slug = slug or next(iter(self.spec))
+        if slug not in self.spec:
+            raise LabError("INPUT_INVALID", f"구를 모른다: {slug}")
+        with self.lock:
+            if slug not in self.open:
+                self.open[slug] = Lab(*self.spec[slug])
+            return self.open[slug]
+
+
+def _labs(labs) -> LabSet:
+    return labs if isinstance(labs, LabSet) else LabSet.single(labs)
+
+
+def handle_get(labs, path: str, query: str = ""):
+    """(status, content_type, body) 또는 None(이 모듈 경로가 아님). labs = Lab 또는 LabSet, query의 gu로 구를 고른다."""
+    from urllib.parse import parse_qs
+    labs = _labs(labs)
+    gu = (parse_qs(query).get("gu") or [None])[0]
     if path == "/lab":
         return 200, "text/html; charset=utf-8", (WEB / "lab.html").read_bytes()
     if path == "/lab.js":
         return 200, "text/javascript; charset=utf-8", (WEB / "lab.js").read_bytes()
+    if path == "/api/lab/gus":
+        labs.refresh()
+        info = [{k: v for k, v in x.items() if k != "mtime"} for x in labs.info]
+        return 200, "application/json; charset=utf-8", json.dumps(info, ensure_ascii=False).encode()
     if path == "/api/lab/meta":
-        return 200, "application/json; charset=utf-8", lab.layer_bytes("meta")
+        return 200, "application/json; charset=utf-8", labs.get(gu).layer_bytes("meta")
     if path.startswith("/api/lab/layer/"):
-        return 200, "application/json; charset=utf-8", lab.layer_bytes(path.rsplit("/", 1)[1])
+        return 200, "application/json; charset=utf-8", labs.get(gu).layer_bytes(path.rsplit("/", 1)[1])
     return None
 
 
-def handle_post(lab: Lab, path: str, request: dict):
+def handle_post(labs, path: str, request: dict):
+    labs = _labs(labs)
     if path == "/api/lab/generate":
-        return lab.generate(request)
+        return labs.get(request.get("gu")).generate(request)
     if path == "/api/lab/simulate":
-        return lab.simulate(request)
+        return labs.get(request.get("gu")).simulate(request)
     return None

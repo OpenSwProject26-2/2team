@@ -7,6 +7,9 @@
 4. 섹터 분할 + 최선 삽입: 패턴·m·L_max마다 섹터별 seed = argmax v_s × dist(s, 중심),
    삽입 점수 = 증가 덮개 수요 ÷ 증가 편도 시간. 제약(편도·정차 수·우회율·S2) 위반 삽입은 버린다. 끝에 2-opt 1회.
 5. 추가 후보: 허브·방향마다 수요 상위 seed의 최단경로 피더(삽입 휴리스틱의 비교 기준).
+5b. (multi=True일 때) 여러 역 경유 피더: 수요가 여러 역으로 흩어진 정류장(가장 많이 가는 역 몫 < multi_spread)에서 출발해
+   그 정류장 승객이 많이 가는 역(허브가 아니어도 됨) 2~multi_max_hubs곳의 access 지정 정류장을 차례로 들른다.
+   경로는 망 최단경로, 편도 ≤ multi_l_max_min분, 우회율 ≤ multi_max_detour, U턴·중복 정차 금지. kind = "multi".
 6. 패턴: 회송 피더(access: 정류장들 → 역 access 정류장, egress: 역 egress 정류장 → 정류장들),
    편도 연결(역 i egress 정류장 → 정류장들 → 역 j access 정류장). 순환·양방향 영업은 만들지 않는다.
 7. 후보 처리: 덮개(노선 위 o가 d보다 앞인 OD), 주기(`cycle.route_cycle`), 중복 제거(Jaccard).
@@ -43,9 +46,24 @@ class Params:
     home_gu: str = "구로구"
     # "crow"(기본, 이전 결과 재현) 또는 "network"(권역·우회율·seed 거리를 모두 망 위 버스 노선 거리로)
     distance_basis: str = "crow"
+    # 여러 역 경유 피더(5b). 기본은 끔(이전 결과 재현)
+    multi: bool = False
+    multi_top: int = 40               # 출발 정류장 수(수요 큰 순)
+    multi_spread: float = 0.7         # 가장 많이 가는 역 몫이 이보다 작아야 "흩어진" 정류장
+    multi_max_hubs: int = 3
+    multi_l_max_min: int = 40
+    multi_max_detour: float = 3.0
+    # 허브 기준(하루 수요) 직접 지정. None = 2 × 좌석 × (240 ÷ C₀) = 540
+    hub_min: float | None = None
+    # 구 수요에 맞춘 허브 기준: 역 수요를 큰 순으로 더해 전체의 hub_share가 될 때까지의 역을 허브로(hub_min보다 우선).
+    # hub_floor = 그래도 이보다 작은 역은 허브로 두지 않는다(하루 명)
+    hub_share: float | None = None
+    hub_floor: float = 30.0
 
     @property
     def f_min(self) -> float:
+        if self.hub_min is not None:
+            return self.hub_min
         return 2 * self.seat * (self.horizon_s / self.c0_s)
 
 
@@ -54,8 +72,8 @@ class Candidate:
     route_id: str
     kind: str                         # access | egress | connect
     stops: tuple[str, ...]
-    origin: str                       # generated | shortest_path_feeder
-    hubs: tuple[str, ...]             # 패턴의 역(access/egress: 1개, connect: i, j)
+    origin: str                       # generated | shortest_path_feeder | multi_station_feeder
+    hubs: tuple[str, ...]             # 패턴의 역(access/egress: 1개, connect: i, j, multi: 들르는 순서)
     cluster: int | None
     made_by: tuple[str, ...]          # 이 정차열을 낸 (m, L_max) 조합 또는 "sp:seed"
     oneway_s: int = 0
@@ -108,10 +126,26 @@ def cover_value(stops: tuple[str, ...], od_total: dict[tuple[str, str], float]) 
 
 # ---------------------------------------------------------------- 1~3 허브·권역·병합
 
+def hub_threshold(demand: Demand, net: Network, p: Params) -> float:
+    """허브 기준(하루 수요). hub_share가 있으면 구 수요에 맞춰 정하고, 없으면 f_min."""
+    if p.hub_share is None:
+        return p.f_min
+    F = demand.station_total()
+    vals = sorted((v for k, v in F.items() if k in net.stations
+                   and (net.stations[k].access_stop or net.stations[k].egress_stop)), reverse=True)
+    total, acc = sum(vals), 0.0
+    for v in vals:
+        acc += v
+        if total and acc / total >= p.hub_share:
+            return max(v, p.hub_floor)
+    return max(vals[-1] if vals else p.f_min, p.hub_floor)
+
+
 def hubs_of(demand: Demand, net: Network, p: Params) -> dict[str, float]:
     F = demand.station_total()
+    th = hub_threshold(demand, net, p)
     return {k: F[k] for k in sorted(F)
-            if F[k] >= p.f_min and k in net.stations
+            if F[k] >= th and k in net.stations
             and (net.stations[k].access_stop or net.stations[k].egress_stop)}
 
 
@@ -499,6 +533,11 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
                 add(pat.kind, stops, "shortest_path_feeder", pat.hubs, cl_of[h], f"sp:{s}")
     t_sp = time.time()
 
+    # 5b. 여러 역 경유 피더
+    if p.multi:
+        _multi_feeders(net, graph, demand, p, add)
+    t_multi = time.time()
+
     # 7. 덮개·주기
     cands = []
     for key in sorted(raw, key=lambda k: (k[0], k[1], k[2], k[3])):
@@ -514,9 +553,47 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
     return Result(p, hubs, {k: len(v) for k, v in K.items()}, {f"{a}-{b_}": round(v, 4) for (a, b_), v in O.items()},
                   clusters, cands, dropped,
                   {"setup": round(t_setup - t0, 2), "insertion": round(t_gen - t_setup, 2),
-                   "shortest_path_feeders": round(t_sp - t_gen, 2), "cover_cycle": round(t_fin - t_sp, 2)},
+                   "shortest_path_feeders": round(t_sp - t_gen, 2), "multi_station_feeders": round(t_multi - t_sp, 2),
+                   "cover_cycle": round(t_fin - t_multi, 2)},
                   {"/".join(k): v for k, v in sorted(b.reasons.items())},
                   {"/".join(k): v for k, v in sorted(b.reason_sets.items())})
+
+
+def _multi_feeders(net: Network, graph: Graph, demand: Demand, p: Params, add) -> None:
+    """5b. 흩어진 수요 정류장 → 역 여러 곳(access 지정 정류장)을 차례로 들르는 후보."""
+    from itertools import permutations
+    access_of = {k: st.access_stop for k, st in net.stations.items() if st.access_stop}
+    by_stop: dict[str, dict[str, float]] = {}
+    for (o, d), hs in demand.od.items():
+        for k, a in access_of.items():
+            if d == a:
+                by_stop.setdefault(o, {})
+                by_stop[o][k] = by_stop[o].get(k, 0.0) + sum(hs)
+    station_stops = frozenset(access_of.values())
+    lim = Limits(p.multi_l_max_min * 60, None, p.multi_max_detour)
+    seeds = sorted((s for s, m in by_stop.items() if s not in station_stops and net.stops.get(s)
+                    and net.stops[s].gu == p.home_gu and sum(m.values()) > 0
+                    and max(m.values()) / sum(m.values()) < p.multi_spread),
+                   key=lambda s: (-sum(by_stop[s].values()), s))[:p.multi_top]
+    for s in seeds:
+        top = sorted(by_stop[s], key=lambda k: (-by_stop[s][k], k))[:p.multi_max_hubs]
+        tried: set[tuple[str, ...]] = set()
+        for n in range(2, len(top) + 1):
+            for order in permutations(top, n):
+                anchors = [s] + [access_of[k] for k in order]
+                if len(set(anchors)) != len(anchors) or tuple(anchors) in tried:
+                    continue
+                tried.add(tuple(anchors))
+                stops: tuple[str, ...] | None = (s,)
+                for tgt in anchors[1:]:      # 역 정류장에서 되돌아 나가지 않게(U턴·같은 정류장 반복 없이) 이어 붙인다
+                    leg = graph.path_continue(stops[-2] if len(stops) > 1 else None, stops[-1], tgt, set(stops[:-1]))
+                    if leg is None:
+                        stops = None
+                        break
+                    stops = stops + leg[1:]
+                if stops is None or graph.violations(stops, station_stops, lim):
+                    continue
+                add("multi", stops, "multi_station_feeder", tuple(order), None, f"multi:{s}")
 
 
 def pools(cands: list[Candidate], threshold: float) -> dict[str, tuple[list[Candidate], int]]:
