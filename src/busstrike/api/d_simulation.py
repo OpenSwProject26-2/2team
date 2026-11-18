@@ -1,4 +1,10 @@
-"""Read-only adapter for the published routegen v4 report and optional run artifacts."""
+"""Read-only adapter for the published routegen v4 report and optional run artifacts.
+
+결과 폴더(`results_root/<구>/manifest.json`)는 두 형식을 읽는다.
+- v4(PR #41): 구·대수·변형·안(ours/sp)이 아래 상수로 정해져 있고, 5일 평균은 보고서 md에서 읽는다.
+- `schema: "routegen-results/1"`: 구·대수·변형·안 목록과 파일 위치를 manifest가 알려 준다. 5일 평균은 날짜별
+  M05 `metrics.json`에서 계산한다(보고서를 읽지 않는다). 형식은 `RESULTS_SCHEMA` 주석을 본다.
+"""
 
 from __future__ import annotations
 
@@ -49,6 +55,14 @@ SEOUL_DISTRICTS = (
     "중랑구",
 )
 VARIANTS = ("affected", "affected_maeul", "affected_gg", "affected_maeul_gg")
+RESULTS_SCHEMA = "routegen-results/1"
+# manifest(routegen-results/1) 예:
+# {"schema": "routegen-results/1", "region": "guro", "gu": "구로구", "center": [126.87, 37.49],
+#  "network_snapshot_id": "...", "root": "<구 묶음 폴더(stops.csv)>", "network_file": "<결과 폴더 기준 travel_times 경로>",
+#  "fleets": [11, 16], "variants": ["precise_affected_maeul_gg"],
+#  "plans": [{"id": "hub135_s12", "name": "우리 안 · 허브 135·정차 12", "method": "...", "baseline": false,
+#             "fleet": 11, "variant": "precise_affected_maeul_gg", "plan_id": "...", "plan_file": "<상대 경로>",
+#             "run_label": "ours", "runs": {"exp": "<상대 경로>/runs.json", "test": "..."}}]}
 PERIODS = {
     "exp": [f"2026-10-{d:02d}" for d in range(26, 31)],
     "test": [f"2026-11-{d:02d}" for d in range(2, 7)],
@@ -57,6 +71,14 @@ PERIODS = {
 
 def _read(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _read_index(path: Path) -> dict:
+    """실행 색인(runs.json). 쓰는 중이거나 깨진 파일은 없는 것으로 본다(대시보드를 멈추지 않는다)."""
+    try:
+        return _read(path)
+    except (OSError, ValueError):
+        return {}
 
 
 @lru_cache(maxsize=128)
@@ -183,18 +205,109 @@ class SimulationStore:
         self.inputs_root = inputs_root.resolve() if inputs_root else None
         self.report = report_rows()
         self.reasons = reason_rows()
+        self._mean_cache: dict[tuple, dict | None] = {}
+
+    # ------------------------------------------------------------ 결과 목록(manifest)
+    def _catalog(self, region: str) -> dict | None:
+        """routegen-results/1 manifest(없거나 v4 형식이면 None)."""
+        path = self._manifest(region)
+        if not path.is_file():
+            return None
+        man = _read(path)
+        return man if man.get("schema") == RESULTS_SCHEMA else None
+
+    def _catalog_regions(self) -> list[str]:
+        if not self.results_root or not self.results_root.is_dir():
+            return []
+        return sorted(p.parent.name for p in self.results_root.glob("*/manifest.json")
+                      if _read(p).get("schema") == RESULTS_SCHEMA)
+
+    def _region(self, region: str) -> dict | None:
+        """구 정보: 이름·대수·중심·안 목록·변형. manifest가 있으면 그것, 없으면 v4 상수."""
+        man = self._catalog(region)
+        if man:
+            plans, seen = [], set()
+            for p in man.get("plans", []):
+                if p["id"] not in seen:
+                    seen.add(p["id"])
+                    plans.append({k: p.get(k) for k in ("id", "name", "method", "baseline")})
+            return {"id": region, "name": man.get("gu", region), "fleets": man.get("fleets", []),
+                    "center": man.get("center"), "plans": plans, "variants": man.get("variants", []),
+                    "source": "manifest"}
+        if region in REGIONS:
+            name, fleets, center = REGIONS[region]
+            return {"id": region, "name": name, "fleets": fleets, "center": center,
+                    "plans": [{"id": "ours", "name": "우리 안", "method": "C routegen 노선·배분 최적화", "baseline": False},
+                              {"id": "sp", "name": "최단경로 피더안", "method": "C 최단경로 피더 기준안", "baseline": True}],
+                    "variants": list(VARIANTS), "source": "report_v4"}
+        return None
+
+    def _regions(self) -> list[dict]:
+        ids = list(REGIONS) + [r for r in self._catalog_regions() if r not in REGIONS]
+        return [x for x in (self._region(r) for r in ids) if x]
+
+    def _plan_info(self, region: str, plan: str) -> dict:
+        info = self._region(region) or {}
+        return next((p for p in info.get("plans", []) if p["id"] == plan), {"id": plan, "name": plan})
+
+    def _baseline(self, region: str, plan: str) -> str | None:
+        """비교 기준안(같은 구에서 baseline 표시된 안, 없으면 다른 첫 안)."""
+        plans = (self._region(region) or {}).get("plans", [])
+        base = next((p["id"] for p in plans if p.get("baseline") and p["id"] != plan), None)
+        return base or next((p["id"] for p in plans if p["id"] != plan), None)
+
+    def _mean_row(self, region: str, fleet: int, variant: str, plan: str, period: str) -> dict | None:
+        """5일 평균: v4는 보고서, manifest는 날짜별 M05 metrics 평균."""
+        man = self._catalog(region)
+        if not man:
+            return self.report.get((region, fleet, variant, plan, period))
+        base = self.results_root / region
+        index, _ = self._runs_index(region, fleet, variant, plan, period)
+        try:
+            stamp = index.stat().st_mtime if index else None
+        except OSError:
+            stamp = None
+        key = (region, fleet, variant, plan, period, stamp)
+        if key in self._mean_cache:             # 실행 색인이 바뀌지 않았으면 다시 읽지 않는다
+            return self._mean_cache[key]
+        self._mean_cache[key] = row = self._mean_compute(base, man, fleet, variant, plan, period)
+        return row
+
+    def _mean_compute(self, base: Path, man: dict, fleet: int, variant: str, plan: str, period: str) -> dict | None:
+        days = []
+        for date in PERIODS[period]:
+            art = self._catalog_artifacts(base, man, fleet, variant, plan, period, date, light=True)
+            m1 = (art.get("metrics") or {}).get("M1")
+            rec = art.get("run_record", {})
+            if isinstance(m1, dict) and m1.get("total") and rec.get("sim_rc") in (0, None) \
+                    and rec.get("stage_failed") is None:
+                days.append((m1, (art.get("metrics") or {}).get("M2", {}), art.get("verifier") or {}))
+        if not days:
+            return None
+        n = len(days)
+        total = sum(d[0]["total"] for d in days) / n
+        served = sum(d[0]["served"] for d in days) / n
+        reasons: dict[str, float] = defaultdict(float)
+        for _, m2, _ in days:
+            for k, v in (m2.get("unserved_by_reason") or {}).items():
+                reasons[k] += v / n
+            reasons["refusal_events"] += (m2.get("refusal_events") or 0) / n
+        art = self._catalog_artifacts(base, man, fleet, variant, plan, period, "mean", light=True)
+        return {"total": round(total, 2), "served": round(served, 2), "unserved": round(total - served, 2),
+                "rate_percent": 100 * served / total if total else None, "days": n,
+                "m07_pass_days": sum(1 for d in days if d[2].get("pass") is True),
+                "route_count": len(art.get("plan", {}).get("routes", [])), "reasons": dict(reasons),
+                "source": "M05_5day_mean"}
 
     def options(self) -> dict:
+        regions = self._regions()
         return {
-            "regions": [
-                {"id": k, "name": v[0], "fleets": v[1], "center": v[2]}
-                for k, v in REGIONS.items()
-            ],
-            "variants": list(VARIANTS),
-            "plans": ["ours", "sp"],
+            "regions": regions,
+            "variants": sorted({v for r in regions for v in r["variants"]}, key=lambda v: (v not in VARIANTS, v)),
+            "plans": sorted({p["id"] for r in regions for p in r["plans"]}),
             "periods": PERIODS,
-            "report_source": "experiments/reports/routegen_v4.md §3, §6 (PR #41)",
-            "artifacts_connected": {k: self._manifest(k).exists() for k in REGIONS},
+            "report_source": "experiments/reports/routegen_v4.md §3, §6 (PR #41) · manifest 형식은 날짜별 M05 원본",
+            "artifacts_connected": {r["id"]: self._manifest(r["id"]).exists() for r in regions},
         }
 
     def _manifest(self, region: str) -> Path:
@@ -206,21 +319,23 @@ class SimulationStore:
 
     def _selection(self, q: dict) -> tuple:
         region = q.get("region", ["guro"])[0]
-        variant = q.get("variant", ["affected"])[0]
-        plan = q.get("plan", ["ours"])[0]
+        info = self._region(region)
+        if info is None:
+            raise DataError("INPUT_INVALID", "지역 또는 차량 대수가 올바르지 않습니다.")
+        variant = q.get("variant", [info["variants"][0] if info["variants"] else "affected"])[0]
+        plan = q.get("plan", [info["plans"][0]["id"] if info["plans"] else "ours"])[0]
         period = q.get("period", ["exp"])[0]
         date = q.get("date", ["mean"])[0]
         try:
-            fleet = int(q.get("fleet", [str(REGIONS[region][1][0])])[0])
-        except (KeyError, ValueError) as error:
+            fleet = int(q.get("fleet", [str(info["fleets"][0])])[0])
+        except (IndexError, ValueError) as error:
             raise DataError(
                 "INPUT_INVALID", "지역 또는 차량 대수가 올바르지 않습니다."
             ) from error
         if (
-            region not in REGIONS
-            or fleet not in REGIONS[region][1]
-            or variant not in VARIANTS
-            or plan not in {"ours", "sp"}
+            fleet not in info["fleets"]
+            or variant not in info["variants"]
+            or plan not in {p["id"] for p in info["plans"]}
             or period not in PERIODS
             or (date != "mean" and date not in PERIODS[period])
         ):
@@ -236,6 +351,8 @@ class SimulationStore:
         if not base or not (base / "manifest.json").is_file():
             return {}
         man = _read(base / "manifest.json")
+        if man.get("schema") == RESULTS_SCHEMA:
+            return self._catalog_artifacts(base, man, fleet, variant, plan, period, date)
         selected = next(
             (
                 p
@@ -296,22 +413,63 @@ class SimulationStore:
             out["spatial_outcomes"] = _spatial_outcomes(outcomes)
         return out
 
+    def _catalog_artifacts(self, base: Path, man: dict, fleet: int, variant: str, plan: str,
+                           period: str, date: str, light: bool = False) -> dict:
+        """routegen-results/1: manifest의 안 항목이 계획·실행 색인 위치를 알려 준다."""
+        entry = next((p for p in man.get("plans", []) if p.get("id") == plan and p.get("fleet") == fleet
+                      and p.get("variant") == variant), None)
+        if entry is None:
+            return {"manifest": man}
+        out = {"manifest": man, "selection": {**entry, "routes": {}}}
+        plan_file = base / entry["plan_file"] if entry.get("plan_file") else None
+        if plan_file and plan_file.is_file():
+            out["plan"] = _read(plan_file)
+            if out["plan"].get("network_snapshot_id") != man.get("network_snapshot_id"):
+                raise DataError("DATA_VERSION_MISMATCH", "계획과 manifest의 교통망 ID가 다릅니다.")
+        if date == "mean":
+            return out
+        index = base / entry["runs"][period] if entry.get("runs", {}).get(period) else None
+        if not index or not index.is_file():
+            return out
+        label = entry.get("run_label", plan)
+        rec = next((r for r in _read_index(index).get("runs", []) if r.get("label") == label and r.get("fleet") == fleet
+                    and str(r.get("date")) == date.replace("-", "")), None)
+        if rec is None:
+            return out
+        # 실행 기록의 dir은 만든 PC의 절대 경로라 쓰지 않고, 색인 폴더 안에서 찾는다.
+        run_dir = index.parent / label / (rec.get("bundle") or f"{variant}_{date.replace('-', '')}") / f"f{fleet}"
+        out["run_record"] = rec
+        for key, file in (("metrics", run_dir / "run" / "metrics.json"), ("verifier", run_dir / "verifier_report.json"),
+                          ("plan_m05", run_dir / "plan_m05.json")):
+            if file.is_file():
+                out[key] = _read(file)
+        outcomes = run_dir / "run" / "passenger_outcomes.csv"
+        if outcomes.is_file() and not light:      # 5일 평균 계산에는 승객 결과를 읽지 않는다
+            out["hourly"] = _hourly(outcomes)
+            out["spatial_outcomes"] = _spatial_outcomes(outcomes)
+        return out
+
+    def _runs_index(self, region: str, fleet: int, variant: str, plan: str, period: str) -> tuple[Path | None, str]:
+        """(실행 색인 경로, 기록의 label)."""
+        man = self._catalog(region)
+        if man:
+            entry = next((p for p in man.get("plans", []) if p.get("id") == plan and p.get("fleet") == fleet
+                          and p.get("variant") == variant), None)
+            if entry and entry.get("runs", {}).get(period):
+                return self.results_root / region / entry["runs"][period], entry.get("run_label", plan)
+            return None, plan
+        if not self.results_root:
+            return None, plan
+        return self.results_root / region / ("runs" if period == "exp" else "runs_test") / variant / "runs.json", plan
+
     def runs(self, q: dict) -> dict:
         """Return B's recorded attempts for the selected conditions, without synthetic runs."""
         region, fleet, variant, plan, period, _ = self._selection(q)
-        index = (
-            self.results_root
-            / region
-            / ("runs" if period == "exp" else "runs_test")
-            / variant
-            / "runs.json"
-            if self.results_root
-            else None
-        )
-        records = _read(index).get("runs", []) if index and index.is_file() else []
+        index, label = self._runs_index(region, fleet, variant, plan, period)
+        records = _read_index(index).get("runs", []) if index and index.is_file() else []
         rows = []
         for rec in records:
-            if rec.get("label") != plan or rec.get("fleet") != fleet:
+            if rec.get("label") != label or rec.get("fleet") != fleet:
                 continue
             raw_date = str(rec.get("date", ""))
             if len(raw_date) != 8 or not raw_date.isdigit():
@@ -360,11 +518,9 @@ class SimulationStore:
     def selection(self, q: dict) -> dict:
         region, fleet, variant, plan, period, date = key = self._selection(q)
         art = self._artifacts(*key)
-        row = (
-            self.report[(region, fleet, variant, plan, period)].copy()
-            if date == "mean"
-            else None
-        )
+        mean = self._mean_row(region, fleet, variant, plan, period) if date == "mean" else None
+        row = dict(mean) if mean else None
+        mean_reasons = row.pop("reasons", None) if row else None
         record = art.get("run_record", {})
         failed = record.get("stage_failed") in {"conversion", "simulation"} or (
             record.get("conversion_rc") not in (None, 0)
@@ -399,6 +555,8 @@ class SimulationStore:
                     **m2["unserved_by_reason"],
                     "refusal_events": m2.get("refusal_events"),
                 }
+        if reasons is None and date == "mean" and mean_reasons is not None:
+            reasons = mean_reasons
         if (
             reasons is None
             and period == "exp"
@@ -421,6 +579,16 @@ class SimulationStore:
                 )
             }
             verification["source"] = "verifier_report.json"
+        elif date == "mean" and row and row.get("source") == "M05_5day_mean":
+            verification = {
+                "pass": row["m07_pass_days"] == row["days"],
+                "fully_verified": False,
+                "failed_checks": [],
+                "not_run_checks": [],
+                "not_verified_checks": ["V12", "V15", "V16"],
+                "source": "verifier_report.json 5일 집계",
+                "note": f"{row['days']}일 중 {row['m07_pass_days']}일 M07 통과",
+            }
         else:
             verification = {
                 "pass": None,
@@ -435,7 +603,8 @@ class SimulationStore:
         if date == "mean":
             outcome = {
                 "status": "report_only",
-                "reason": "published_five_day_mean",
+                "reason": "five_day_mean_from_runs" if row and row.get("source") == "M05_5day_mean"
+                else "published_five_day_mean",
                 "error": None,
             }
         elif failed:
@@ -580,6 +749,7 @@ class SimulationStore:
                             },
                         }
                     )
+        info = self._plan_info(region, plan)
         return {
             "selection": {
                 "region": region,
@@ -589,6 +759,8 @@ class SimulationStore:
                 "period": period,
                 "date": date,
             },
+            "plan_name": info.get("name") or plan,
+            "method": info.get("method"),
             "metrics": row,
             "reasons": reasons,
             "hourly": None if failed else art.get("hourly"),
@@ -645,9 +817,11 @@ class SimulationStore:
             paths.append(self.inputs_root / region / "network" / "stops.csv")
         if manifest.get("root"):
             paths.append(Path(manifest["root"]) / "network" / "stops.csv")
+        net_file = (self.results_root / region / manifest["network_file"]
+                    if manifest.get("network_file") and self.results_root else None)
         for path in paths:
             if path.is_file():
-                tt = path.parent / "travel_times.json"
+                tt = net_file if net_file and net_file.is_file() else path.parent / "travel_times.json"
                 if not tt.is_file() or _read(tt).get(
                     "network_snapshot_id"
                 ) != manifest.get("network_snapshot_id"):
@@ -667,63 +841,61 @@ class SimulationStore:
         region, fleet, variant, plan, period, _ = self._selection(q)
 
         def item(r, f, p, t):
-            return {
-                "region": r,
-                "fleet": f,
-                "plan": p,
-                "period": t,
-                **self.report[(r, f, variant, p, t)],
-            }
+            row = self._mean_row(r, f, variant, p, t)
+            if row is None:
+                return None
+            row = {k: v for k, v in row.items() if k != "reasons"}
+            return {"region": r, "fleet": f, "plan": p, "plan_name": self._plan_info(r, p).get("name"),
+                    "period": t, **row}
 
+        regions = []
+        for info in self._regions():
+            r = info["id"]
+            if variant not in info["variants"] or not info["fleets"]:
+                continue
+            ids = [x["id"] for x in info["plans"]]
+            p = plan if plan in ids else next((x["id"] for x in info["plans"] if not x.get("baseline")), ids[0])
+            got = item(r, fleet if r == region and fleet in info["fleets"] else info["fleets"][0], p, period)
+            if got:
+                regions.append(got)
+        info = self._region(region)
         return {
             "scope": "같은 시나리오의 기간별 5일 평균; 지역·차량 대수별 수요 분모는 서로 다름",
-            "regions": [
-                item(r, fleet if r == region else REGIONS[r][1][0], plan, period)
-                for r in REGIONS
-            ],
-            "fleets": [item(region, f, plan, period) for f in REGIONS[region][1]],
-            "plans": [item(region, fleet, p, period) for p in ("ours", "sp")],
-            "periods": [item(region, fleet, plan, t) for t in PERIODS],
+            "regions": regions,
+            "fleets": [x for x in (item(region, f, plan, period) for f in info["fleets"]) if x],
+            "plans": [x for x in (item(region, fleet, p["id"], period) for p in info["plans"]) if x],
+            "periods": [x for x in (item(region, fleet, plan, t) for t in PERIODS) if x],
         }
 
     def comparison_table(self, q: dict) -> dict:
         region, fleet, variant, _, period, date = self._selection(q)
         rows = []
-        for plan in ("ours", "sp"):
+        for p in self._region(region)["plans"]:
             params = {
                 "region": [region],
                 "fleet": [str(fleet)],
                 "variant": [variant],
-                "plan": [plan],
+                "plan": [p["id"]],
                 "period": [period],
                 "date": [date],
             }
             item = self.selection(params)
-            rows.append(
-                {
-                    "plan": plan,
-                    "method": "C routegen 노선·배분 최적화"
-                    if plan == "ours"
-                    else "C 최단경로 피더 기준안",
-                    **item,
-                }
-            )
-        a, b = rows
-        same_total = (
-            a["metrics"] is not None
-            and b["metrics"] is not None
-            and a["metrics"]["total"] == b["metrics"]["total"]
-        )
+            if item["metrics"] is None and item["plan_id"] is None:
+                continue                        # 이 대수·변형에서 만들지 않은 안(예: 지자체안은 실운행 대수만)
+            rows.append({"plan": p["id"], "baseline": bool(p.get("baseline")), **item})
+        mets = [r["metrics"] for r in rows]
+        same_total = len(rows) > 1 and all(m is not None for m in mets) and len({m["total"] for m in mets}) == 1
         same_input = date == "mean" or (
-            a["execution"].get("input_bundle_id")
-            and a["execution"]["input_bundle_id"]
-            == b["execution"].get("input_bundle_id")
-            and a.get("scenario_id")
-            and a["scenario_id"] == b.get("scenario_id")
-            and a.get("network_snapshot_id")
-            and a["network_snapshot_id"] == b.get("network_snapshot_id")
+            len(rows) > 1
+            and all(r["execution"].get("input_bundle_id") for r in rows)
+            and len({r["execution"]["input_bundle_id"] for r in rows}) == 1
+            and all(r.get("scenario_id") for r in rows)
+            and len({r["scenario_id"] for r in rows}) == 1
+            and all(r.get("network_snapshot_id") for r in rows)
+            and len({r["network_snapshot_id"] for r in rows}) == 1
         )
         comparable = bool(same_total and same_input)
+        sources = {r["metrics"]["source"] for r in rows if r["metrics"]}
         return {
             "selection": {
                 "region": region,
@@ -736,39 +908,41 @@ class SimulationStore:
             "reason": "같은 지역·날짜·차량·시나리오·잔여 수요"
             if comparable
             else "공통 입력 묶음·시나리오·교통망 또는 평가 분모를 확인할 수 없음",
-            "source": "report_v4_5day_mean" if date == "mean" else "M05_metrics_day",
+            "source": sources.pop() if len(sources) == 1 else ("M05_metrics_day" if date != "mean" else "mixed"),
             "rows": rows,
         }
 
     def seoul_summary(self, q: dict, selected: dict | None = None) -> dict:
         _, _, variant, plan, period, date = self._selection(q)
+        infos = {x["name"]: x for x in self._regions()}
         districts = []
         for name in SEOUL_DISTRICTS:
-            region = next((key for key, val in REGIONS.items() if val[0] == name), None)
-            if region is None:
-                districts.append({"name": name, "region": None, "status": "not_run"})
+            info = infos.get(name)
+            if info is None or variant not in info["variants"] or not info["fleets"]:
+                districts.append({"name": name, "region": info["id"] if info else None, "status": "not_run"})
                 continue
-            fleet = REGIONS[region][1][0]
-            if date == "mean":
-                row = self.report[(region, fleet, variant, plan, period)]
-                other = self.report[
-                    (region, fleet, variant, "sp" if plan == "ours" else "ours", period)
-                ]
-                status = "report_only"
-                verification = "640회 집계 통과·V12/V15/V16 미검증"
-            else:
-                params = {
-                    "region": [region],
-                    "fleet": [str(fleet)],
-                    "variant": [variant],
-                    "plan": [plan],
-                    "period": [period],
-                    "date": [date],
-                }
-                result = self.selection(params)
-                row = result["metrics"]
-                params["plan"] = ["sp" if plan == "ours" else "ours"]
+            region, fleet = info["id"], info["fleets"][0]
+            ids = [x["id"] for x in info["plans"]]
+            p = plan if plan in ids else next((x["id"] for x in info["plans"] if not x.get("baseline")), ids[0])
+            base = self._baseline(region, p)
+            params = {
+                "region": [region],
+                "fleet": [str(fleet)],
+                "variant": [variant],
+                "plan": [p],
+                "period": [period],
+                "date": [date],
+            }
+            result = self.selection(params)
+            row = result["metrics"]
+            other = None
+            if base:
+                params["plan"] = [base]
                 other = self.selection(params)["metrics"]
+            if date == "mean":
+                status = "report_only" if row else "not_run"
+                verification = result["verification"].get("note") or "640회 집계 통과·V12/V15/V16 미검증"
+            else:
                 status = "run" if row else result["outcome"]["status"]
                 verification = result["verification"]
             districts.append(
@@ -778,6 +952,8 @@ class SimulationStore:
                     "status": status,
                     "fleet": fleet,
                     "fleet_assumed": False,
+                    "plan": p,
+                    "baseline_plan": base,
                     "metrics": row,
                     "improvement_pp": round(
                         row["rate_percent"] - other["rate_percent"], 2
@@ -806,9 +982,9 @@ class SimulationStore:
                 "served": round(served, 2),
                 "rate_percent": round(100 * served / total, 2) if total else None,
                 "scope": (
-                    "보고서 5일 평균" if date == "mean" else f"M05 일별 원본 {date}"
+                    "5일 평균" if date == "mean" else f"M05 일별 원본 {date}"
                 )
-                + " · 실행된 구만 합산 · 구별 작은 차량 조건",
+                + " · 실행된 구만 합산 · 구별 첫 차량 조건",
             },
         }
 

@@ -309,5 +309,102 @@ class SimulationTests(unittest.TestCase):
         self.assertFalse(selected["verification"]["fully_verified"])
 
 
+
+def _put(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _catalog_region(root, region="dobong", gu="도봉구", served=(30, 10)):
+    """routegen-results/1 manifest 한 구: 우리 안(ours)과 비교 기준(muni), 14대, 10/26 하루 실행."""
+    base = root / "results" / region
+    _put(base / "manifest.json", {
+        "schema": "routegen-results/1", "region": region, "gu": gu, "center": [127.04, 37.66],
+        "network_snapshot_id": "net-road", "network_file": "net/road.json", "fleets": [14],
+        "variants": ["precise_affected_maeul_gg"],
+        "plans": [
+            {"id": "s12", "name": "우리 안", "method": "routegen", "baseline": False, "fleet": 14,
+             "variant": "precise_affected_maeul_gg", "plan_id": "p-ours", "plan_file": "s12/plans/p-ours.json",
+             "run_label": "ours", "runs": {"exp": "s12/runs_exp/runs.json", "test": "s12/runs_test/runs.json"}},
+            {"id": "muni", "name": "지자체안", "method": "전사", "baseline": True, "fleet": 14,
+             "variant": "precise_affected_maeul_gg", "plan_id": "p-muni", "plan_file": "muni/plan.json",
+             "run_label": "muni", "runs": {"exp": "muni/runs_exp/runs.json", "test": "muni/runs_test/runs.json"}}]})
+    _put(base / "net" / "road.json", {"network_snapshot_id": "net-road"})
+    inputs = root / "inputs" / f"{region}_0610_v4" / "network"
+    _put(inputs / "travel_times.json", {"network_snapshot_id": "net-orig"})
+    (inputs / "stops.csv").write_text("stop_id,stop_name,stop_lat,stop_lon\ns1,가,37.66,127.04\ns2,나,37.67,127.05\n",
+                                      encoding="utf-8")
+    for pid, folder, label, n in (("p-ours", "s12", "ours", served[0]), ("p-muni", "muni", "muni", served[1])):
+        plan_file = base / folder / ("plans/p-ours.json" if folder == "s12" else "plan.json")
+        _put(plan_file, {"plan_id": pid, "revision": 1, "network_snapshot_id": "net-road",
+                         "routes": [{"route_id": "r01", "stops": ["s1", "s2"], "vehicles": 14}]})
+        idx = base / folder / "runs_exp"
+        _put(idx / "runs.json", {"runs": [{"label": label, "fleet": 14, "date": "20261026", "sim_rc": 0,
+                                           "bundle": "precise_affected_maeul_gg_20261026", "input_bundle_id": "b1",
+                                           "dir": "/elsewhere/not/used"}]})
+        day = idx / label / "precise_affected_maeul_gg_20261026" / "f14"
+        _put(day / "run" / "metrics.json", {"M1": {"total": 100, "served": n, "unserved": 100 - n, "censored": 0,
+                                                   "rate": n / 100},
+                                            "M2": {"unserved_by_reason": {"no_connection": 100 - n}, "refusal_events": 0}})
+        _put(day / "verifier_report.json", {"pass": True, "fully_verified": False, "failed_checks": [],
+                                            "not_run_checks": [], "not_verified_checks": ["V12"]})
+        _put(day / "plan_m05.json", {"scenario_id": "sc1"})
+    return base
+
+
+class ResultsManifestTests(unittest.TestCase):
+    """routegen-results/1: 구·대수·안 목록과 파일 위치를 manifest에서 읽는다."""
+
+    def test_manifest_region_options_selection_and_mean(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            _catalog_region(root)
+            store = SimulationStore(root / "results", root / "inputs")
+            region = next(r for r in store.options()["regions"] if r["id"] == "dobong")
+            self.assertEqual(region["source"], "manifest")
+            self.assertEqual(region["fleets"], [14])
+            self.assertEqual([p["id"] for p in region["plans"]], ["s12", "muni"])
+            q = {"region": ["dobong"], "fleet": ["14"], "variant": ["precise_affected_maeul_gg"], "plan": ["s12"],
+                 "period": ["exp"], "date": ["2026-10-26"]}
+            day = store.selection(q)
+            self.assertEqual(day["outcome"]["status"], "passed")
+            self.assertEqual(day["metrics"]["rate_percent"], 30)
+            self.assertEqual(day["plan_name"], "우리 안")
+            self.assertEqual(day["routes"][0]["stops"][0]["name"], "가")   # 도로 망 ID로 정류장 확인
+            q["date"] = ["mean"]
+            mean = store.selection(q)
+            self.assertEqual(mean["metrics"]["source"], "M05_5day_mean")
+            self.assertEqual(mean["metrics"]["days"], 1)
+            self.assertEqual(mean["reasons"]["no_connection"], 70)
+            table = store.comparison_table(q)
+            self.assertEqual([r["plan"] for r in table["rows"]], ["s12", "muni"])
+            self.assertTrue(table["rows"][1]["baseline"])
+            summary = store.seoul_summary(q)
+            dobong = next(d for d in summary["districts"] if d["name"] == "도봉구")
+            self.assertEqual(dobong["baseline_plan"], "muni")
+            self.assertAlmostEqual(dobong["improvement_pp"], 20.0)
+            runs = store.runs({**q, "date": ["2026-10-26"]})
+            self.assertEqual(runs["runs"][0]["status"], "passed")
+
+    def test_broken_run_index_is_treated_as_missing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            base = _catalog_region(root)
+            (base / "muni" / "runs_exp" / "runs.json").write_text("", encoding="utf-8")   # 쓰는 중에 끊긴 파일
+            store = SimulationStore(root / "results", root / "inputs")
+            q = {"region": ["dobong"], "fleet": ["14"], "variant": ["precise_affected_maeul_gg"], "plan": ["muni"],
+                 "period": ["exp"], "date": ["mean"]}
+            self.assertIsNone(store.selection(q)["metrics"])
+            self.assertEqual(store.runs(q)["runs"], [])
+
+    def test_unknown_plan_for_manifest_region_is_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            _catalog_region(root)
+            store = SimulationStore(root / "results", root / "inputs")
+            with self.assertRaises(DataError) as bad:
+                store.selection({"region": ["dobong"], "fleet": ["14"], "plan": ["ours"]})
+            self.assertEqual(bad.exception.code, "INPUT_INVALID")
+
 if __name__ == "__main__":
     unittest.main()

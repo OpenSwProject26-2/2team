@@ -8,7 +8,9 @@ let restoreD,enableA,getBaseMode,setDistrict,isVisible;
 const query = () => new URLSearchParams(Object.fromEntries(['region','fleet','hour','variant','plan','period','date'].map(k=>[k,byId(`sim-${k}`).value])));
 async function read(path) {const response=await fetch(path);const data=await response.json();if(!response.ok)throw Error(data.message||response.statusText);return data;}
 function options(id, values, keep) {const node=byId(id);node.replaceChildren(...values.map(([value,label])=>{const el=document.createElement('option');el.value=value;el.textContent=label;return el;}));if(keep&&[...node.options].some(x=>x.value===keep))node.value=keep;}
-function syncFleet() {const region=sim.options.regions.find(r=>r.id===byId('sim-region').value);options('sim-fleet',region.fleets.map(n=>[String(n),`${n}대`]),byId('sim-fleet').value);if(sim.active)sim.map?.flyTo({center:region.center,zoom:11.7});}
+const variantLabels={affected:'기본 파업 잔여 (affected)',affected_maeul:'마을버스 접근 수요 제외',affected_gg:'경기버스 접근 수요 제외',affected_maeul_gg:'마을·경기 접근 수요 제외',precise_affected_maeul_gg:'마을·경기 정원·정차 반영 흡수 뒤 잔여'};
+// 구마다 대수·변형·운행안 목록이 다르다(결과 manifest가 알려 줌). 바꿀 때 가능한 값으로 맞춘다.
+function syncFleet() {const region=sim.options.regions.find(r=>r.id===byId('sim-region').value);options('sim-fleet',region.fleets.map(n=>[String(n),`${n}대`]),byId('sim-fleet').value);options('sim-variant',(region.variants||sim.options.variants).map(v=>[v,variantLabels[v]||v]),byId('sim-variant').value);options('sim-plan',(region.plans||[]).map(p=>[p.id,p.name||p.id]),byId('sim-plan').value);if(sim.active)sim.map?.flyTo({center:region.center,zoom:11.7});}
 function syncDates() {const dates=sim.options.periods[byId('sim-period').value];options('sim-date',[['mean','5일 평균'],...dates.map(d=>[d,d])],byId('sim-date').value);}
 async function preferAvailableRunDate() {
   try {
@@ -161,7 +163,7 @@ function drawTable() {
   byId('sim-compare-note').textContent=`${table.reason} · ${table.source==='report_v4_5day_mean'?'보고서 5일 평균':'M05 일별 원본'} · C팀 근사값이 아닌 B팀 M1 충족/잔여 수요. 선택은 개별 날짜의 M05 성공·M07 통과 원본이 있을 때만 가능합니다.`;
   byId('sim-table').innerHTML=table.rows.map(row=>{
     const m=row.metrics;const v=row.verification;const eligible=Boolean(row.outcome?.status==='passed'&&row.plan_id&&row.revision!=null&&m?.source==='M05_metrics_day'&&row.execution.sim_rc===0&&v.source==='verifier_report.json'&&v.pass===true&&!(v.failed_checks||[]).length&&!(v.not_run_checks||[]).length);
-    return `<tr><td><b>${row.plan==='ours'?'우리 안':'최단경로 피더안'}</b><div class="sim-muted">${safe(row.method)}</div></td><td>${num(m?.served)}</td><td>${pct(m?.rate_percent)}</td><td>${num(m?.unserved)}</td><td>${row.routes.length?num(row.routes.reduce((n,r)=>n+r.vehicles,0)):'배분 미연결'} / ${num(m?.route_count)}</td><td>${v.source==='verifier_report.json'?(v.pass?(v.fully_verified?'통과':'통과·부분 검증'):'실패'):'개별 미확인'}</td><td><button data-select="${row.plan}" ${eligible?'':'disabled'}>선택</button></td></tr>`;
+    return `<tr><td><b>${safe(row.plan_name||row.plan)}</b>${row.baseline?' <span class="sim-muted">(비교 기준)</span>':''}<div class="sim-muted">${safe(row.method)}</div></td><td>${num(m?.served)}</td><td>${pct(m?.rate_percent)}</td><td>${num(m?.unserved)}</td><td>${row.routes.length?num(row.routes.reduce((n,r)=>n+r.vehicles,0)):'배분 미연결'} / ${num(m?.route_count)}</td><td>${v.source==='verifier_report.json'?(v.pass?(v.fully_verified?'통과':'통과·부분 검증'):'실패'):'개별 미확인'}</td><td><button data-select="${row.plan}" ${eligible?'':'disabled'}>선택</button></td></tr>`;
   }).join('');
   byId('sim-table').querySelectorAll('[data-select]').forEach(button=>button.onclick=()=>choosePlan(button.dataset.select));
 }
@@ -181,11 +183,11 @@ function drawSummary() {
 }
 function drawCharts() {
   const rows=sim.table.rows;const c=sim.comparison;
-  byId('sim-chart').innerHTML=`<h3>우리 안 / 피더안 · 동일 조건</h3>${rows.map(r=>bar(r.plan==='ours'?'우리 안':'피더안',r.metrics?.rate_percent)).join('')}`+
-    `<h3>4개 구 · 차량 조건 다름</h3>${c.regions.map(r=>bar(`${sim.options.regions.find(x=>x.id===r.region).name} ${r.fleet}대`,r.rate_percent)).join('')}`+
+  byId('sim-chart').innerHTML=`<h3>운행안 비교 · 동일 조건</h3>${rows.map(r=>bar(r.plan_name||r.plan,r.metrics?.rate_percent)).join('')}`+
+    `<h3>구별 · 차량 조건 다름</h3>${c.regions.map(r=>bar(`${sim.options.regions.find(x=>x.id===r.region).name} ${r.fleet}대`,r.rate_percent)).join('')}`+
     `<h3>차량 대수별 · 잔여 수요 분모 다름</h3>${c.fleets.map(r=>bar(`${r.fleet}대`,r.rate_percent)).join('')}`+
     `<h3>실험 / 테스트 · 날짜 다름</h3>${c.periods.map(r=>bar(r.period==='exp'?'10/26~30':'11/02~06',r.rate_percent)).join('')}`+
-    '<p class="sim-muted">구·차량·기간 그래프는 PR #41의 각 5일 평균입니다. 조건과 잔여 수요가 달라 단순 성능 순위로 해석할 수 없습니다.</p>';
+    '<p class="sim-muted">구·차량·기간 그래프는 각 5일 평균입니다(PR #41 보고서 또는 날짜별 M05 원본). 조건과 잔여 수요가 달라 단순 성능 순위로 해석할 수 없습니다.</p>';
   const reasons=sim.result.reasons;
   byId('sim-reasons').innerHTML=reasons?`<h2 style="margin-top:14px">미충족 사유</h2><p class="sim-muted">${sim.result.metrics?.source==='report_v4_5day_mean'?'PR #41 보고서 §6 · affected 실험 5일 평균':'M05 해당 날짜 원본'} · 막대는 잔여 수요 대비 비율</p>${Object.entries({no_connection:'노선 없음',service_end:'운행 종료',wait:'대기 초과',journey:'통행 초과'}).map(([k,label])=>bar(`${label} ${num(reasons[k])}명`,100*(reasons[k]||0)/(sim.result.metrics?.total||1))).join('')}<p class="sim-muted">만차 거절 ${num(reasons.refusal_events)}건은 최종 미충족 분류와 별개</p>`:'<div class="sim-empty">선택 조건의 M2 사유 원본 미연결</div>';
   const v=sim.result.verification;
@@ -208,7 +210,7 @@ async function refresh() {
     drawMetrics();drawRoutes();drawTable();drawSummary();drawCharts();drawExecution();drawRegionMarkers([]);drawStops();drawDemand();mapLayers(true);
   }catch(error){if(seq===sim.request)byId('mapStatus').textContent=`시뮬레이션 결과 조회 실패: ${error.message}`;}
 }
-async function changeRegion(){syncFleet();await setDistrict(byId('sim-region').value);mapLayers(true);await preferAvailableRunDate();await refresh();}
+async function changeRegion(){syncFleet();const region=byId('sim-region').value;if([...byId('districtSelect').options].some(o=>o.value===region))await setDistrict(region);mapLayers(true);await preferAvailableRunDate();await refresh();}
 async function activate() {
   if(sim.active||sim.busy)return;
   sim.busy=true;sim.previousMode=getBaseMode();
@@ -238,8 +240,7 @@ export async function initSimulationMode({map,maplibregl,restore,enableA:connect
   sim.options=await read('/api/d/simulation/options');
   options('sim-region',sim.options.regions.map(r=>[r.id,r.name]));
   options('sim-hour',[['all','전체 (06:00~10:00)'],...[6,7,8,9].map(h=>[String(h).padStart(2,'0'),`${String(h).padStart(2,'0')}:00~${String(h+1).padStart(2,'0')}:00`])]);
-  const variantLabels={affected:'기본 파업 잔여 (affected)',affected_maeul:'마을버스 접근 수요 제외',affected_gg:'경기버스 접근 수요 제외',affected_maeul_gg:'마을·경기 접근 수요 제외'};
-  options('sim-variant',sim.options.variants.map(v=>[v,variantLabels[v]||v]));syncFleet();syncDates();
+  syncFleet();syncDates();
   byId('simModeButton').onclick=()=>sim.active?deactivate():activate();
   byId('sim-all-regions').onclick=fitRegions;
   byId('sim-region').onchange=changeRegion;
