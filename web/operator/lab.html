@@ -128,6 +128,18 @@ tbody tr.sel td { background: #fff3d6; font-weight: 600; }
       <h2><span class="step">2</span>수요(파업 노선 승객 중 셔틀 대상)</h2>
       <label class="chk"><input type="checkbox" id="noMaeul"> 마을버스로 갈 수 있는 수요 제외</label>
       <label class="chk"><input type="checkbox" id="noGg"> 경기버스로 갈 수 있는 수요 제외</label>
+      <div style="margin-top:6px"><span class="seg" id="absorbSeg"></span></div>
+      <details id="absorbBox" style="margin-top:6px">
+        <summary class="hint" style="cursor:pointer">정밀 흡수 가정값</summary>
+        <div class="form" style="margin-top:6px">
+          <label for="aMc">마을버스 1대 정원</label><input id="aMc" type="number" min="5" max="120" step="1" value="35">
+          <label for="aMl">마을 기존 탑승 비율</label><input id="aMl" type="number" min="0" max="2" step="0.1" value="0.6">
+          <label for="aGc">경기버스 1대 정원</label><input id="aGc" type="number" min="5" max="150" step="1" value="60">
+          <label for="aGb">경기 기존 혼잡률</label><input id="aGb" type="number" min="0" max="1" step="0.05" value="0.6">
+        </div>
+        <label class="chk"><input type="checkbox" id="aMx"> 마을버스도 그 정류장·역 정류장 정차를 요구</label>
+        <p class="hint">마을: 기존 판정(출발 200m → 역 300m를 순서대로 지나는 노선) 중 남는 정원만큼. 경기: 바로 그 정류장에 서고 그 역 정류장에 서는 노선이 그 시간 운행할 때, 남는 정원만큼. 남는 정원 = 시간당 운행 × 정원 − 이미 탄 인원(마을: 그 시간 승차 × 비율, 경기: 정원 × 혼잡률). 정원·비율은 자료가 없는 가정이다. 값을 바꾸면 사전 계산 안은 없고 직접 실행만 된다.</p>
+      </details>
       <p class="hint" id="demandHint"></p>
     </section>
     <section>

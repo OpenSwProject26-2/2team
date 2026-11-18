@@ -6,7 +6,8 @@ const LAYERS = [
   ['gg', '경기버스', '--gg'], ['demand', '잔여 수요', '--strike', true], ['stations', '🚇 지하철역', '--ink', true], ['plan', '셔틀 안', '--plan'],
   ['planStops', '🚏 셔틀 정차 정류장', '--plan', true], ['bounds', '구 경계', '--ink-2'],
 ];
-const S = {net: 'orig', fleet: null, visible: new Set(['busRoads', 'strike', 'demand', 'stations', 'plan', 'planStops', 'bounds']), live: null, hover: null, sel: null};
+const DEF_AP = {maeul_cap: 35, maeul_load_ratio: 0.6, gg_cap: 60, gg_busy_ratio: 0.6, maeul_exact_stop: false, gg_exact_stop: true};
+const S = {absorb: 'bundle', net: 'orig', fleet: null, visible: new Set(['busRoads', 'strike', 'demand', 'stations', 'plan', 'planStops', 'bounds']), live: null, hover: null, sel: null};
 // 이모지를 그릴 수 없는 환경의 대체 아이콘(운영자 대시보드와 같은 그림)
 const FALLBACK_SVG = {
   bus:`<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><circle cx="24" cy="24" r="22" fill="#fff" stroke="#405b77" stroke-width="3"/><rect x="12" y="12" width="24" height="22" rx="5" fill="#2b679c"/><rect x="15" y="15" width="18" height="9" rx="2" fill="#d9f4ff"/><path d="M12 26h24" stroke="#fff" stroke-width="2"/><circle cx="18" cy="30" r="2" fill="#fff"/><circle cx="30" cy="30" r="2" fill="#fff"/><path d="M17 34v3m14-3v3" stroke="#405b77" stroke-width="3"/></svg>`,
@@ -21,8 +22,15 @@ async function get(p) { const r = await fetch(p); const d = await r.json(); if (
 async function post(p, body) { const r = await fetch(p, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}); const d = await r.json(); if (!r.ok) throw new Error(d.message || r.status); return d; }
 
 function variant() { const m = $('#noMaeul').checked, g = $('#noGg').checked; return m && g ? 'affected_maeul_gg' : m ? 'affected_maeul' : g ? 'affected_gg' : 'affected'; }
-function precomputed() { const cv = $('#cover').checked; return D.results.find((r) => r.net === S.net && r.variant === variant() && r.fleet === S.fleet && Boolean(r.cover) === cv); }
-function shown() { return S.live && S.live.net === S.net && S.live.variant === variant() && Boolean(S.live.cover) === $('#cover').checked ? S.live : precomputed(); }
+function absorbParams() { return {maeul_cap: Number($('#aMc').value), maeul_load_ratio: Number($('#aMl').value), gg_cap: Number($('#aGc').value), gg_busy_ratio: Number($('#aGb').value), maeul_exact_stop: $('#aMx').checked, gg_exact_stop: true}; }
+function absorbMode() { return variant() === 'affected' ? 'bundle' : S.absorb; }   // 흡수 제외가 없으면 두 방식이 같다
+function apKey() { return absorbMode() === 'precise' ? JSON.stringify(absorbParams()) : ''; }
+function precomputed() {
+  const cv = $('#cover').checked, mode = absorbMode();
+  if (mode === 'precise' && apKey() !== JSON.stringify(DEF_AP)) return null;          // 가정값을 바꾸면 사전 계산 없음
+  return D.results.find((r) => r.net === S.net && r.variant === variant() && r.fleet === S.fleet && Boolean(r.cover) === cv && (r.absorb || 'bundle') === mode);
+}
+function shown() { return S.live && S.live.net === S.net && S.live.variant === variant() && Boolean(S.live.cover) === $('#cover').checked && (S.live.absorb || 'bundle') === absorbMode() && (S.live.apKey || '') === apKey() ? S.live : precomputed(); }
 
 function seg(id, items, cur, on) {
   const el = $(id);
@@ -33,8 +41,15 @@ function seg(id, items, cur, on) {
 function fc(features) { return {type: 'FeatureCollection', features}; }
 function line(coords, props = {}, id) { return {type: 'Feature', id, properties: props, geometry: {type: 'LineString', coordinates: coords}}; }
 
+function currentStopDemand() {
+  const v = variant();
+  if (absorbMode() !== 'precise') return D.demand[v];
+  const p = shown();
+  if (p && p === S.live && S.live.stop_demand) return S.live.stop_demand;
+  return apKey() === JSON.stringify(DEF_AP) ? D.demand['precise_' + v] : (S.live?.apKey === apKey() && S.live?.stop_demand) || D.demand['precise_' + v];
+}
 function demandFeatures() {
-  const v = variant(), cur = D.demand[v], all = D.demand.affected, out = [];
+  const cur = currentStopDemand(), all = D.demand.affected, out = [];
   for (const [sid, val] of Object.entries(all)) {
     const s = D.stops[sid]; if (!s) continue;
     const now = cur[sid] || 0;
@@ -61,10 +76,11 @@ function render() {
   const v = variant();
   seg('#netSeg', [['orig', '원래 망'], ['road', '도로 망']], S.net, (x) => { S.net = x; render(); });
   seg('#fleetSeg', D.meta.fleets.map((f) => [f, `${f}대`]), S.fleet, (x) => { S.fleet = Number(x); $('#pF').value = x; render(); });
-  const tot = Object.values(D.demand[v]).reduce((a, b) => a + b, 0), all = Object.values(D.demand.affected).reduce((a, b) => a + b, 0);
+  seg('#absorbSeg', [['bundle', '기존 흡수 판정'], ['precise', '정밀 흡수(정원·정차)']], S.absorb, (x) => { S.absorb = x; render(); });
+  const tot = Object.values(currentStopDemand() || {}).reduce((a, b) => a + b, 0), all = Object.values(D.demand.affected).reduce((a, b) => a + b, 0);
   $('#demandHint').textContent = `셔틀 대상 하루 ${fmt(tot)}명${v !== 'affected' ? ` (흡수로 ${fmt(all - tot)}명 제외)` : ''} · ${VARIANT_LABEL[v]}`;
   const p = shown(), isLive = p && p === S.live;
-  $('#planTitle').innerHTML = p ? `${isLive ? '<span class="tag live">직접 실행</span>' : '<span class="tag">사전 계산</span>'} ${S.net === 'road' ? '도로 망' : '원래 망'} · ${VARIANT_LABEL[v]} · ${p.fleet}대${p.cover ? ' · 역마다 1노선' : ''}` : '안 없음';
+  $('#planTitle').innerHTML = p ? `${isLive ? '<span class="tag live">직접 실행</span>' : '<span class="tag">사전 계산</span>'} ${S.net === 'road' ? '도로 망' : '원래 망'} · ${VARIANT_LABEL[v]}${absorbMode() === 'precise' ? '(정밀)' : ''} · ${p.fleet}대${p.cover ? ' · 역마다 1노선' : ''}` : (absorbMode() === 'precise' && apKey() !== JSON.stringify(DEF_AP) ? '가정값을 바꿨다 — 왼쪽 5번 노선 생성으로 직접 실행' : '안 없음');
   const sim = isLive ? S.live.sim : p?.exp;
   renderCoverage(p, isLive);
   const cards = [];
@@ -101,7 +117,9 @@ function renderCoverage(p, isLive) {
   const sum = (v) => Object.values(D.demand[v]).reduce((a, b) => a + b, 0);
   const A = sum('affected'), M = sum('affected_maeul'), G = sum('affected_gg'), MG = sum('affected_maeul_gg');
   const m = $('#noMaeul').checked, g = $('#noGg').checked;
-  const maeul = m ? A - M : 0, gg = g ? (m ? M - MG : A - G) : 0;
+  let maeul = m ? A - M : 0, gg = g ? (m ? M - MG : A - G) : 0;
+  const ab = absorbMode() === 'precise' ? p?.absorbed : null;
+  if (ab) { maeul = ab.maeul || 0; gg = ab.gg || 0; }
   const target = A - maeul - gg;
   const rate = isLive ? S.live.sim?.rate : p?.exp?.rate;
   const el = $('#coverage');
@@ -114,7 +132,7 @@ function renderCoverage(p, isLive) {
     <div class="cov-bar" role="img" aria-label="전체 충족 구성">${segs.filter(([, v]) => v > 0).map(([n, v, c]) => `<span style="width:${100 * v / A}%;background:${c}" title="${n} ${fmt(v)}명 (${pct(v)}%)"></span>`).join('')}</div>
     <div class="cov-rows">${segs.map(([n, v, c]) => `<span><i style="background:${c}"></i>${n}</span><span>${fmt(v)}명</span><span>${pct(v)}%</span>`).join('')}</div>
     <div class="cov-shuttle">대체 셔틀만 보면: 셔틀 대상 ${fmt(target)}명 중 <b>${rate.toFixed(2)}%</b> 충족</div>
-    ${m || g ? '<p class="hint">마을·경기 몫은 그 노선으로 갈 수 있으면 모두 탄다는 가정이다(여유 정원 미확인).</p>' : '<p class="hint">마을·경기 흡수를 체크하지 않으면 셔틀이 전체를 맡는다고 본다. 왼쪽 2번에서 체크하면 그 몫을 따로 보여 준다.</p>'}`;
+    ${ab ? `<p class="hint">정밀 흡수: 마을 요청 ${fmt(ab.maeul_req)}명 중 ${fmt(ab.maeul)}명, 경기 요청 ${fmt(ab.gg_req)}명 중 ${fmt(ab.gg)}명을 남는 정원만큼 흡수(정원·혼잡은 가정값).</p>` : m || g ? '<p class="hint">마을·경기 몫은 그 노선으로 갈 수 있으면 모두 탄다는 가정이다(여유 정원 미확인). 왼쪽 2번에서 정밀 흡수로 바꿀 수 있다.</p>' : '<p class="hint">마을·경기 흡수를 체크하지 않으면 셔틀이 전체를 맡는다고 본다. 왼쪽 2번에서 체크하면 그 몫을 따로 보여 준다.</p>'}`;
 }
 const T0 = 21600, T1 = 39600, WEND = 36000;
 const hhmm = (t) => `${String(Math.floor(t / 3600)).padStart(2, '0')}:${String(Math.floor(t % 3600 / 60)).padStart(2, '0')}`;
@@ -268,8 +286,8 @@ async function runGen() {
   const b = $('#runGen'); b.disabled = true; b.textContent = '생성 중… (수 초~수십 초)';
   try {
     const params = {radius_m: Number($('#pR').value) * 1000, max_stops: $('#pN').value === 'none' ? null : Number($('#pN').value), max_detour: Number($('#pD').value), l_max_min: Number($('#pL').value)};
-    const res = await post('/api/lab/generate', {net: S.net, variant: variant(), fleet: Number($('#pF').value), params, cover: $('#cover').checked});
-    S.live = {...res, sim: null}; S.sel = null;
+    const res = await post('/api/lab/generate', {net: S.net, variant: variant(), fleet: Number($('#pF').value), params, cover: $('#cover').checked, absorb: absorbMode(), absorb_params: absorbParams()});
+    S.live = {...res, sim: null, apKey: apKey()}; S.sel = null;
     toast(`노선 ${res.routes.length}개 · 근사 ${fmt(res.approx)}명 · ${res.seconds}초`);
     render();
   } catch (error) { toast(`생성 실패: ${error.message}`); }
@@ -279,7 +297,7 @@ async function runSim() {
   const p = shown(); if (!p) return;
   const b = $('#runSim'); b.disabled = true; b.textContent = '시뮬레이션 중… (10~30초)';
   try {
-    const res = await post('/api/lab/simulate', {net: S.net, variant: variant(), fleet: p.fleet, date: $('#simDate').value, routes: p.routes.map((r) => ({stops: r.stops, vehicles: r.vehicles}))});
+    const res = await post('/api/lab/simulate', {net: S.net, variant: variant(), fleet: p.fleet, date: $('#simDate').value, routes: p.routes.map((r) => ({stops: r.stops, vehicles: r.vehicles})), absorb: absorbMode(), absorb_params: absorbParams()});
     if (res.verify_pass !== true) { toast(`실행 실패: ${res.reason || res.stage_failed}`); return; }
     if (p === S.live) S.live.sim = res;
     toast(`${res.date} 충족률 ${res.rate.toFixed(2)}% (충족 ${fmt(res.served)} / ${fmt(res.total)}명) · M07 pass · ${res.seconds}초`);
@@ -295,7 +313,8 @@ async function main() {
   S.fleet = meta.fleets[0]; $('#pF').value = S.fleet;
   $('#simDate').innerHTML = meta.dates_exp.map((d) => `<option value="${d}" ${d === meta.dates_exp[2] ? 'selected' : ''}>${d.slice(4, 6)}/${d.slice(6)}</option>`).join('');
   layersPanel();
-  for (const id of ['#noMaeul', '#noGg', '#cover']) $(id).onchange = render;
+  for (const id of ['#noMaeul', '#noGg', '#cover', '#aMx']) $(id).onchange = render;
+  for (const id of ['#aMc', '#aMl', '#aGc', '#aGb']) $(id).onchange = render;
   $('#runGen').onclick = runGen; $('#runSim').onclick = runSim;
   $('#routes').onmouseover = (e) => { const tr = e.target.closest('tr'); if (tr) focus(Number(tr.dataset.i)); };
   $('#routes').onmouseleave = () => focus(S.sel);

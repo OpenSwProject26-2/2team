@@ -32,7 +32,8 @@ from busstrike.planning.routegen import data as D  # noqa: E402
 
 from roadnet import RoadNet  # noqa: E402
 
-from busstrike.api.routegen_lab import vehicle_schedule  # noqa: E402
+from busstrike.api.routegen_lab import VARIANT_FLAGS, stop_residual, vehicle_schedule  # noqa: E402
+from busstrike.planning.routegen.absorb import Absorber, AbsorbParams, residual_rows  # noqa: E402
 
 
 def dump(path: Path, obj) -> None:
@@ -97,6 +98,11 @@ def main() -> int:
             by[s] += sum(hs)
         demand[v] = {k: round(x, 2) for k, x in sorted(by.items()) if x >= 0.05}
         st_totals[v] = d.station_total()
+    ab = Absorber(root, AbsorbParams())
+    ndays = len({r.date for r in rows})
+    for v in ("affected_maeul", "affected_gg", "affected_maeul_gg"):
+        res, _ = ab.absorb(rows, *VARIANT_FLAGS[v])
+        demand["precise_" + v] = stop_residual(residual_rows(rows, res), station_stops, ndays)
     dump(out / "demand.json", demand)
     stations = []
     for k, s in sorted(net.stations.items()):
@@ -165,7 +171,9 @@ def main() -> int:
             routes.append({"id": r["route_id"], "stops": r["stops"], "vehicles": r["vehicles"], **meta,
                            "coords": concat([segpaths.get(f"{a}>{b}") or rn.path_any(a, b)
                                              for a, b in zip(r["stops"], r["stops"][1:])])})
-        results.append({"net": p["net"], "variant": p["variant"], "fleet": p["fleet"], "cover": p.get("cover", False),
+        results.append({"net": p["net"], "variant": p["variant"].removeprefix("precise_"), "run_variant": p["variant"],
+                        "absorb": p.get("absorb", "bundle"), "absorbed": p.get("absorbed"), "absorbed_test": p.get("absorbed_test"),
+                        "fleet": p["fleet"], "cover": p.get("cover", False),
                         "covered_groups": p.get("covered_groups", []), "approx": p["approx"],
                         "pool_cover": p["pool_cover"], "demand_total": p["demand_total"], "routes": routes,
                         "schedule_date": sched_date,

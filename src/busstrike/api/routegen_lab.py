@@ -22,7 +22,13 @@ import time
 from pathlib import Path
 from threading import Lock
 
+import shutil
+
 from busstrike.planning.routegen import allocate as A
+from busstrike.planning.routegen.absorb import Absorber, AbsorbParams, residual_rows
+from busstrike.sim import io as sio
+from busstrike.sim.arrivals import build_run_inputs, realize_bins, write_demand_bins
+from busstrike.sim.models import DemandFlow
 from busstrike.planning.routegen import data as D
 from busstrike.planning.routegen import generate as G
 from busstrike.sim.traveltime import TravelTimeTable
@@ -79,6 +85,54 @@ def vehicle_schedule(run_dir: Path) -> dict:
             "vehicles": vehicles}
 
 
+VARIANT_FLAGS = {"affected": (False, False), "affected_maeul": (True, False), "affected_gg": (False, True),
+                 "affected_maeul_gg": (True, True)}
+
+
+def absorb_params(raw: dict | None) -> AbsorbParams:
+    d = AbsorbParams()
+    raw = raw or {}
+    try:
+        p = AbsorbParams(maeul_cap=int(raw.get("maeul_cap", d.maeul_cap)), gg_cap=int(raw.get("gg_cap", d.gg_cap)),
+                         maeul_load_ratio=float(raw.get("maeul_load_ratio", d.maeul_load_ratio)),
+                         gg_busy_ratio=float(raw.get("gg_busy_ratio", d.gg_busy_ratio)),
+                         maeul_exact_stop=bool(raw.get("maeul_exact_stop", d.maeul_exact_stop)),
+                         gg_exact_stop=bool(raw.get("gg_exact_stop", d.gg_exact_stop)))
+    except (TypeError, ValueError) as error:
+        raise LabError("INPUT_INVALID", f"흡수 가정값이 잘못되었다: {error}") from error
+    if not (5 <= p.maeul_cap <= 120 and 5 <= p.gg_cap <= 150 and 0 <= p.maeul_load_ratio <= 2 and 0 <= p.gg_busy_ratio <= 1):
+        raise LabError("INPUT_INVALID", "범위: 마을 정원 5~120, 경기 정원 5~150, 마을 기존 탑승 비율 0~2, 경기 혼잡률 0~1")
+    return p
+
+
+def make_bundle(src: Path, dst: Path, rows: list, tt_path: Path, fleets: list[int], tag: str) -> Path:
+    """원본 묶음(src)의 시나리오에 `rows`(그 날짜의 셔틀 수요)로 만든 demand_bins와 `tt_path` 망을 붙인 묶음."""
+    dst.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(tt_path, dst / "travel_times.json")
+    for f in fleets:
+        shutil.copyfile(src / f"scenario_f{f}.json", dst / f"scenario_f{f}.json")
+    scen = sio.scenario_from_dict(sio.read_json(dst / f"scenario_f{fleets[0]}.json"))
+    flows = [DemandFlow(r.kind, r.stop_id, r.station_stop_id, r.hour * 3600, f"{float(r.flow):.6f}") for r in rows
+             if float(r.flow) > 0]
+    seed = json.loads((src / f"run_inputs_f{fleets[0]}.json").read_text(encoding="utf-8"))["seed"]
+    write_demand_bins(realize_bins(flows, scen.policy, scen.window, seed, 3600), dst / "demand_bins.csv")
+    for f in fleets:
+        ri = json.loads((src / f"run_inputs_f{f}.json").read_text(encoding="utf-8"))
+        build_run_inputs(ri["input_bundle_id"] + "-" + tag, dst / f"scenario_f{f}.json", dst / "demand_bins.csv",
+                         dst / "travel_times.json", ri["seed"], dst / f"run_inputs_f{f}.json")
+    return dst
+
+
+def stop_residual(rows: list, station_stops: set[str], days: int) -> dict[str, float]:
+    """행 → 정류장별 하루 평균 셔틀 수요(역 쪽이 아닌 동네 정류장 기준)."""
+    out: dict[str, float] = {}
+    for r in rows:
+        s = r.stop_id
+        out[s] = out.get(s, 0.0) + float(r.flow) / days
+    # FlowRow.stop_id는 언제나 동네 쪽 정류장이다(역 정류장은 station_stop_id). 그 정류장이 다른 역의 지정 정류장이어도 센다.
+    return {k: round(v, 2) for k, v in sorted(out.items()) if v >= 0.05}
+
+
 def _load_run_matrix():
     path = ROOT / "experiments" / "guro_exp" / "run_matrix.py"
     spec = importlib.util.spec_from_file_location("lab_run_matrix", path)
@@ -97,6 +151,7 @@ class Lab:
         self._net: dict[str, D.Network] = {}
         self._rows = None
         self._demand: dict[str, D.Demand] = {}
+        self._precise: dict = {}
         self._segpaths = None
         self._stops = None
 
@@ -117,13 +172,31 @@ class Lab:
             self._net[net] = D.Network(TravelTimeTable.from_dict(doc), base.stops, base.stations, turns)
         return self._net[net]
 
-    def demand(self, variant: str) -> D.Demand:
-        if variant not in D.VARIANTS:
-            raise LabError("INPUT_INVALID", f"변형을 모른다: {variant}")
+    def rows(self):
         if self._rows is None:
             self._rows = D.load_flows(self.root)
+        return self._rows
+
+    def precise(self, variant: str, ap: AbsorbParams) -> tuple[list, dict]:
+        """정밀 흡수 뒤 셔틀 수요 행과 요약(하루 평균)."""
+        key = (variant, ap)
+        if key not in self._precise:
+            m, g = VARIANT_FLAGS[variant]
+            res, summ = Absorber(self.root, ap).absorb(self.rows(), m, g)
+            days = len({r.date for r in self.rows()})
+            self._precise[key] = (residual_rows(self.rows(), res), {k: round(v / days, 1) for k, v in summ.items()})
+        return self._precise[key]
+
+    def demand(self, variant: str, absorb: str = "bundle", ap: AbsorbParams | None = None) -> D.Demand:
+        if variant not in D.VARIANTS:
+            raise LabError("INPUT_INVALID", f"변형을 모른다: {variant}")
+        if absorb == "precise":
+            rows, _ = self.precise(variant, ap or AbsorbParams())
+            d = D.build_demand(rows, "affected")
+            d.dates = tuple(sorted({r.date for r in self.rows()}))
+            return d
         if variant not in self._demand:
-            self._demand[variant] = D.build_demand(self._rows, variant)
+            self._demand[variant] = D.build_demand(self.rows(), variant)
         return self._demand[variant]
 
     def coords(self, stops: list[str]) -> list[list[float]]:
@@ -156,10 +229,14 @@ class Lab:
             raise LabError("INPUT_INVALID", f"매개변수가 잘못되었다: {error}") from error
         if not (500 <= params.radius_m <= 6000 and 1.0 <= params.max_detour <= 5.0 and 10 <= l_max <= 60):
             raise LabError("INPUT_INVALID", "범위: R 500~6000m, 우회율 1.0~5.0, 편도 10~60분")
+        absorb = req.get("absorb", "bundle")
+        if absorb not in ("bundle", "precise"):
+            raise LabError("INPUT_INVALID", "absorb는 bundle 또는 precise다.")
+        ap = absorb_params(req.get("absorb_params"))
         with self.lock:
             t0 = time.time()
             net = self.network(net_name)
-            demand = self.demand(variant)
+            demand = self.demand(variant, absorb, ap)
             # 정책(정차·회차·창)만 쓰므로 대수와 무관하다. 묶음에 있는 첫 대수 시나리오를 읽는다.
             scen = D.read_scenario(self.root / "bundles" / f"{variant}_{demand.dates[0]}", self.meta["fleets"][0])
             res = G.generate(net, demand, scen, params)
@@ -183,8 +260,14 @@ class Lab:
                 routes.append({"id": f"r{i:02d}", "stops": list(c.stops), "vehicles": v, "kind": c.kind, "origin": c.origin,
                                "cycle_s": c.cycle_s, "hubs": [net.stations[h].name for h in c.hubs],
                                "approx": round(sum(det["by_route"][k]), 1), "coords": self.coords(list(c.stops))})
+            extra = {}
+            if absorb == "precise":
+                rows, summ = self.precise(variant, ap)
+                st_stops = {x for s_ in net.stations.values() for x in (s_.access_stop, s_.egress_stop) if x}
+                extra = {"absorbed": summ, "stop_demand": stop_residual(rows, st_stops, len(demand.dates)),
+                         "absorb_params": ap.__dict__}
             return {"net": net_name, "variant": variant, "fleet": fleet, "params": {**prm}, "cover": cover,
-                    "covered_groups": a["covered_groups"],
+                    "covered_groups": a["covered_groups"], "absorb": absorb, **extra,
                     "routes": routes, "approx": round(a["value"], 1), "candidates": len(res.candidates),
                     "pool_cover": round(sum(demand.od_total(k) for k in keys), 1), "demand_total": round(demand.total(), 1),
                     "seconds": round(time.time() - t0, 1)}
@@ -197,9 +280,17 @@ class Lab:
         routes = req.get("routes") or []
         if net_name not in NETS or variant not in D.VARIANTS or not routes:
             raise LabError("INPUT_INVALID", "net·variant·routes가 필요하다.")
+        absorb = req.get("absorb", "bundle")
         bundle = self.dir / net_name / variant / "exp" / "bundles" / f"{variant}_{date}"
         if not (bundle / f"scenario_f{fleet}.json").exists():
             raise LabError("DATA_INCOMPLETE", f"그 날짜·대수 묶음이 없다: {bundle.name} f{fleet}")
+        tmp_bundle = None
+        if absorb == "precise":
+            rows, _ = self.precise(variant, absorb_params(req.get("absorb_params")))
+            tmp_bundle = Path(tempfile.mkdtemp(prefix="lab-bundle-"))
+            bundle = make_bundle(self.root / "bundles" / f"affected_{date}", tmp_bundle / f"{variant}_{date}",
+                                 [r for r in rows if r.date == date], self.dir / "net" / f"{net_name}.json",
+                                 self.meta["fleets"], "precise")
         if sum(int(r["vehicles"]) for r in routes) != fleet:
             raise LabError("INPUT_INVALID", "노선 대수 합이 대수와 다르다(변환기 S5).")
         plan = {"plan_id": "plan-lab", "revision": 1, "network_snapshot_id": self.meta["network_snapshot_id"],
@@ -222,6 +313,8 @@ class Lab:
                             "rate": round(100 * m["M1"]["served"] / m["M1"]["total"], 2),
                             "unserved": m["M2"]["unserved_by_reason"], "refusals": m["M2"]["refusal_events"],
                             "schedule": vehicle_schedule(Path(job["dir"]) / "run")})
+            if tmp_bundle:
+                shutil.rmtree(tmp_bundle, ignore_errors=True)
             return out
 
 
