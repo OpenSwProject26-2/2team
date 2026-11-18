@@ -31,7 +31,7 @@ def districts() -> dict[str, dict]:
 
 def district_options() -> dict:
     return {
-        "source": "SGIS 2026-07-01 via vuski/admdongkor; simplified by mapcn-kr",
+        "source": "OpenStreetMap 행정경계(admin_level 6), © OpenStreetMap contributors, ODbL 1.0 · web/operator/build_districts.py",
         "districts": [
             {
                 "id": key,
