@@ -97,7 +97,8 @@ class Store:
         }
 
 
-def make_handler(store: Store):
+def make_handler(store: Store, lab=None):
+    """`lab`(routegen_lab.Lab)을 주면 /lab, /api/lab/* 를 함께 처리한다."""
     class Handler(BaseHTTPRequestHandler):
         def _json(self, data: dict | list, status: int = HTTPStatus.OK) -> None:
             payload = json.dumps(
@@ -140,8 +141,35 @@ def make_handler(store: Store):
             self.end_headers()
             self.wfile.write(payload)
 
+        def _lab_get(self, path: str) -> bool:
+            from .routegen_lab import LabError, handle_get
+            if lab is None:
+                if path == "/lab" or path.startswith("/api/lab/"):
+                    self._json({"code": "DATA_INCOMPLETE", "message": "실험실 데이터가 없다(--lab-dir)."},
+                               HTTPStatus.SERVICE_UNAVAILABLE)
+                    return True
+                return False
+            try:
+                got = handle_get(lab, path)
+            except (LabError, OSError) as error:
+                self._json({"code": getattr(error, "code", "DATA_INCOMPLETE"), "message": str(error)},
+                           HTTPStatus.BAD_REQUEST)
+                return True
+            if got is None:
+                return False
+            status, ctype, body = got
+            self.send_response(status)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return True
+
         def do_GET(self) -> None:
             parts = urlsplit(self.path)
+            if self._lab_get(parts.path):
+                return
             if parts.path in {"/", "/operator", "/operator/"}:
                 return self._asset(WEB / "index.html", "text/html; charset=utf-8")
             if parts.path == "/app.js":
@@ -206,7 +234,8 @@ def make_handler(store: Store):
 
         def do_POST(self) -> None:
             path = urlsplit(self.path).path
-            if path not in {"/api/d/sources/refresh", "/api/d/demo/scenario/evaluate"}:
+            is_lab = path in {"/api/lab/generate", "/api/lab/simulate"}
+            if path not in {"/api/d/sources/refresh", "/api/d/demo/scenario/evaluate"} and not is_lab:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             if self.headers.get("Origin") not in {
@@ -228,7 +257,7 @@ def make_handler(store: Store):
                     raise DataError(
                         "INPUT_INVALID", "요청 본문 크기가 잘못되었습니다."
                     ) from error
-                if not 0 < size <= 16_384:
+                if not 0 < size <= (262_144 if is_lab else 16_384):
                     raise DataError("INPUT_INVALID", "요청 본문 크기가 잘못되었습니다.")
                 try:
                     request = json.loads(self.rfile.read(size))
@@ -238,6 +267,14 @@ def make_handler(store: Store):
                     ) from error
                 if not isinstance(request, dict):
                     raise DataError("INPUT_INVALID", "JSON 객체가 필요합니다.")
+                if is_lab:
+                    from .routegen_lab import LabError, handle_post
+                    if lab is None:
+                        raise DataError("DATA_INCOMPLETE", "실험실 데이터가 없다(--lab-dir).")
+                    try:
+                        return self._json(handle_post(lab, path, request))
+                    except LabError as error:
+                        raise DataError(error.code, str(error)) from error
                 return self._json(evaluate_demo(store.demo, request))
             except DataError as error:
                 self._error(error)
@@ -254,10 +291,20 @@ def main() -> None:
         "--service-date", default="2026-11-02", help="A GTFS 서비스일 YYYY-MM-DD"
     )
     parser.add_argument("--port", type=int, default=8766)
+    parser.add_argument("--lab-dir", type=Path, help="routegen 실험실 데이터 폴더(build_lab_data.py 출력)")
+    parser.add_argument("--lab-region", type=Path, help="구 묶음을 푼 region 폴더(<구>_0610_v4가 들어 있음)")
     args = parser.parse_args()
     store = Store(args.a_gtfs, args.service_date)
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(store))
+    lab = None
+    if args.lab_dir:
+        from .routegen_lab import Lab
+        if not args.lab_region:
+            parser.error("--lab-dir에는 --lab-region이 필요하다")
+        lab = Lab(args.lab_dir, args.lab_region)
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(store, lab))
     print(f"D 대시보드: http://127.0.0.1:{args.port}/")
+    if lab:
+        print(f"노선 실험실: http://127.0.0.1:{args.port}/lab")
     print("DEMO는 합성 자료입니다. 실제 운행 안내가 아닙니다.")
     try:
         server.serve_forever()

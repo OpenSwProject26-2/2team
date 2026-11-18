@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>셔틀 노선 실험실</title>
+<link href="https://unpkg.com/maplibre-gl@6.18.0/dist/maplibre-gl.css" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* 왼쪽 조작 · 가운데 지도 · 오른쪽 결과. 한 화면 앱 */
+:root {
+  --bg: #f3f5f8; --panel: #ffffff; --ink: #17202c; --ink-2: #4f5b6b; --ink-3: #8994a3; --rule: #e1e6ed;
+  --accent: #1f5fa8; --strike: #ed3d51; --maeul: #17a56c; --gg: #f39b28; --road: #5b7a99; --plan: #0e9aa7; --live: #6250d6;
+  --warn: #9a5200; --warn-bg: #fff4e2;
+  --f: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--ink); font: 13px/1.5 var(--f); display: grid; grid-template-rows: auto 1fr; }
+header { display: flex; align-items: center; gap: 14px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--rule); }
+header h1 { font-size: 16px; margin: 0; font-weight: 700; }
+header .sub { color: var(--ink-3); font-size: 12px; }
+header a { margin-left: auto; color: var(--accent); font-size: 12px; text-decoration: none; }
+.app { display: grid; grid-template-columns: 290px minmax(0, 1fr) 360px; min-height: 0; }
+@media (max-width: 1100px) { .app { grid-template-columns: 260px minmax(0, 1fr); } .right { grid-column: 1 / -1; } }
+.left, .right { background: var(--panel); overflow-y: auto; padding: 14px; display: grid; gap: 16px; align-content: start; }
+.left { border-right: 1px solid var(--rule); }
+.right { border-left: 1px solid var(--rule); }
+h2 { font-size: 12px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; text-transform: none; letter-spacing: 0; }
+.step { font-size: 11px; color: var(--ink-3); margin-right: 4px; }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 7px; overflow: hidden; }
+.seg button { font: 500 12.5px var(--f); color: var(--ink-2); background: var(--panel); border: 0; padding: 5px 11px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--rule); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+label.chk { display: flex; align-items: center; gap: 7px; padding: 3px 0; cursor: pointer; color: var(--ink-2); }
+label.chk i { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
+label.chk i.dot { width: 10px; height: 10px; border-radius: 50%; }
+.hint { font-size: 11.5px; color: var(--ink-3); margin-top: 4px; }
+.form { display: grid; grid-template-columns: 1fr 86px; gap: 6px 8px; align-items: center; }
+.form input, .form select { width: 100%; font: 12.5px var(--f); padding: 4px 6px; border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); color: var(--ink); }
+.btn { font: 600 12.5px var(--f); border: 0; border-radius: 7px; padding: 8px 10px; cursor: pointer; background: var(--accent); color: #fff; width: 100%; }
+.btn.alt { background: #eef3fb; color: var(--accent); border: 1px solid #d3e0f3; }
+.btn:disabled { opacity: .55; cursor: progress; }
+#map { position: relative; min-height: 420px; }
+#mapc { position: absolute; inset: 0; }
+.legend { position: absolute; left: 10px; bottom: 26px; background: #ffffffe8; border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px; font-size: 11.5px; color: var(--ink-2); display: grid; gap: 3px; z-index: 2; }
+.legend i { display: inline-block; width: 16px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+.status { position: absolute; right: 10px; top: 10px; background: #ffffffe8; border: 1px solid var(--rule); border-radius: 8px; padding: 6px 10px; font-size: 12px; z-index: 2; max-width: 60%; }
+.cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.card { border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px; }
+.card b { display: block; font-size: 11px; color: var(--ink-3); font-weight: 500; }
+.card span { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.card small { color: var(--ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.tag { display: inline-block; font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 8px; background: #e6f6f7; color: #0b7783; }
+.tag.live { background: #eeecfb; color: #4b3cc0; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+th { text-align: left; font-weight: 500; color: var(--ink-3); border-bottom: 1px solid var(--rule); padding: 4px 4px; }
+td { border-bottom: 1px solid var(--rule); padding: 4px 4px; }
+td.n, th.n { text-align: right; }
+tbody tr { cursor: pointer; }
+tbody tr:hover, tbody tr.on { background: #eef4fc; }
+.reasons { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.note { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 8px 10px; font-size: 11.5px; }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 8px 14px; border-radius: 8px; font-size: 12.5px; opacity: 0; transition: opacity .15s; z-index: 10; }
+.toast.show { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>셔틀 노선 실험실</h1>
+  <span class="sub" id="sub">불러오는 중…</span>
+  <a href="/">운영자 대시보드로</a>
+</header>
+<div class="app">
+  <aside class="left">
+    <section>
+      <h2><span class="step">1</span>지도 레이어</h2>
+      <div id="layers"></div>
+    </section>
+    <section>
+      <h2><span class="step">2</span>수요(파업 노선 승객 중 셔틀 대상)</h2>
+      <label class="chk"><input type="checkbox" id="noMaeul"> 마을버스로 갈 수 있는 수요 제외</label>
+      <label class="chk"><input type="checkbox" id="noGg"> 경기버스로 갈 수 있는 수요 제외</label>
+      <p class="hint" id="demandHint"></p>
+    </section>
+    <section>
+      <h2><span class="step">3</span>노선을 만들 망</h2>
+      <span class="seg" id="netSeg"></span>
+      <p class="hint">원래 = 기존 버스가 다니는 정류장 순서만. 도로 = 버스가 다니는 도로(=1)면 어디든.</p>
+    </section>
+    <section>
+      <h2><span class="step">4</span>차량 대수</h2>
+      <span class="seg" id="fleetSeg"></span>
+    </section>
+    <section>
+      <h2><span class="step">5</span>직접 실행 <span class="tag live">근사</span></h2>
+      <div class="form">
+        <label for="pR">역 권역 반경(km)</label><input id="pR" type="number" min="0.5" max="6" step="0.5" value="3">
+        <label for="pN">정차 수 상한</label><select id="pN"><option value="8">8</option><option value="12">12</option><option value="16">16</option><option value="none">없음</option></select>
+        <label for="pD">우회율 상한</label><input id="pD" type="number" min="1" max="5" step="0.1" value="1.6">
+        <label for="pL">편도 상한(분)</label><input id="pL" type="number" min="10" max="60" step="5" value="30">
+        <label for="pF">대수</label><input id="pF" type="number" min="1" max="200" step="1" value="11">
+      </div>
+      <div style="display:grid;gap:6px;margin-top:8px">
+        <button class="btn" id="runGen">노선 생성</button>
+        <div class="form"><label for="simDate">시뮬레이션 날짜</label><select id="simDate"></select></div>
+        <button class="btn alt" id="runSim" disabled>표시 중인 안 하루 시뮬레이션</button>
+      </div>
+      <p class="hint">생성은 근사 계산(배분기 모델)이다. 충족률은 시뮬레이션 결과로만 말한다.</p>
+    </section>
+  </aside>
+  <div id="map"><div id="mapc"></div>
+    <div class="status" id="status">지도 준비 중</div>
+    <div class="legend">
+      <span><i style="background:var(--road)"></i>버스 통행 가능 도로(=1)</span>
+      <span><i style="background:var(--strike)"></i>파업 노선</span>
+      <span><i style="background:var(--maeul)"></i>마을버스 · <i style="background:var(--gg)"></i>경기버스</span>
+      <span><i style="background:var(--plan);height:4px"></i>셔틀 안(사전 계산) · <i style="background:var(--live);height:4px"></i>직접 실행</span>
+      <span>● 분홍 원 = 정류장 잔여 수요 · ○ 회색 = 흡수로 빠진 수요</span>
+    </div>
+  </div>
+  <aside class="right">
+    <section>
+      <h2 id="planTitle">표시 중인 안</h2>
+      <div class="cards" id="cards"></div>
+    </section>
+    <section>
+      <h2>미충족 사유 <span class="hint" id="reasonDays"></span></h2>
+      <div class="reasons" id="reasons"></div>
+    </section>
+    <section>
+      <h2>노선 <span class="hint">행에 올리면 지도에서 강조</span></h2>
+      <table><thead><tr><th>노선</th><th>방향 · 역</th><th class="n">대수</th><th class="n">주기</th><th class="n">근사</th></tr></thead><tbody id="routes"></tbody></table>
+    </section>
+    <div class="note">시뮬레이션 결과이며 실제 운행 성능이 아니다. 도로 망의 새 구간 시간은 그 도로의 버스 실측 속도로 추정한 값이고, 회전 제한·길 건너편 정류장 구분은 반영하지 않았다.</div>
+  </aside>
+</div>
+<div class="toast" id="toast"></div>
+<script type="module" src="/lab.js"></script>
+</body>
+</html>
