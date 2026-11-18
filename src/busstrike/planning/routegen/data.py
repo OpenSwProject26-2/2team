@@ -77,6 +77,8 @@ class Network:
     tt: TravelTimeTable
     stops: dict[str, Stop]
     stations: dict[str, Station]
+    # 구간 "a>b" → [첫 도로 조각 u, v, 마지막 조각 u, v](도로망에 맞춘 경우만). 정류장에서 U턴 판정에 쓴다.
+    turns: dict[str, list[int]] | None = None
 
     def stop_dist_m(self, a: str, b: str) -> float:
         sa, sb = self.stops[a], self.stops[b]

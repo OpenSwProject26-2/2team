@@ -21,8 +21,8 @@ async function get(p) { const r = await fetch(p); const d = await r.json(); if (
 async function post(p, body) { const r = await fetch(p, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}); const d = await r.json(); if (!r.ok) throw new Error(d.message || r.status); return d; }
 
 function variant() { const m = $('#noMaeul').checked, g = $('#noGg').checked; return m && g ? 'affected_maeul_gg' : m ? 'affected_maeul' : g ? 'affected_gg' : 'affected'; }
-function precomputed() { return D.results.find((r) => r.net === S.net && r.variant === variant() && r.fleet === S.fleet); }
-function shown() { return S.live && S.live.net === S.net && S.live.variant === variant() ? S.live : precomputed(); }
+function precomputed() { const cv = $('#cover').checked; return D.results.find((r) => r.net === S.net && r.variant === variant() && r.fleet === S.fleet && Boolean(r.cover) === cv); }
+function shown() { return S.live && S.live.net === S.net && S.live.variant === variant() && Boolean(S.live.cover) === $('#cover').checked ? S.live : precomputed(); }
 
 function seg(id, items, cur, on) {
   const el = $(id);
@@ -64,7 +64,7 @@ function render() {
   const tot = Object.values(D.demand[v]).reduce((a, b) => a + b, 0), all = Object.values(D.demand.affected).reduce((a, b) => a + b, 0);
   $('#demandHint').textContent = `셔틀 대상 하루 ${fmt(tot)}명${v !== 'affected' ? ` (흡수로 ${fmt(all - tot)}명 제외)` : ''} · ${VARIANT_LABEL[v]}`;
   const p = shown(), isLive = p && p === S.live;
-  $('#planTitle').innerHTML = p ? `${isLive ? '<span class="tag live">직접 실행</span>' : '<span class="tag">사전 계산</span>'} ${S.net === 'road' ? '도로 망' : '원래 망'} · ${VARIANT_LABEL[v]} · ${p.fleet}대` : '안 없음';
+  $('#planTitle').innerHTML = p ? `${isLive ? '<span class="tag live">직접 실행</span>' : '<span class="tag">사전 계산</span>'} ${S.net === 'road' ? '도로 망' : '원래 망'} · ${VARIANT_LABEL[v]} · ${p.fleet}대${p.cover ? ' · 역마다 1노선' : ''}` : '안 없음';
   const sim = isLive ? S.live.sim : p?.exp;
   renderCoverage(p, isLive);
   const cards = [];
@@ -268,7 +268,7 @@ async function runGen() {
   const b = $('#runGen'); b.disabled = true; b.textContent = '생성 중… (수 초~수십 초)';
   try {
     const params = {radius_m: Number($('#pR').value) * 1000, max_stops: $('#pN').value === 'none' ? null : Number($('#pN').value), max_detour: Number($('#pD').value), l_max_min: Number($('#pL').value)};
-    const res = await post('/api/lab/generate', {net: S.net, variant: variant(), fleet: Number($('#pF').value), params});
+    const res = await post('/api/lab/generate', {net: S.net, variant: variant(), fleet: Number($('#pF').value), params, cover: $('#cover').checked});
     S.live = {...res, sim: null}; S.sel = null;
     toast(`노선 ${res.routes.length}개 · 근사 ${fmt(res.approx)}명 · ${res.seconds}초`);
     render();
@@ -295,7 +295,7 @@ async function main() {
   S.fleet = meta.fleets[0]; $('#pF').value = S.fleet;
   $('#simDate').innerHTML = meta.dates_exp.map((d) => `<option value="${d}" ${d === meta.dates_exp[2] ? 'selected' : ''}>${d.slice(4, 6)}/${d.slice(6)}</option>`).join('');
   layersPanel();
-  for (const id of ['#noMaeul', '#noGg']) $(id).onchange = render;
+  for (const id of ['#noMaeul', '#noGg', '#cover']) $(id).onchange = render;
   $('#runGen').onclick = runGen; $('#runSim').onclick = runSim;
   $('#routes').onmouseover = (e) => { const tr = e.target.closest('tr'); if (tr) focus(Number(tr.dataset.i)); };
   $('#routes').onmouseleave = () => focus(S.sel);

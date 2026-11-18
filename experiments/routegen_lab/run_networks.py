@@ -3,7 +3,9 @@
     python3 experiments/routegen_lab/run_networks.py --region <zip_v4/region> --osm <guro_roads.json> \
         --gu guro --out <저장소 밖>/lab_guro [--jobs 7]
 
-- 원래 망: 묶음의 `network/travel_times.json`, 도로 망: `roadnet.RoadNet`이 만든 망.
+- 원래 망: 묶음의 `network/travel_times.json`(구간 거리만 도로 매칭 길이로), 도로 망: `roadnet.RoadNet`이 만든 망.
+- 생성: 거리 기준은 모두 망 위 버스 노선 거리(distance_basis="network"), 정류장에서 U턴 금지(도로 조각 기록).
+- 배분: 열린 노선은 n0 아래로 줄이지 않는다. 역 보장(cover) 끈 안·켠 안을 모두 만든다.
 - 묶음은 원본을 복사하고 `travel_times.json`만 그 망으로 바꾼 뒤 `run_inputs`를 시뮬레이터 함수로 다시 만든다.
 - 실행은 `experiments/guro_exp/run_matrix.py`(변환기 → M05 → M07 `--max-recompute 200000`).
 """
@@ -72,7 +74,9 @@ def main() -> int:
     road_path = out / "net" / "road.json"
     sio.write_bytes(road_path, sio.json_bytes(rn.road_doc))
     orig_path = out / "net" / "orig.json"
-    shutil.copyfile(root / "network" / "travel_times.json", orig_path)
+    sio.write_bytes(orig_path, sio.json_bytes(rn.orig_doc))
+    turns = rn.turn_edges()
+    (out / "net" / "turns.json").write_text(json.dumps(turns, separators=(",", ":")), encoding="utf-8")
     (out / "net" / "roadnet_stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=1), encoding="utf-8")
 
     base = D.load_network(root)
@@ -80,33 +84,38 @@ def main() -> int:
     log = {"gu": info["gu"], "fleets": fleets, "roadnet": stats, "plans": []}
     for net_name, doc_path in (("orig", orig_path), ("road", road_path)):
         doc = json.loads(doc_path.read_text(encoding="utf-8"))
-        net = D.Network(TravelTimeTable.from_dict(doc), base.stops, base.stations)
+        net = D.Network(TravelTimeTable.from_dict(doc), base.stops, base.stations, turns)
         for variant in D.VARIANTS:
             demand = D.build_demand(rows, variant)
             vdir = out / net_name / variant
             exp_b = bundles_for(root, vdir / "exp", doc_path, variant, fleets)
             test_b = bundles_for(test_root, vdir / "test", doc_path, variant, fleets)
             scen = D.read_scenario(exp_b / f"{variant}_{demand.dates[0]}", fleets[0])
-            p = G.Params(home_gu=info["gu"])
+            p = G.Params(home_gu=info["gu"], distance_basis="network")
             res = G.generate(net, demand, scen, p)
             pool = G.pools(res.candidates, p.jaccard)["ours"][0]
             by = {c.route_id: c for c in pool}
-            m = A.Model([(c.route_id, c.cycle_s, c.cover_keys) for c in pool], demand.od, A.AllocParams())
+            groups = {c.route_id: "·".join(c.hubs) for c in pool}
+            weight = {"·".join(c.hubs): sum(res.hubs.get(h, 0.0) for h in c.hubs) for c in pool}
             keys = set()
             for c in pool:
                 keys.update(c.cover_keys)
             plan_args = []
-            for f in fleets:
+            for cover, f in [(cv, f) for cv in (False, True) for f in fleets]:
+                m = A.Model([(c.route_id, c.cycle_s, c.cover_keys) for c in pool], demand.od,
+                            A.AllocParams(cover_groups=cover), groups, weight)
                 a = A.allocate(m, f)
-                pid = f"plan-{net_name}-{variant}-f{f}"
+                tag = "cover" if cover else "ours"
+                pid = f"plan-{net_name}-{variant}-f{f}-{tag}"
                 doc_plan = {"plan_id": pid, "revision": 1, "network_snapshot_id": net.tt.network_snapshot_id,
                             "routes": [{"route_id": f"r{i:02d}", "stops": list(by[k].stops), "vehicles": v}
                                        for i, (k, v) in enumerate(sorted(a["n"].items()), 1)]}
                 path = vdir / "plans" / f"{pid}.json"
                 path.parent.mkdir(parents=True, exist_ok=True)
                 sio.write_bytes(path, sio.json_bytes(doc_plan))
-                plan_args += ["--plan", f"ours:{f}={path}"]
-                log["plans"].append({"net": net_name, "variant": variant, "fleet": f, "file": str(path),
+                plan_args += ["--plan", f"{tag}:{f}={path}"]
+                log["plans"].append({"net": net_name, "variant": variant, "fleet": f, "cover": cover, "label": tag,
+                                     "file": str(path), "covered_groups": a["covered_groups"],
                                      "approx": round(a["value"], 1), "pool_cover": round(sum(demand.od_total(k) for k in keys), 1),
                                      "demand_total": round(demand.total(), 1),
                                      "routes": {f"r{i:02d}": {"kind": by[k].kind, "origin": by[k].origin, "cycle_s": by[k].cycle_s,

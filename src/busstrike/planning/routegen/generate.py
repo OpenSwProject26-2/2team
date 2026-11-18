@@ -41,6 +41,8 @@ class Params:
     sp_top: int = 15
     jaccard: float = 0.8
     home_gu: str = "구로구"
+    # "crow"(기본, 이전 결과 재현) 또는 "network"(권역·우회율·seed 거리를 모두 망 위 버스 노선 거리로)
+    distance_basis: str = "crow"
 
     @property
     def f_min(self) -> float:
@@ -113,13 +115,26 @@ def hubs_of(demand: Demand, net: Network, p: Params) -> dict[str, float]:
             and (net.stations[k].access_stop or net.stations[k].egress_stop)}
 
 
-def catchments(demand: Demand, net: Network, hubs: dict[str, float], p: Params) -> dict[str, dict[str, float]]:
-    """허브 → {정류장: r(s↔k) 4시간 합}."""
+def station_reach(graph: Graph, net: Network, k: str, s: str) -> float:
+    """정류장 s와 역 k 사이 망 위 거리(m): min(s → 역 access 정류장, 역 egress 정류장 → s). 못 닿으면 inf."""
+    st = net.stations[k]
+    best = float("inf")
+    if st.access_stop:
+        best = min(best, graph.dist_to(st.access_stop).get(s, float("inf")))
+    if st.egress_stop:
+        best = min(best, graph.dist_from(st.egress_stop).get(s, float("inf")))
+    return best
+
+
+def catchments(demand: Demand, net: Network, hubs: dict[str, float], p: Params,
+               graph: Graph | None = None) -> dict[str, dict[str, float]]:
+    """허브 → {정류장: r(s↔k) 4시간 합}. distance_basis가 network면 반경 R을 망 위 버스 노선 거리로 잰다."""
     out: dict[str, dict[str, float]] = {k: {} for k in hubs}
     for (kind, s, k), v in demand.pair.items():
         if k not in hubs or s not in net.stops:
             continue
-        if net.station_stop_dist_m(k, s) <= p.radius_m:
+        d = station_reach(graph, net, k, s) if p.distance_basis == "network" else net.station_stop_dist_m(k, s)
+        if d <= p.radius_m:
             out[k][s] = out[k].get(s, 0.0) + sum(v)
     return {k: {s: v for s, v in sorted(m.items()) if v > 0} for k, m in out.items()}
 
@@ -310,6 +325,19 @@ class Builder:
         return stops
 
 
+def seed_dist(graph: Graph, net: Network, pat: Pattern, s: str, p: Params) -> float:
+    """seed 점수의 거리: crow = 패턴 중심과의 직선, network = 패턴 역 정류장과의 망 위 거리(못 닿으면 0)."""
+    if p.distance_basis != "network":
+        return haversine_m(pat.center[0], pat.center[1], net.stops[s].lat, net.stops[s].lon)
+    ds = []
+    if pat.end:
+        ds.append(graph.dist_to(pat.end).get(s))
+    if pat.start:
+        ds.append(graph.dist_from(pat.start).get(s))
+    ds = [d for d in ds if d is not None]
+    return float(min(ds)) if ds else 0.0
+
+
 def _patterns(cluster: list[str], net: Network) -> list[Pattern]:
     out = []
     for h in cluster:
@@ -414,7 +442,8 @@ def dedupe(cands: list[Candidate], threshold: float) -> tuple[list[Candidate], i
 def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Params()) -> Result:
     t0 = time.time()
     hubs = hubs_of(demand, net, p)
-    K = catchments(demand, net, hubs, p)
+    graph = Graph(net, scenario.policy.dwell_base_s, cutoff_s=max(p.l_max_min) * 60, distance_basis=p.distance_basis)
+    K = catchments(demand, net, hubs, p, graph)
     hub_ids = sorted(hubs)
     O = {(a, b): overlap(a, b, K, hubs) for a in hub_ids for b in hub_ids if a < b}
     clusters = merge_hubs(hub_ids, O, p.tau, p.tau_step, p.cluster_max)
@@ -425,7 +454,6 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
         cl["cross_gu"] = gus != [p.home_gu]
     t_setup = time.time()
 
-    graph = Graph(net, scenario.policy.dwell_base_s, cutoff_s=max(p.l_max_min) * 60)
     b = Builder(net, graph, demand, p)
     raw: dict[tuple, Candidate] = {}
     dropped = {"seed_infeasible": 0, "conversion_failed": 0}
@@ -447,8 +475,7 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
                 dropped["seed_infeasible"] += len(values) - len(feas)
                 for m in p.sectors:
                     for sec in sectors(feas, values, pat.center, m, net):
-                        seed = max(sec, key=lambda s: (values[s] * haversine_m(
-                            pat.center[0], pat.center[1], net.stops[s].lat, net.stops[s].lon), s))
+                        seed = max(sec, key=lambda s: (values[s] * seed_dist(graph, net, pat, s, p), s))
                         stops = b.insertion(pat, seed, sec, lim, f"insertion_L{L}")
                         if stops is not None:
                             add(pat.kind, stops, "generated", pat.hubs, cl["id"], f"m{m}_L{L}")

@@ -16,6 +16,12 @@
 돌리고 근사가 가장 큰 해를 고른다(동률이면 앞 초기해). 국소 탐색은 근사를 줄이지 않으므로 결과는 모든 초기해 이상이다.
 차량 합은 정확히 가용 대수. 남는 대수는 1대씩 이득이 가장 큰 열린 노선에 넣는다.
 난수를 쓰지 않는다. 동률은 노선 ID 순.
+
+규칙(AllocParams)
+- respect_n0(기본 True): 열린 노선은 n0 = ⌈C/W⌉대 아래로 줄이지 않는다(배차 간격이 대기 한도를 넘지 않게).
+  이전 버전은 옮기기·교체에서 1대까지 줄일 수 있어, 배차가 대기 한도를 넘는 노선이 나왔다.
+- cover_groups(기본 False): 그룹(역)마다 노선을 하나씩 먼저 연다. 그룹 무게(역 수요) 큰 순으로 예산이 되는 만큼.
+  국소 탐색은 이렇게 덮은 그룹을 비우는 이동을 받지 않는다.
 """
 
 from __future__ import annotations
@@ -32,14 +38,20 @@ class AllocParams:
     wait_s: int = 1200
     seat: int = 45
     kappa: float = 1.0
+    respect_n0: bool = True
+    cover_groups: bool = False
 
 
 class Model:
     """후보 노선(route_id, 주기, 덮는 OD 키)과 시간별 OD 수요로 근사 충족을 계산한다."""
 
     def __init__(self, routes: list[tuple[str, int, tuple[tuple[str, str], ...]]],
-                 od_hourly: dict[tuple[str, str], list[float]], p: AllocParams = AllocParams()):
+                 od_hourly: dict[tuple[str, str], list[float]], p: AllocParams = AllocParams(),
+                 groups: dict[str, str] | None = None, group_weight: dict[str, float] | None = None):
         self.p = p
+        self.groups = dict(groups or {})            # 노선 → 그룹(역)
+        self.group_weight = dict(group_weight or {})
+        self.required: set[str] = set()             # 덮어야 하는 그룹(cover_groups일 때 allocate가 정한다)
         self.ids = sorted(r for r, _, _ in routes)
         self.cycle = {r: c for r, c, _ in routes}
         keys = sorted({k for _, _, ks in routes for k in ks})
@@ -78,6 +90,13 @@ class Model:
             total += sum(kept)
         covered = sum(sum(self.d[ki]) for ki in f)
         return {"total": total, "by_route": by_route, "demand_covered": covered, "cap_cut": cut}
+
+    def valid(self, n: dict[str, int]) -> bool:
+        if self.p.respect_n0 and any(k < self.n0[r] for r, k in n.items() if k > 0):
+            return False
+        if self.required and not self.required <= {self.groups.get(r) for r, k in n.items() if k > 0}:
+            return False
+        return True
 
     def value(self, n: dict[str, int]) -> float:
         key = tuple(sorted((r, k) for r, k in n.items() if k > 0))
@@ -148,11 +167,37 @@ def fill(model: Model, budget: int, n: dict[str, int]) -> dict[str, int]:
 MOVES = ("shift1", "shift2", "shift3", "swap", "close_reopt")
 
 
-def top_demand_start(model: Model, budget: int) -> dict[str, int]:
-    """덮는 수요가 큰 노선부터 n0대씩 연다(예산을 넘는 노선은 건너뜀). 남는 대수는 fill."""
+def cover_seed(model: Model, budget: int) -> tuple[dict[str, int], set[str]]:
+    """그룹(역)마다 1대당 이득이 가장 큰 노선 하나를 n0대로 연다. 그룹 무게 큰 순, 예산이 되는 만큼."""
     n: dict[str, int] = {}
     used = 0
+    covered: set[str] = set()
+    by_group: dict[str, list[str]] = {}
+    for r in model.ids:
+        g = model.groups.get(r)
+        if g is not None:
+            by_group.setdefault(g, []).append(r)
+    for g in sorted(by_group, key=lambda x: (-model.group_weight.get(x, 0.0), x)):
+        base = model.value(n)
+        cands = [r for r in by_group[g] if used + model.n0[r] <= budget]
+        if not cands:
+            continue
+        r = max(cands, key=lambda x: ((model.value(_with(n, x, model.n0[x])) - base) / model.n0[x], -model.rank[x]))
+        if model.value(_with(n, r, model.n0[r])) - base <= EPS:
+            continue                                   # 이 그룹 노선이 아무도 못 태우면 억지로 열지 않는다
+        n = _with(n, r, model.n0[r])
+        used += model.n0[r]
+        covered.add(g)
+    return n, covered
+
+
+def top_demand_start(model: Model, budget: int, start: dict[str, int] | None = None) -> dict[str, int]:
+    """덮는 수요가 큰 노선부터 n0대씩 연다(예산을 넘는 노선은 건너뜀). 남는 대수는 fill."""
+    n: dict[str, int] = dict(start or {})
+    used = sum(n.values())
     for r in sorted(model.ids, key=lambda x: (-model.demand_of[x], x)):
+        if r in n:
+            continue
         k = model.n0[r]
         if used + k <= budget:
             n[r] = k
@@ -169,7 +214,8 @@ def swap(model: Model, budget: int, n: dict[str, int], a: str, c: str) -> dict[s
     m = {x: y for x, y in n.items() if x != a}
     m[c] = model.n0[c]
     while sum(m.values()) > budget:
-        donors = [x for x in sorted(m) if x != c and m[x] > 1]
+        floor = (lambda y: model.n0[y]) if model.p.respect_n0 else (lambda y: 1)
+        donors = [x for x in sorted(m) if x != c and m[x] > floor(x)]
         if not donors:
             return None
         base = model.value(m)
@@ -197,7 +243,7 @@ def local_search(model: Model, budget: int, n: dict[str, int], max_rounds: int =
         def consider(m: dict[str, int] | None, info: dict) -> None:
             nonlocal best
             st[info["move"]]["tries"] += 1
-            if m is None:
+            if m is None or not model.valid(m):
                 return
             v = model.value(m)
             if v > cur + EPS and (best is None or v > best[0] + EPS):
@@ -205,7 +251,7 @@ def local_search(model: Model, budget: int, n: dict[str, int], max_rounds: int =
 
         for k in (1, 2, 3):
             for a in sorted(n):
-                if n[a] <= k:
+                if n[a] - k < (model.n0[a] if model.p.respect_n0 else 1):
                     continue
                 for b in sorted(n):
                     if a != b:
@@ -239,11 +285,20 @@ def allocate(model: Model, budget: int, starts: dict[str, dict[str, int]] | None
 
     starts: 추가 초기해(이름 → 배분). 예산과 차량 합이 같고 이 모델의 노선만 써야 한다.
     """
-    g = greedy(model, budget)
+    seed: dict[str, int] = {}
+    model.required = set()
+    if model.p.cover_groups and model.groups:
+        seed, model.required = cover_seed(model, budget)
+    g = greedy(model, budget, seed)
     v_greedy = model.value(g)
     f = fill(model, budget, g)
-    inits = [("greedy", f), ("top_demand", top_demand_start(model, budget))]
-    inits += sorted((starts or {}).items())
+    inits = [("greedy", f), ("top_demand", top_demand_start(model, budget, seed))]
+    skipped = []
+    for name, st0 in sorted((starts or {}).items()):
+        if model.valid(st0):
+            inits.append((name, st0))
+        else:
+            skipped.append(name)                       # 규칙(n0·역 덮기)을 어기는 초기해는 쓰지 않는다
     total_stats = _new_stats()
     runs: dict[str, dict] = {}
     chosen = None
@@ -263,4 +318,5 @@ def allocate(model: Model, budget: int, starts: dict[str, dict[str, int]] | None
     n = runs[chosen]["n"]
     return {"n": n, "value": model.value(n), "chosen": chosen, "inits": runs, "move_stats": total_stats,
             "value_greedy": v_greedy, "value_filled": model.value(f), "greedy": dict(sorted(g.items())),
+            "covered_groups": sorted(model.required), "skipped_starts": skipped,
             "local_search": runs[chosen]["moves"]}

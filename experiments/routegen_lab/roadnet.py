@@ -1,6 +1,7 @@
 """실제 도로망(OSM)으로 '버스가 다니는 도로 = 1' 망을 만든다(실험용).
 
-1. OSM 도로를 방향 그래프로 만든다(일방통행 반영). 회전 제한은 반영하지 않는다.
+1. OSM 도로를 방향 그래프로 만든다(일방통행 반영). U턴(방금 지나온 도로 조각으로 되돌아가기)은 모든 경로에서 금지한다.
+   회전 제한 관계(turn restriction)는 반영하지 않는다.
 2. 정류장을 60m 안의 가장 가까운 도로 노드에 붙인다. 길 건너편 정류장은 같은 노드에 붙을 수 있다.
 3. 기존 버스 구간 A→B마다 도로 위 최단경로를 찾는다(길이 ≤ max(2×직선, 직선+400m)). 그 도로에 1을 표시하고,
    구간 실측 시간 ÷ 경로 길이로 시간대별 속도 표본을 남긴다.
@@ -9,6 +10,8 @@
    시간 = Σ 도로 길이 ÷ 그 도로의 버스 실측 속도(시간대별, 없으면 전체 중앙값). 이미 있는 구간은 그대로 둔다.
 
 새 구간은 실측이 아니라 추정이다. 출처를 `road_estimated`로 따로 기록한다.
+구간마다 첫·마지막 도로 조각(`edges`)을 남겨, 정류장에서 두 구간을 이을 때 U턴이 되는지 판정할 수 있게 한다.
+기존 버스 구간의 `distance_m`도 매칭한 도로 길이로 바꾼다(매칭 못 한 구간만 원래 값).
 """
 
 from __future__ import annotations
@@ -82,26 +85,43 @@ class RoadNet:
     # ------------------------------------------------------------ 최단경로
     @staticmethod
     def dijkstra(edges, src, cutoff, target=None):
-        dist, prev, h = {src: 0.0}, {}, [(0.0, src)]
+        """U턴 없는 최단경로. 상태 = (직전 노드, 현재 노드)라서 v에서 바로 u로 되돌아가는 이동을 막는다.
+
+        돌려주는 dist[node] = 그 노드까지 최단 거리, prev[node] = 그 최단 상태의 경로 복원 정보.
+        """
+        start = (None, src)
+        best = {start: 0.0}
+        back: dict = {start: None}
+        dist, prev = {src: 0.0}, {src: start}
+        h = [(0.0, -1, src)]
         while h:
-            d, u = heapq.heappop(h)
-            if d > dist.get(u, 1e18):
+            d, pu, u = heapq.heappop(h)
+            state = (None if pu == -1 else pu, u)
+            if d > best.get(state, 1e18):
                 continue
+            if u not in dist or d < dist[u]:
+                dist[u], prev[u] = d, state
             if u == target:
                 break
             for v, L in edges.get(u, ()) if isinstance(edges, dict) else edges[u]:
+                if v == state[0]:
+                    continue                                   # U턴 금지
                 nd = d + L
-                if nd <= cutoff and (nd < dist.get(v, 1e18) or (nd == dist.get(v) and u < prev.get(v, u))):
-                    dist[v] = nd
-                    prev[v] = u
-                    heapq.heappush(h, (nd, v))
-        return dist, prev
+                ns = (u, v)
+                if nd <= cutoff and nd < best.get(ns, 1e18):
+                    best[ns] = nd
+                    back[ns] = state
+                    heapq.heappush(h, (nd, u, v))
+        return dist, (prev, back)
 
     @staticmethod
     def walk(prev, src, dst):
-        p = [dst]
-        while p[-1] != src:
-            p.append(prev[p[-1]])
+        last, back = prev
+        st = last[dst]
+        p = []
+        while st is not None:
+            p.append(st[1])
+            st = back[st]
         return p[::-1]
 
     def coords(self, nodes: list[int]) -> list[list[float]]:
@@ -111,6 +131,7 @@ class RoadNet:
     def build(self, cut_m: float = 900.0) -> dict:
         samples = defaultdict(lambda: defaultdict(list))
         bus_edge = set()
+        self.road_len: dict[tuple[str, str], int] = {}
         matched = unmatched = 0
         for s in self.tt["segments"]:
             a, b = s["from_stop_id"], s["to_stop_id"]
@@ -126,6 +147,7 @@ class RoadNet:
             p = self.walk(prev, self.snap[a], self.snap[b])
             self.seg_path[(a, b)] = p
             L = dist[self.snap[b]]
+            self.road_len[(a, b)] = max(1, round(L))
             for u, v in zip(p, p[1:]):
                 bus_edge.add((u, v))
                 for i, (_, t) in enumerate(s["profile"]):
@@ -175,15 +197,26 @@ class RoadNet:
                     self.seg_path[(a, b)] = p
                     sources.append((a, b))
                     have.add((a, b))
+        orig = [dict(s, distance_m=self.road_len.get((s["from_stop_id"], s["to_stop_id"]), s["distance_m"]))
+                for s in self.tt["segments"]]
         out = dict(self.tt)
-        out["segments"] = sorted(self.tt["segments"] + add, key=lambda s: (s["from_stop_id"], s["to_stop_id"]))
+        out["segments"] = sorted(orig + add, key=lambda s: (s["from_stop_id"], s["to_stop_id"]))
         self.road_doc = out
+        self.orig_doc = dict(self.tt, segments=sorted(orig, key=lambda s: (s["from_stop_id"], s["to_stop_id"])))
         self.added = sources
         self.stats = {"road_nodes": len(self.adj), "stops": len(self.stops), "stops_snapped": len(self.snap),
                       "bus_segments": len(self.tt["segments"]), "bus_segments_matched": matched,
                       "bus_segments_unmatched": unmatched, "bus_road_edges": len(bus_set), "added_segments": len(add),
                       "median_bus_speed_kmh": {str(self.bins[i]): round(3.6 * med[i], 1) for i in med}}
         return self.stats
+
+    def turn_edges(self) -> dict[str, list[int]]:
+        """구간 "a>b" → [첫 조각 u, v, 마지막 조각 u, v]. 정류장 b에서 a>b 다음 b>c가 U턴인지 판정용."""
+        out = {}
+        for (a, b), p in sorted(self.seg_path.items()):
+            if len(p) >= 2:
+                out[f"{a}>{b}"] = [p[0], p[1], p[-2], p[-1]]
+        return out
 
     def path_any(self, a: str, b: str, bus_only: bool = False) -> list[list[float]]:
         """정류장 a→b의 도로 모양. 저장된 구간 경로가 있으면 그것, 없으면 도로 최단경로, 그래도 없으면 직선."""

@@ -46,12 +46,12 @@ def concat(parts: list[list[list[float]]]) -> list[list[float]]:
     return out
 
 
-def runs_summary(runs_json: Path, fleet: int) -> dict | None:
+def runs_summary(runs_json: Path, fleet: int, label: str = "ours") -> dict | None:
     if not runs_json.exists():
         return None
     ms = []
     for r in json.loads(runs_json.read_text(encoding="utf-8"))["runs"]:
-        if r["label"] == "ours" and r["fleet"] == fleet:
+        if r["label"] == label and r["fleet"] == fleet:
             if r.get("verify_pass") is not True:
                 return {"error": r.get("reason", "M07 실패")}
             ms.append(json.loads((Path(r["dir"]) / "run" / "metrics.json").read_text(encoding="utf-8")))
@@ -165,12 +165,13 @@ def main() -> int:
             routes.append({"id": r["route_id"], "stops": r["stops"], "vehicles": r["vehicles"], **meta,
                            "coords": concat([segpaths.get(f"{a}>{b}") or rn.path_any(a, b)
                                              for a, b in zip(r["stops"], r["stops"][1:])])})
-        results.append({"net": p["net"], "variant": p["variant"], "fleet": p["fleet"], "approx": p["approx"],
+        results.append({"net": p["net"], "variant": p["variant"], "fleet": p["fleet"], "cover": p.get("cover", False),
+                        "covered_groups": p.get("covered_groups", []), "approx": p["approx"],
                         "pool_cover": p["pool_cover"], "demand_total": p["demand_total"], "routes": routes,
                         "schedule_date": sched_date,
-                        "schedule": vehicle_schedule(vdir / "runs_exp" / "ours" / f"{p['variant']}_{sched_date}" / f"f{p['fleet']}" / "run"),
-                        "exp": runs_summary(vdir / "runs_exp" / "runs.json", p["fleet"]),
-                        "test": runs_summary(vdir / "runs_test" / "runs.json", p["fleet"])})
+                        "schedule": vehicle_schedule(vdir / "runs_exp" / p.get("label", "ours") / f"{p['variant']}_{sched_date}" / f"f{p['fleet']}" / "run"),
+                        "exp": runs_summary(vdir / "runs_exp" / "runs.json", p["fleet"], p.get("label", "ours")),
+                        "test": runs_summary(vdir / "runs_test" / "runs.json", p["fleet"], p.get("label", "ours"))})
     dump(out / "results.json", results)
 
     lons = [s.lon for s in net.stops.values()]

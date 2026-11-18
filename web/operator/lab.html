@@ -136,8 +136,10 @@ tbody tr.sel td { background: #fff3d6; font-weight: 600; }
       <p class="hint">원래 = 기존 버스가 다니는 정류장 순서만. 도로 = 버스가 다니는 도로(=1)면 어디든.</p>
     </section>
     <section>
-      <h2><span class="step">4</span>차량 대수</h2>
+      <h2><span class="step">4</span>차량 대수·배분</h2>
       <span class="seg" id="fleetSeg"></span>
+      <label class="chk" style="margin-top:6px"><input type="checkbox" id="cover"> 수요 있는 역마다 노선 최소 1개</label>
+      <p class="hint">켜면 역 수요가 큰 순으로 역마다 노선을 하나씩 먼저 열고 나머지를 배분한다(형평). 끄면 총 충족 인원만 본다.</p>
     </section>
     <section>
       <h2><span class="step">5</span>직접 실행 <span class="tag live">근사</span></h2>
@@ -154,6 +156,7 @@ tbody tr.sel td { background: #fff3d6; font-weight: 600; }
         <button class="btn alt" id="runSim" disabled>표시 중인 안 하루 시뮬레이션</button>
       </div>
       <p class="hint">생성은 근사 계산(배분기 모델)이다. 충족률은 시뮬레이션 결과로만 말한다.</p>
+      <p class="hint">거리 기준은 모두 망 위 버스 노선 거리(직선거리 없음). 정류장에서 U턴하는 노선은 만들지 않고, 노선마다 배차가 20분을 넘지 않는 대수 이상만 넣는다.</p>
     </section>
   </aside>
   <div id="map"><div id="mapc"></div>

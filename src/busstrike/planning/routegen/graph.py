@@ -3,6 +3,10 @@
 - 경로 가중치는 구간의 06~09시 프로필 중 **최댓값**이다(편도 상한을 재는 기준과 같다).
   같은 비용이면 정류장열이 사전순으로 앞선 경로(변환기 공차 경로 규칙과 같은 동률 처리).
 - 통과 정류장 표현이 시뮬레이터에 없으므로 경로 위 정류장은 모두 정차로 센다.
+- `distance_basis`
+  - "crow"(기본, v1·v4 결과 재현): 우회율 분모 = 첫·끝 정류장 직선거리.
+  - "network": 우회율 분모 = 망 위 첫 → 끝 최단 거리(구간 `distance_m` 합). 직선거리를 쓰지 않는다.
+- 망에 `turns`(구간별 첫·끝 도로 조각)가 있으면, 정류장에서 앞 구간의 마지막 도로 조각을 되돌아가는 이음(U턴)을 위반 "uturn"으로 센다.
 """
 
 from __future__ import annotations
@@ -21,11 +25,16 @@ class Limits:
 
 
 class Graph:
-    def __init__(self, net: Network, dwell_s: int, cutoff_s: int):
+    def __init__(self, net: Network, dwell_s: int, cutoff_s: int, distance_basis: str = "crow"):
+        if distance_basis not in ("crow", "network"):
+            raise ValueError(f"distance_basis는 crow 또는 network: {distance_basis}")
         self.net = net
         self.tt = net.tt
         self.dwell_s = dwell_s
         self.cutoff_s = cutoff_s
+        self.distance_basis = distance_basis
+        self._dfrom: dict[str, dict[str, int]] = {}
+        self._dto: dict[str, dict[str, int]] = {}
         self._w: dict[tuple[str, str], int] = {}
         self._prof: dict[tuple[str, str], tuple[int, ...]] = {}
         bins = self.tt.bin_starts()
@@ -35,8 +44,41 @@ class Graph:
                 self._prof[(a, b)] = prof
                 self._w[(a, b)] = max(prof)
         self.n_bins = len(bins)
+        self._dsucc: dict[str, list[tuple[str, int]]] = {}
+        self._dpred: dict[str, list[tuple[str, int]]] = {}
+        for (a, b) in sorted(self._w):
+            d = self.tt.distance(a, b)
+            self._dsucc.setdefault(a, []).append((b, d))
+            self._dpred.setdefault(b, []).append((a, d))
         self._fwd: dict[str, dict[str, tuple[int, tuple[str, ...]]]] = {}
         self._any: dict[str, dict[str, tuple[int, tuple[str, ...]]]] = {}   # 진단용(cutoff 없음)
+
+    @staticmethod
+    def _dij(adj: dict[str, list[tuple[str, int]]], src: str) -> dict[str, int]:
+        dist = {src: 0}
+        h = [(0, src)]
+        while h:
+            d, u = heapq.heappop(h)
+            if d > dist[u]:
+                continue
+            for v, L in adj.get(u, ()):
+                nd = d + L
+                if nd < dist.get(v, 1 << 62):
+                    dist[v] = nd
+                    heapq.heappush(h, (nd, v))
+        return dist
+
+    def dist_from(self, src: str) -> dict[str, int]:
+        """src에서 망 위 최단 거리(m, 구간 distance_m 합)."""
+        if src not in self._dfrom:
+            self._dfrom[src] = self._dij(self._dsucc, src)
+        return self._dfrom[src]
+
+    def dist_to(self, dst: str) -> dict[str, int]:
+        """각 정류장에서 dst까지 망 위 최단 거리(m)."""
+        if dst not in self._dto:
+            self._dto[dst] = self._dij(self._dpred, dst)
+        return self._dto[dst]
 
     def weight(self, a: str, b: str) -> int:
         return self._w[(a, b)]
@@ -112,10 +154,23 @@ class Graph:
         return sum(self.tt.distance(a, b) for a, b in zip(stops, stops[1:]))
 
     def detour(self, stops: tuple[str, ...]) -> float:
-        straight = self.net.stop_dist_m(stops[0], stops[-1])
-        if straight <= 0:
+        if self.distance_basis == "network":
+            base = self.dist_from(stops[0]).get(stops[-1], 0)
+        else:
+            base = self.net.stop_dist_m(stops[0], stops[-1])
+        if base <= 0:
             return float("inf")
-        return self.length_m(stops) / straight
+        return self.length_m(stops) / base
+
+    def has_uturn(self, stops: tuple[str, ...]) -> bool:
+        turns = self.net.turns
+        if not turns:
+            return False
+        for a, b, c in zip(stops, stops[1:], stops[2:]):
+            e1, e2 = turns.get(f"{a}>{b}"), turns.get(f"{b}>{c}")
+            if e1 and e2 and e2[0] == e1[3] and e2[1] == e1[2]:
+                return True
+        return False
 
     def violations(self, stops: tuple[str, ...], station_stops: frozenset[str], lim: Limits) -> list[str]:
         """제약 위반 목록(비면 통과). station_stops = 이 패턴의 역 지정 정류장(정차 수에서 뺀다)."""
@@ -128,4 +183,6 @@ class Graph:
             bad.append("max_stops")
         if self.detour(stops) > lim.max_detour:
             bad.append("detour")
+        if self.has_uturn(stops):
+            bad.append("uturn")
         return bad

@@ -112,7 +112,9 @@ class Lab:
         if net not in self._net:
             base = D.load_network(self.root)
             doc = json.loads((self.dir / "net" / f"{net}.json").read_text(encoding="utf-8"))
-            self._net[net] = D.Network(TravelTimeTable.from_dict(doc), base.stops, base.stations)
+            tp = self.dir / "net" / "turns.json"
+            turns = json.loads(tp.read_text(encoding="utf-8")) if tp.exists() else None
+            self._net[net] = D.Network(TravelTimeTable.from_dict(doc), base.stops, base.stations, turns)
         return self._net[net]
 
     def demand(self, variant: str) -> D.Demand:
@@ -148,7 +150,8 @@ class Lab:
                               max_stops=None if prm.get("max_stops") in (None, "", "none", 0) else int(prm["max_stops"]),
                               max_detour=float(prm.get("max_detour", d.max_detour)),
                               l_max_min=tuple(sorted({20, l_max})) if l_max > 20 else (l_max,),
-                              home_gu=self.meta["gu"])
+                              home_gu=self.meta["gu"], distance_basis="network")
+            cover = bool(req.get("cover", False))
         except (TypeError, ValueError) as error:
             raise LabError("INPUT_INVALID", f"매개변수가 잘못되었다: {error}") from error
         if not (500 <= params.radius_m <= 6000 and 1.0 <= params.max_detour <= 5.0 and 10 <= l_max <= 60):
@@ -165,7 +168,10 @@ class Lab:
                 return {"routes": [], "approx": 0, "pool_cover": 0, "demand_total": round(demand.total(), 1),
                         "seconds": round(time.time() - t0, 1), "candidates": 0}
             by = {c.route_id: c for c in pool}
-            m = A.Model([(c.route_id, c.cycle_s, c.cover_keys) for c in pool], demand.od, A.AllocParams())
+            groups = {c.route_id: "·".join(c.hubs) for c in pool}
+            weight = {"·".join(c.hubs): sum(res.hubs.get(h, 0.0) for h in c.hubs) for c in pool}
+            m = A.Model([(c.route_id, c.cycle_s, c.cover_keys) for c in pool], demand.od,
+                        A.AllocParams(cover_groups=cover), groups, weight)
             a = A.allocate(m, fleet)
             det = m.detail(a["n"])
             keys = set()
@@ -177,7 +183,8 @@ class Lab:
                 routes.append({"id": f"r{i:02d}", "stops": list(c.stops), "vehicles": v, "kind": c.kind, "origin": c.origin,
                                "cycle_s": c.cycle_s, "hubs": [net.stations[h].name for h in c.hubs],
                                "approx": round(sum(det["by_route"][k]), 1), "coords": self.coords(list(c.stops))})
-            return {"net": net_name, "variant": variant, "fleet": fleet, "params": {**prm},
+            return {"net": net_name, "variant": variant, "fleet": fleet, "params": {**prm}, "cover": cover,
+                    "covered_groups": a["covered_groups"],
                     "routes": routes, "approx": round(a["value"], 1), "candidates": len(res.candidates),
                     "pool_cover": round(sum(demand.od_total(k) for k in keys), 1), "demand_total": round(demand.total(), 1),
                     "seconds": round(time.time() - t0, 1)}
