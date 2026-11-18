@@ -58,6 +58,31 @@ py -3 -B -m unittest discover -s tests/api -p "test_*.py" -v
 python3 -m busstrike.evaluation.verify <실행 결과 폴더>
 ```
 
+## 구로구 셔틀안 평가·검증
+
+### 1. 평가 지표
+
+45인승 셔틀 11대와 동일한 출근 수요 16,230명을 기준으로 지자체안, 범용 AI안, 우리 알고리즘(E3)을 비교했습니다. 두 지표 모두 전체 승객 16,230명을 분모로 사용합니다.
+
+| 지표 | 지자체안 | 범용 AI 평균 | 우리 안(E3) |
+| --- | ---: | ---: | ---: |
+| 출발 후 90분 안에 목적지 역에 도착한 비율 | 34.03% | 48.21% | 63.23% |
+| 정류장에서 10분 이내에 탑승하고 90분 안에 도착한 비율 | 19.35% | 37.68% | 58.57% |
+
+AI 평균에는 모델별 차이가 있습니다. Sol 10회의 평균 90분 도착률은 63.77%였습니다. [모델별 결과와 승객별 집계 기준](https://github.com/OpenSwProject26-2/2team/blob/docs/sol-sonnet-run-results/experiments/guro_shuttle_metrics/README.md)
+
+### 2. AI 입력 데이터 및 프롬프트
+
+Sol과 Sonnet에 정류장 좌표, 철도역 좌표, 출발 정류장·목적지 역·시간대별 수요, 정류장에서 500m 이내 철도역까지의 도보 거리·시간을 담은 CSV 4개를 제공했습니다. 기존 운행안은 제공하지 않고, **차량 11대로 90분 내 도착 인원을 최대화하도록 정류장 방문 순서와 노선별 차량 대수**를 정하게 했습니다. 모델별 10회씩 총 20개 안에 같은 규칙으로 시간표를 만들고 동일한 시뮬레이터에서 평가했습니다. 6회에는 기본 지시문을, 14회에는 빠른 도착 안내를 추가한 지시문을 사용했습니다. [입력 자료](https://github.com/OpenSwProject26-2/2team/blob/docs/sol-sonnet-run-results/experiments/guro_shuttle_metrics/materials/README.md) · [실제 프롬프트 예시](https://github.com/OpenSwProject26-2/2team/blob/docs/sol-sonnet-run-results/experiments/sol_runs_0104_new/run-01/PROMPT.md)
+
+### 구로구 셔틀 노선 지도
+
+[구로구 셔틀 노선 HTML](docs/figures/guro/guro-demand.html)을 GitHub에서 **Download raw file**로 내려받아 브라우저에서 열면 AI 회차를 바꾸거나 정류장별 수요를 확인할 수 있습니다. 지자체안은 주황색, 우리 생성기안은 파란색, 선택한 AI안은 보라색입니다.
+
+![구로구 지자체·생성기·AI 셔틀 노선과 기존 버스, 정류장별 출발 수요](docs/figures/guro/guro-demand.png)
+
+지도에서 파란색은 후속 실험의 **허브 135·정차 12** 설정입니다. 위 표는 **E3**의 평가 결과입니다. 분홍색 원의 면적은 10월 26~30일 오전 7~9시 정류장별 출발 수요(마을·경기버스 흡수 전 추정 통행의 평일 평균)에 비례합니다.
+
 ## 시뮬레이션 결과 독립 검증기 (M07)
 
 시뮬레이터가 낸 사건 로그·승객 결과·지표를 **엔진과 따로 다시 계산해서** 맞는지 봅니다.
