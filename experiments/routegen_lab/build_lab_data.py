@@ -5,7 +5,7 @@
 
 `<lab>/layers/`에 쓴다.
 - meta.json: 구, 대수, 변형, 지도 범위, 도로망 통계
-- stops.json: 정류장 좌표·이름, stations.json: 역(지정 정류장, 변형별 잔여 수요)
+- stops.json: 정류장 좌표·이름, stations.json: 망 안의 모든 지하철역(지정 정류장, 변형별 잔여 수요. 수요 0인 역 포함)
 - bus_roads.json: 버스 통행 가능 도로(=1) 선
 - strike_routes.json: 파업 노선(노선·패턴마다 정류장이 가장 많은 운행편), absorbing_routes.json: 마을·경기 흡수 노선
 - demand.json: 변형별 정류장 잔여 수요(5일 평균, 하루 인원). 역 쪽이 아닌 동네 정류장 기준
@@ -98,8 +98,6 @@ def main() -> int:
     stations = []
     for k, s in sorted(net.stations.items()):
         tot = {v: round(st_totals[v].get(k, 0.0), 1) for v in D.VARIANTS}
-        if tot["affected"] < 1:
-            continue
         stations.append({"id": k, "name": s.name, "lon": round(s.lon, 6), "lat": round(s.lat, 6),
                          "access": s.access_stop, "egress": s.egress_stop, "demand": tot})
     dump(out / "stations.json", stations)
