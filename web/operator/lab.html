@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-/* 왼쪽 조작 · 가운데 지도 · 오른쪽 결과. 한 화면 앱 */
+/* 지도가 첫 화면을 채운다. 조작 패널은 왼쪽에서 접고, 결과·노선·동선은 지도 아래로 */
 :root {
   --bg: #f3f5f8; --panel: #ffffff; --ink: #17202c; --ink-2: #4f5b6b; --ink-3: #8994a3; --rule: #e1e6ed;
   --accent: #1f5fa8; --strike: #ed3d51; --maeul: #17a56c; --gg: #f39b28; --road: #8b95a3; --plan: #1e293b; --live: #6250d6;
@@ -17,17 +17,31 @@
   --f: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR", system-ui, sans-serif;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; }
-body { background: var(--bg); color: var(--ink); font: 13px/1.5 var(--f); display: grid; grid-template-rows: auto 1fr; }
-header { display: flex; align-items: center; gap: 14px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--rule); }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 13px/1.5 var(--f); }
+header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 14px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--rule); }
 header h1 { font-size: 16px; margin: 0; font-weight: 700; }
 header .sub { color: var(--ink-3); font-size: 12px; }
 header a { margin-left: auto; color: var(--accent); font-size: 12px; text-decoration: none; }
-.app { display: grid; grid-template-columns: 290px minmax(0, 1fr) 360px; min-height: 0; }
-@media (max-width: 1100px) { .app { grid-template-columns: 260px minmax(0, 1fr); } .right { grid-column: 1 / -1; } }
-.left, .right { background: var(--panel); overflow-y: auto; padding: 14px; display: grid; gap: 16px; align-content: start; }
-.left { border-right: 1px solid var(--rule); }
-.right { border-left: 1px solid var(--rule); }
+.top { display: grid; grid-template-columns: 290px minmax(0, 1fr); height: calc(100vh - 49px); min-height: 520px; transition: grid-template-columns .22s ease; }
+body.left-closed .top { grid-template-columns: 0 minmax(0, 1fr); }
+.left { background: var(--panel); overflow-y: auto; overflow-x: hidden; padding: 14px; display: grid; gap: 16px; align-content: start; border-right: 1px solid var(--rule); min-width: 0; }
+body.left-closed .left { padding: 0; border: 0; }
+body.left-closed .left > * { display: none; }
+.side-toggle { position: absolute; left: 0; top: 50%; transform: translateY(-50%); z-index: 3; border: 1px solid var(--rule); border-left: 0; background: var(--panel); color: var(--ink-2);
+  font: 600 12px var(--f); padding: 10px 5px; border-radius: 0 8px 8px 0; cursor: pointer; writing-mode: vertical-rl; box-shadow: 0 1px 4px #0001; }
+.below { padding: 16px; display: grid; gap: 14px; }
+.below-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; align-items: start; }
+.box { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; }
+details.box > summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--ink-2); list-style: none; display: flex; gap: 8px; align-items: center; }
+details.box > summary::before { content: '▾'; color: var(--ink-3); }
+details.box:not([open]) > summary::before { content: '▸'; }
+details.box > summary::-webkit-details-marker { display: none; }
+details.box[open] > summary { margin-bottom: 8px; }
+.legend summary { cursor: pointer; font-weight: 600; color: var(--ink-2); }
+.legend { max-width: 360px; display: block !important; }
+.legend > span { display: block; margin-top: 3px; }
+@media (prefers-reduced-motion: reduce) { .top { transition: none; } }
 h2 { font-size: 12px; font-weight: 600; color: var(--ink-2); margin: 0 0 6px; text-transform: none; letter-spacing: 0; }
 .step { font-size: 11px; color: var(--ink-3); margin-right: 4px; }
 .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 7px; overflow: hidden; }
@@ -44,9 +58,8 @@ label.chk i.dot { width: 10px; height: 10px; border-radius: 50%; }
 .btn { font: 600 12.5px var(--f); border: 0; border-radius: 7px; padding: 8px 10px; cursor: pointer; background: var(--accent); color: #fff; width: 100%; }
 .btn.alt { background: #eef3fb; color: var(--accent); border: 1px solid #d3e0f3; }
 .btn:disabled { opacity: .55; cursor: progress; }
-.center { display: grid; grid-template-rows: minmax(320px, 1fr) auto; min-height: 0; min-width: 0; }
-#map { position: relative; min-height: 320px; }
-#schedPanel { background: var(--panel); border-top: 1px solid var(--rule); padding: 10px 14px; max-height: 42vh; overflow-y: auto; }
+#map { position: relative; min-width: 0; }
+#schedPanel { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; }
 #schedPanel.closed #sched { display: none; }
 .sched-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
 .sched-key { font-size: 11.5px; color: var(--ink-3); display: flex; gap: 6px; align-items: center; margin-left: auto; }
@@ -65,7 +78,7 @@ label.chk i.dot { width: 10px; height: 10px; border-radius: 50%; }
 .legend { position: absolute; left: 10px; bottom: 26px; background: #ffffffe8; border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px; font-size: 11.5px; color: var(--ink-2); display: grid; gap: 3px; z-index: 2; }
 .legend i { display: inline-block; width: 16px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
 .status { position: absolute; right: 10px; top: 10px; background: #ffffffe8; border: 1px solid var(--rule); border-radius: 8px; padding: 6px 10px; font-size: 12px; z-index: 2; max-width: 60%; }
-.cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
 .card { border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px; }
 .card b { display: block; font-size: 11px; color: var(--ink-3); font-weight: 500; }
 .card span { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -79,7 +92,7 @@ td.n, th.n { text-align: right; }
 tbody tr { cursor: pointer; }
 tbody tr:hover, tbody tr.on { background: #eef4fc; }
 tbody tr.sel td { background: #fff3d6; font-weight: 600; }
-.seqlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 260px; overflow-y: auto; }
+.seqlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 360px; overflow-y: auto; }
 .seqlist button { all: unset; display: flex; gap: 8px; align-items: center; width: 100%; padding: 3px 4px; border-radius: 6px; cursor: pointer; font-size: 12.5px; box-sizing: border-box; }
 .seqlist button:hover { background: #eef4fc; }
 .seqlist button:focus-visible { outline: 2px solid var(--accent); }
@@ -97,8 +110,8 @@ tbody tr.sel td { background: #fff3d6; font-weight: 600; }
   <span class="sub" id="sub">불러오는 중…</span>
   <a href="/">운영자 대시보드로</a>
 </header>
-<div class="app">
-  <aside class="left">
+<div class="top">
+  <aside class="left" id="leftPanel">
     <section>
       <h2><span class="step">1</span>지도 레이어</h2>
       <div id="layers"></div>
@@ -135,10 +148,10 @@ tbody tr.sel td { background: #fff3d6; font-weight: 600; }
       <p class="hint">생성은 근사 계산(배분기 모델)이다. 충족률은 시뮬레이션 결과로만 말한다.</p>
     </section>
   </aside>
-  <div class="center">
   <div id="map"><div id="mapc"></div>
+    <button type="button" class="side-toggle" id="leftToggle" aria-expanded="true" aria-controls="leftPanel">◀ 조작 닫기</button>
     <div class="status" id="status">지도 준비 중</div>
-    <div class="legend">
+    <details class="legend" open><summary>범례</summary>
       <span><i style="background:var(--road)"></i>버스 통행 가능 도로(=1)</span>
       <span><i style="background:var(--strike)"></i>파업 노선</span>
       <span><i style="background:var(--maeul)"></i>마을버스 · <i style="background:var(--gg)"></i>경기버스</span>
@@ -146,7 +159,25 @@ tbody tr.sel td { background: #fff3d6; font-weight: 600; }
       <span>🚏 셔틀 정차 정류장 · 🚇 지하철역 · <span class="seq" style="min-width:14px;height:14px;font-size:9px">1</span> 선택 노선 정차 순서</span>
       <span>● 분홍 원 = 정류장 잔여 수요 · ○ 회색 = 흡수로 빠진 수요</span>
       <span><i style="background:#334155;height:0;border-top:2px dashed #334155"></i>구 경계</span>
-    </div>
+    </details>
+  </div>
+</div>
+<main class="below">
+  <div class="below-grid">
+    <details class="box" open>
+      <summary id="planTitle">표시 중인 안</summary>
+      <div class="cards" id="cards"></div>
+      <h2>미충족 사유 <span class="hint" id="reasonDays"></span></h2>
+      <div class="reasons" id="reasons"></div>
+    </details>
+    <details class="box" open>
+      <summary>노선 <span class="hint" style="margin:0;font-weight:400">클릭하면 지도에서 거치는 정류장 표시</span></summary>
+      <table><thead><tr><th>노선</th><th>방향 · 역</th><th class="n">대수</th><th class="n">주기</th><th class="n">근사</th></tr></thead><tbody id="routes"></tbody></table>
+    </details>
+    <details class="box" open>
+      <summary id="stopSeqTitle">정류장 순서</summary>
+      <ol class="seqlist" id="stopSeq"></ol>
+    </details>
   </div>
   <section id="schedPanel">
     <div class="sched-head">
@@ -156,27 +187,8 @@ tbody tr.sel td { background: #fff3d6; font-weight: 600; }
     </div>
     <div id="sched"></div>
   </section>
-  </div>
-  <aside class="right">
-    <section>
-      <h2 id="planTitle">표시 중인 안</h2>
-      <div class="cards" id="cards"></div>
-    </section>
-    <section>
-      <h2>미충족 사유 <span class="hint" id="reasonDays"></span></h2>
-      <div class="reasons" id="reasons"></div>
-    </section>
-    <section>
-      <h2>노선 <span class="hint">클릭하면 거치는 정류장 표시</span></h2>
-      <table><thead><tr><th>노선</th><th>방향 · 역</th><th class="n">대수</th><th class="n">주기</th><th class="n">근사</th></tr></thead><tbody id="routes"></tbody></table>
-    </section>
-    <section>
-      <h2 id="stopSeqTitle">정류장 순서</h2>
-      <ol class="seqlist" id="stopSeq"></ol>
-    </section>
-    <div class="note">시뮬레이션 결과이며 실제 운행 성능이 아니다. 도로 망의 새 구간 시간은 그 도로의 버스 실측 속도로 추정한 값이고, 회전 제한·길 건너편 정류장 구분은 반영하지 않았다.</div>
-  </aside>
-</div>
+  <div class="note">시뮬레이션 결과이며 실제 운행 성능이 아니다. 도로 망의 새 구간 시간은 그 도로의 버스 실측 속도로 추정한 값이고, 회전 제한·길 건너편 정류장 구분은 반영하지 않았다.</div>
+</main>
 <div class="toast" id="toast"></div>
 <script type="module" src="/lab.js"></script>
 </body>

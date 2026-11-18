@@ -237,6 +237,7 @@ function layersPanel() {
 
 function select(i) {
   S.sel = S.sel === i ? null : i;
+  if (S.sel != null && window.scrollY > 80) window.scrollTo({top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
   render(); focus(S.sel);
   const p = shown(); const r = p && S.sel != null ? p.routes[S.sel] : null;
   if (r && D.map) { const xs = r.coords.map((c) => c[0]), ys = r.coords.map((c) => c[1]); D.map.fitBounds([[Math.min(...xs), Math.min(...ys)], [Math.max(...xs), Math.max(...ys)]], {padding: 80, maxZoom: 15.5, duration: 600}); }
@@ -277,8 +278,14 @@ async function main() {
   $('#routes').onmouseover = (e) => { const tr = e.target.closest('tr'); if (tr) focus(Number(tr.dataset.i)); };
   $('#routes').onmouseleave = () => focus(S.sel);
   $('#routes').onclick = (e) => { const tr = e.target.closest('tr'); if (tr) select(Number(tr.dataset.i)); };
+  $('#leftToggle').onclick = () => {
+    const closed = document.body.classList.toggle('left-closed');
+    $('#leftToggle').textContent = closed ? '▶ 조작 열기' : '◀ 조작 닫기';
+    $('#leftToggle').setAttribute('aria-expanded', String(!closed));
+    setTimeout(() => D.map?.resize(), 260);
+  };
   $('#sched').onclick = (e) => { const row = e.target.closest('.vrow'); if (row) select(Number(row.dataset.i)); };
-  $('#schedToggle').onclick = () => { const c = $('#schedPanel').classList.toggle('closed'); $('#schedToggle').textContent = c ? '펼치기' : '접기'; setTimeout(() => D.map?.resize(), 50); };
+  $('#schedToggle').onclick = () => { const c = $('#schedPanel').classList.toggle('closed'); $('#schedToggle').textContent = c ? '펼치기' : '접기'; };
   $('#stopSeq').onclick = (e) => { const b = e.target.closest('button[data-sid]'); const s = b && D.stops[b.dataset.sid]; if (s && D.map) D.map.flyTo({center: s.slice(0, 2), zoom: 16, duration: 600}); };
   render();
   await initMap();
