@@ -17,6 +17,47 @@ from busstrike.routing.preview_server import handler_for
 
 
 class TestPreviewServer(unittest.TestCase):
+    def test_selected_plan_is_not_replaced_by_synthetic_shuttle(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            pointer = Path(folder) / "selection.json"
+            pointer.write_text(
+                json.dumps({"selected": {"plan_id": "real-c-plan", "revision": 4}}),
+                encoding="utf-8",
+            )
+            server = ThreadingHTTPServer(
+                ("127.0.0.1", 0), handler_for(load_preview(), selection_file=pointer)
+            )
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            try:
+                base = f"http://127.0.0.1:{server.server_port}"
+                with urlopen(base + "/__demo__/selection", timeout=2) as response:
+                    selected = json.load(response)
+                self.assertEqual(selected["selected"]["revision"], 4)
+                query = {
+                    "journey_state": "strike_selected",
+                    "origin": "A",
+                    "destination": "C",
+                    "departure_at": "2026-11-07T00:00:00+09:00",
+                    "plan_id": "real-c-plan",
+                    "revision": 4,
+                }
+                with urlopen(
+                    base + "/__demo__/search?" + urlencode(query), timeout=2
+                ) as response:
+                    result = json.load(response)
+                self.assertEqual(result["error"]["code"], "DATA_INCOMPLETE")
+                query["revision"] = 3
+                with urlopen(
+                    base + "/__demo__/search?" + urlencode(query), timeout=2
+                ) as response:
+                    mismatch = json.load(response)
+                self.assertEqual(mismatch["error"]["code"], "DATA_VERSION_MISMATCH")
+            finally:
+                server.shutdown()
+                worker.join(timeout=2)
+                server.server_close()
+
     def test_screen_config_and_search_share_plan_revision(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(load_preview()))
         worker = threading.Thread(target=server.serve_forever, daemon=True)

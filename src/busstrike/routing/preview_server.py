@@ -14,10 +14,20 @@ from .normal_reachability import assess_normal_reachability
 
 ROOT = Path(__file__).resolve().parents[3]
 PAGE = ROOT / "web" / "citizen" / "index.html"
+SELECTION = ROOT / "data" / "d_selection.json"
+
+
+def _selected(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("selected")
+    except FileNotFoundError:
+        return None
 
 
 def handler_for(
-    preview: Preview | None, normal_folder: Path = EXAMPLE
+    preview: Preview | None,
+    normal_folder: Path = EXAMPLE,
+    selection_file: Path = SELECTION,
 ) -> type[BaseHTTPRequestHandler]:
     class PreviewHandler(BaseHTTPRequestHandler):
         def _json(self, payload: dict[str, object]) -> None:
@@ -60,6 +70,10 @@ def handler_for(
                     )
                 self._json({"preview_only": True, "result": result})
                 return
+            if url.path == "/__demo__/selection":
+                selected = _selected(selection_file)
+                self._json({"selected": selected, "timetable_connected": False})
+                return
             if url.path not in {"/__demo__/config", "/__demo__/search"}:
                 self.send_error(404)
                 return
@@ -90,6 +104,26 @@ def handler_for(
                 return
             params = parse_qs(url.query, keep_blank_values=True)
             try:
+                journey_state = params.get("journey_state", ["strike_demo"])[0]
+                if journey_state == "strike_selected":
+                    selected = _selected(selection_file)
+                    if selected is None:
+                        raise PreviewError(
+                            "DATA_INCOMPLETE", "운영자가 선택한 실제 운행안이 없습니다."
+                        )
+                    if params.get("plan_id", [None])[0] != selected.get(
+                        "plan_id"
+                    ) or params.get("revision", [None])[0] != str(
+                        selected.get("revision")
+                    ):
+                        raise PreviewError(
+                            "DATA_VERSION_MISMATCH",
+                            "선택 운행안 ID 또는 revision이 다릅니다.",
+                        )
+                    raise PreviewError(
+                        "DATA_INCOMPLETE",
+                        "선택 운행안의 실제 시간표와 A/C 정류장 ID 매핑이 없어 경로를 연결할 수 없습니다.",
+                    )
                 required = (
                     "origin",
                     "destination",
@@ -114,6 +148,7 @@ def handler_for(
                     params["departure_at"][0],
                     params["plan_id"][0],
                     revision,
+                    journey_state=journey_state,
                 )
             except PreviewError as error:
                 self._json(

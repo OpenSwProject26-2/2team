@@ -92,6 +92,55 @@ class DashboardHttpTests(unittest.TestCase):
             payload = json.load(response)
         self.assertEqual(payload["code"], "DATA_INCOMPLETE")
 
+    def test_simulation_report_api_and_missing_artifacts(self) -> None:
+        options = self.get_json("/api/d/simulation/options")
+        self.assertEqual(len(options["regions"]), 4)
+        result = self.get_json(
+            "/api/d/simulation/result?region=guro&fleet=11&variant=affected&plan=ours&period=exp&date=mean"
+        )
+        self.assertEqual(result["metrics"]["rate_percent"], 12.58)
+        self.assertEqual(result["metrics"]["source"], "report_v4_5day_mean")
+        self.assertEqual(result["routes"], [])
+        self.assertEqual(result["outcome"]["status"], "report_only")
+        self.assertIsNone(result["run_id"])
+        runs = self.get_json("/api/d/simulation/runs")
+        self.assertEqual(runs["source"], "unavailable")
+        self.assertEqual(runs["runs"], [])
+        self.assertIsNone(result["verification"]["pass"])
+        self.assertEqual(
+            len(self.get_json("/api/d/simulation/comparison")["regions"]), 4
+        )
+        self.assertEqual(self.get_json("/api/d/simulation/map")["map"]["features"], [])
+        self.assertEqual(
+            self.get_json("/api/d/simulation/candidates")["candidates"], []
+        )
+        with urlopen(self.base + "/simulation", timeout=2) as response:
+            self.assertIn(b"simModeButton", response.read())
+        table = self.get_json("/api/d/simulation/table")
+        self.assertTrue(table["comparable"])
+        self.assertEqual(len(table["rows"]), 2)
+        summary = self.get_json("/api/d/simulation/seoul")
+        self.assertEqual(len(summary["districts"]), 25)
+        self.assertEqual(summary["aggregate"]["region_count"], 4)
+        request = Request(
+            self.base + "/api/d/simulation/selection",
+            data=json.dumps(
+                {
+                    "region": "guro",
+                    "fleet": 11,
+                    "variant": "affected",
+                    "plan": "ours",
+                    "period": "exp",
+                    "date": "mean",
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with self.assertRaises(HTTPError) as error:
+            urlopen(request, timeout=2)
+        self.assertEqual(error.exception.code, 503)
+        self.assertIsNone(self.get_json("/api/d/simulation/selection")["selected"])
+
 
 if __name__ == "__main__":
     unittest.main()
