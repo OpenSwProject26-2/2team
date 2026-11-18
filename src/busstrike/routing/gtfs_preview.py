@@ -320,6 +320,7 @@ def search(
     revision: int,
     *,
     exclude_demo_routes: bool = True,
+    journey_state: str = "strike_demo",
 ) -> dict[str, object]:
     """가장 이른 도착의 직행 또는 같은 정류장 1회 환승을 찾는다."""
     if (
@@ -352,10 +353,16 @@ def search(
     if requested_s < 0 or requested_s > max(86400, max_s):
         raise PreviewError("OUT_OF_SCOPE", "합성 예제의 서비스 날짜·시간 밖입니다.")
 
+    if journey_state not in {"normal", "strike", "strike_demo"}:
+        raise PreviewError("INPUT_INVALID", "지원하지 않는 경로 상태입니다.")
     trips = [
         trip
         for trip in preview.trips
-        if not (exclude_demo_routes and trip.route_id in preview.excluded_routes)
+        if (
+            journey_state == "normal"
+            or not (exclude_demo_routes and trip.route_id in preview.excluded_routes)
+        )
+        and (journey_state == "strike_demo" or trip.kind != "shuttle")
     ]
     rides = [
         (trip, start, end)
@@ -404,6 +411,7 @@ def search(
         "plan_id": preview.plan_id,
         "plan_revision": preview.revision,
         "plan_mode": "simulation",
+        "journey_state": journey_state,
         "verification": preview.verification,
         "source": preview.source,
         "service_date": preview.service_date.isoformat(),

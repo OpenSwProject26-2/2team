@@ -31,8 +31,10 @@
   <section class="panel" aria-labelledby="form-title">
     <h2 id="form-title">경로 조건</h2>
     <p class="meta" id="plan">예제 운행안을 불러오는 중입니다.</p>
+    <p class="meta" id="selected-plan">운영자 선택 안을 확인하는 중입니다.</p>
     <form id="search-form">
       <div class="fields">
+        <label>경로 상태 <select id="journey-state"><option value="normal">평상시 (합성 시간표)</option><option value="strike">버스 파업 (합성 시간표)</option><option value="strike_selected">버스 파업 + 운영자 선택 셔틀</option><option value="strike_demo">버스 파업 + 합성 예제 셔틀</option></select></label>
         <label>출발 정류장 <select id="origin" required></select></label>
         <label>도착 정류장 <select id="destination" required></select></label>
         <label>출발 시각 (Asia/Seoul) <input id="departure" type="datetime-local" required value="2026-11-07T00:00"></label>
@@ -50,6 +52,7 @@
     const resultNode = document.querySelector('#result');
     const submit = document.querySelector('#submit');
     let config;
+    let selected;
     const addText = (parent, tag, content, className = '') => {
       const node = document.createElement(tag);
       node.textContent = content;
@@ -79,6 +82,12 @@
         document.querySelector('#destination').value = 'C';
         document.querySelector('#plan').textContent =
           `예제 ${config.plan_id} / revision ${config.revision} · service date ${config.service_date} · ${config.verification}`;
+        const selectionResponse = await fetch('/__demo__/selection');
+        const selection = await selectionResponse.json();
+        selected = selection.selected;
+        document.querySelector('#selected-plan').textContent = selected
+          ? `운영자 선택: ${selected.plan_id} / revision ${selected.revision} · ${selected.region} · 실제 시간표 미연결 · 실제 운행 승인 아님`
+          : '운영자가 선택한 실제 운행안 없음 · 합성 예제 셔틀과 실제 C팀 안은 별개입니다.';
         submit.disabled = false;
         form.requestSubmit();
       } catch (error) {
@@ -93,8 +102,9 @@
         origin: document.querySelector('#origin').value,
         destination: document.querySelector('#destination').value,
         departure_at: `${document.querySelector('#departure').value}:00+09:00`,
-        plan_id: config.plan_id,
-        revision: String(config.revision),
+        plan_id: document.querySelector('#journey-state').value === 'strike_selected' ? (selected?.plan_id || '') : config.plan_id,
+        revision: document.querySelector('#journey-state').value === 'strike_selected' ? String(selected?.revision ?? '') : String(config.revision),
+        journey_state: document.querySelector('#journey-state').value,
       });
       try {
         const response = await fetch(`/__demo__/search?${params}`);
@@ -107,7 +117,7 @@
         const journey = payload.result;
         resultNode.replaceChildren();
         addText(resultNode, 'p', `예상 도착 ${journey.arrival_at} · 환승 ${journey.transfers}회`);
-        addText(resultNode, 'p', `${journey.plan_id} / revision ${journey.plan_revision} · ${journey.plan_mode} · ${journey.verification}`, 'meta');
+        addText(resultNode, 'p', `${journey.plan_id} / revision ${journey.plan_revision} · ${journey.journey_state} · ${journey.verification} · 합성 경로이며 M05 수송 성공을 뜻하지 않음`, 'meta');
         for (const leg of journey.legs) {
           const item = document.createElement('div');
           item.className = 'leg';

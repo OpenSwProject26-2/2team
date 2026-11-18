@@ -21,7 +21,11 @@ from .d_geo import (
     load_demo,
     map_geojson,
 )
+from .d_network import district_options, network_view
+from .d_geometry import bus_geometry_view, fetch_rail_gis, load_rail_gis, rail_geometry_view
 from .d_scenario import evaluate_demo
+from .d_simulation import SelectionStore, SimulationStore
+from .d_transit_data import TransitData
 
 ROOT = Path(__file__).resolve().parents[3]
 DEMO = ROOT / "tests" / "fixtures" / "d_dashboard" / "demo.json"
@@ -30,14 +34,27 @@ WEB = ROOT / "web" / "operator"
 
 class Store:
     def __init__(
-        self, a_gtfs: Path | None = None, service_date: str = "2026-11-02"
+        self,
+        a_gtfs: Path | None = None,
+        service_date: str = "2026-11-02",
+        transit_data: Path | None = None,
+        rail_gis_file: Path | None = None,
+        rail_gis_live: bool = False,
+        bus_geometry_file: Path | None = None,
     ) -> None:
         self.lock = Lock()
         self.demo = load_demo(DEMO)
         self.a_gtfs = a_gtfs
         self.service_date = service_date
+        self.rail_gis_file = rail_gis_file
+        self.rail_gis_live = rail_gis_live
+        self.bus_geometry_file = bus_geometry_file
+        self.rail_gis_error: str | None = None
+        self.bus_geometry_error: str | None = None
         self.real: MapSnapshot | None = None
         self.last_error: dict | None = None
+        self.network_cache: dict[tuple[str, str, str], dict] = {}
+        self.transit = TransitData(transit_data)
         if a_gtfs:
             self.refresh()
 
@@ -46,6 +63,20 @@ class Store:
             raise DataError("DATA_INCOMPLETE", "A GTFS 경로가 설정되지 않았습니다.")
         try:
             candidate = load_a_gtfs(self.a_gtfs, self.service_date)
+            if self.rail_gis_file or self.rail_gis_live:
+                try:
+                    rail_data = load_rail_gis(self.rail_gis_file) if self.rail_gis_file else fetch_rail_gis()
+                    candidate = rail_geometry_view(candidate, rail_data)
+                    self.rail_gis_error = None
+                except (OSError, ValueError, DataError) as error:
+                    self.rail_gis_error = str(error)
+            if self.bus_geometry_file:
+                try:
+                    bus_data = json.loads(self.bus_geometry_file.read_text(encoding="utf-8"))
+                    candidate = bus_geometry_view(candidate, bus_data)
+                    self.bus_geometry_error = None
+                except (OSError, ValueError, DataError) as error:
+                    self.bus_geometry_error = str(error)
         except DataError as error:
             self.last_error = {
                 "code": error.code,
@@ -56,6 +87,7 @@ class Store:
         with self.lock:
             self.real = candidate
             self.last_error = None
+            self.network_cache.clear()
         return {
             "snapshot_id": candidate.snapshot_id,
             "source": candidate.source,
@@ -88,6 +120,19 @@ class Store:
                 "snapshot_id": self.real.snapshot_id if self.real else None,
                 "last_error": self.last_error,
             },
+            "rail_gis": {
+                "status": "ready" if self.real and any(route.get("geometry_status") == "rail_gis_verified_corridor" for route in self.real.routes) else "unavailable",
+                "matched_routes": sum(route.get("geometry_status") == "rail_gis_verified_corridor" for route in self.real.routes) if self.real else 0,
+                "last_error": self.rail_gis_error,
+            },
+            "bus_geometry": {
+                "status": "ready" if self.real and any(route.get("geometry_status") in {"official", "osm_route", "osrm_estimate"} for route in self.real.routes) else "unavailable",
+                "matched_routes": sum(route.get("geometry_status") in {"official", "osm_route", "osrm_estimate"} for route in self.real.routes) if self.real else 0,
+                "official_routes": sum(route.get("geometry_status") == "official" for route in self.real.routes) if self.real else 0,
+                "osm_routes": sum(route.get("geometry_status") == "osm_route" for route in self.real.routes) if self.real else 0,
+                "osrm_estimates": sum(route.get("geometry_status") == "osrm_estimate" for route in self.real.routes) if self.real else 0,
+                "last_error": self.bus_geometry_error,
+            },
             "B": {
                 "status": "unavailable",
                 "reason": "검증된 셔틀 시간표 산출물 미연결",
@@ -96,8 +141,24 @@ class Store:
             "M07": {"status": "unavailable", "reason": "완전 독립 검증 산출물 미연결"},
         }
 
+    def network(self, snapshot: MapSnapshot, district: str, extent: str) -> dict:
+        if snapshot.source == "synthetic" and district != "all":
+            raise DataError("OUT_OF_SCOPE", "자치구 필터에는 A GTFS가 필요합니다.")
+        key = (snapshot.snapshot_id, district, extent)
+        with self.lock:
+            cached = self.network_cache.get(key)
+        if cached is not None:
+            return cached
+        view = network_view(snapshot, district, extent)
+        with self.lock:
+            self.network_cache[key] = view
+        return view
 
-def make_handler(store: Store):
+
+def make_handler(store: Store, simulation: SimulationStore | None = None):
+    simulation = simulation or SimulationStore()
+    selections = SelectionStore()
+
     class Handler(BaseHTTPRequestHandler):
         def _json(self, data: dict | list, status: int = HTTPStatus.OK) -> None:
             payload = json.dumps(
@@ -136,6 +197,7 @@ def make_handler(store: Store):
                 return
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
@@ -144,8 +206,25 @@ def make_handler(store: Store):
             parts = urlsplit(self.path)
             if parts.path in {"/", "/operator", "/operator/"}:
                 return self._asset(WEB / "index.html", "text/html; charset=utf-8")
+            if parts.path in {"/simulation", "/simulation/"}:
+                return self._asset(WEB / "index.html", "text/html; charset=utf-8")
+            if parts.path == "/simulation.js":
+                return self._asset(
+                    WEB / "simulation.js", "text/javascript; charset=utf-8"
+                )
             if parts.path == "/app.js":
                 return self._asset(WEB / "app.js", "text/javascript; charset=utf-8")
+            vendor_assets = {
+                "/vendor/maplibre-gl.mjs": "text/javascript; charset=utf-8",
+                "/vendor/maplibre-gl-worker.mjs": "text/javascript; charset=utf-8",
+                "/vendor/maplibre-gl.css": "text/css; charset=utf-8",
+                "/vendor/openfreemap-liberty.json": "application/json; charset=utf-8",
+            }
+            if parts.path in vendor_assets:
+                return self._asset(
+                    WEB / "vendor" / parts.path.rsplit("/", 1)[-1],
+                    vendor_assets[parts.path],
+                )
             if parts.path == "/favicon.ico":
                 self.send_response(HTTPStatus.NO_CONTENT)
                 self.end_headers()
@@ -155,9 +234,73 @@ def make_handler(store: Store):
             query = parse_qs(parts.query)
             mode = query.get("mode", ["demo"])[0]
             try:
+                if parts.path == "/api/d/simulation/options":
+                    return self._json(simulation.options())
+                if parts.path == "/api/d/simulation/runs":
+                    return self._json(simulation.runs(query))
+                if parts.path == "/api/d/simulation/comparison":
+                    return self._json(simulation.comparison(query))
+                if parts.path == "/api/d/simulation/table":
+                    return self._json(simulation.comparison_table(query))
+                if parts.path == "/api/d/simulation/seoul":
+                    return self._json(
+                        simulation.seoul_summary(query, selections.read()["selected"])
+                    )
+                if parts.path == "/api/d/simulation/selection":
+                    return self._json(selections.read())
+                if parts.path == "/api/d/simulation/residual":
+                    return self._json(
+                        store.transit.residual(
+                            query.get("region", ["guro"])[0],
+                            query.get("variant", ["affected"])[0],
+                            query.get("period", ["exp"])[0],
+                            query.get("date", ["mean"])[0],
+                        )
+                    )
+                if parts.path.startswith("/api/d/simulation/"):
+                    selected = simulation.selection(query)
+                    field = {
+                        "candidates": "candidates",
+                        "routes": "routes",
+                        "allocations": "routes",
+                        "map": "geojson",
+                        "metrics": "metrics",
+                        "verification": "verification",
+                    }.get(parts.path.rsplit("/", 1)[-1])
+                    if parts.path == "/api/d/simulation/result":
+                        return self._json(selected)
+                    if field:
+                        name = parts.path.rsplit("/", 1)[-1]
+                        return self._json(
+                            {
+                                "selection": selected["selection"],
+                                name: selected[field],
+                                "plan_id": selected["plan_id"],
+                                "revision": selected["revision"],
+                                "network_snapshot_id": selected["network_snapshot_id"],
+                                "outcome": selected["outcome"],
+                            }
+                        )
                 if parts.path == "/api/d/sources":
                     return self._json(store.sources())
+                if parts.path == "/api/d/districts":
+                    return self._json(district_options())
+                if parts.path == "/api/d/transit/status":
+                    return self._json(store.transit.status(store.real))
+                if parts.path == "/api/d/transit/observed":
+                    return self._json(
+                        store.transit.observed(
+                            query.get("district", ["guro"])[0],
+                            query.get("date", ["2026-10-26"])[0],
+                            query.get("hour", ["07"])[0],
+                        )
+                    )
                 snapshot = store.get(mode)
+                district = query.get("district", ["all"])[0]
+                extent = query.get("extent", ["inside"])[0]
+                view = store.network(snapshot, district, extent)
+                if parts.path == "/api/d/network":
+                    return self._json({"snapshot_id": snapshot.snapshot_id, **view})
                 if parts.path == "/api/d/dashboard":
                     return self._json(snapshot.summary())
                 if parts.path == "/api/d/routes":
@@ -165,7 +308,7 @@ def make_handler(store: Store):
                     q = query.get("q", [""])[0].casefold()
                     routes = [
                         route
-                        for route in snapshot.routes
+                        for route in view["routes"]
                         if (kind is None or route["kind"] == kind)
                         and (
                             not q
@@ -195,7 +338,27 @@ def make_handler(store: Store):
                                 "INPUT_INVALID", "bbox 범위가 잘못되었습니다."
                             )
                         bbox = vals
-                    return self._json(map_geojson(snapshot, bbox))
+                    if district == "all":
+                        return self._json(map_geojson(snapshot, bbox))
+                    geo = view["map"]
+                    if bbox:
+                        geo = {
+                            **geo,
+                            "features": [
+                                f
+                                for f in geo["features"]
+                                if f["geometry"]["type"] != "Point"
+                                or (
+                                    bbox[0]
+                                    <= f["geometry"]["coordinates"][0]
+                                    <= bbox[2]
+                                    and bbox[1]
+                                    <= f["geometry"]["coordinates"][1]
+                                    <= bbox[3]
+                                )
+                            ],
+                        }
+                    return self._json(geo)
                 if parts.path == "/api/d/demand":
                     hour = query.get("hour", ["07"])[0]
                     demand_mode = query.get("demand_mode", ["total"])[0]
@@ -206,7 +369,11 @@ def make_handler(store: Store):
 
         def do_POST(self) -> None:
             path = urlsplit(self.path).path
-            if path not in {"/api/d/sources/refresh", "/api/d/demo/scenario/evaluate"}:
+            if path not in {
+                "/api/d/sources/refresh",
+                "/api/d/demo/scenario/evaluate",
+                "/api/d/simulation/selection",
+            }:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             if self.headers.get("Origin") not in {
@@ -238,6 +405,8 @@ def make_handler(store: Store):
                     ) from error
                 if not isinstance(request, dict):
                     raise DataError("INPUT_INVALID", "JSON 객체가 필요합니다.")
+                if path == "/api/d/simulation/selection":
+                    return self._json(selections.choose(simulation, request))
                 return self._json(evaluate_demo(store.demo, request))
             except DataError as error:
                 self._error(error)
@@ -254,9 +423,28 @@ def main() -> None:
         "--service-date", default="2026-11-02", help="A GTFS 서비스일 YYYY-MM-DD"
     )
     parser.add_argument("--port", type=int, default=8766)
+    parser.add_argument("--rail-gis-file", type=Path, help="외부 로컬 Esri 철도 선형 GeoJSON")
+    parser.add_argument("--rail-gis-live", action="store_true", help="시작할 때 공식 철도 GIS API를 조회")
+    parser.add_argument("--bus-geometry-file", type=Path, help="A GTFS ID 검증이 포함된 외부 버스 선형 GeoJSON")
+    parser.add_argument(
+        "--transit-data", type=Path, help="seoul_transit_data 폴더 또는 ZIP"
+    )
+    parser.add_argument(
+        "--simulation-results", type=Path, help="C/B팀 결과 루트(<구>/manifest.json)"
+    )
+    parser.add_argument(
+        "--simulation-inputs",
+        type=Path,
+        help="C팀 지역 입력 루트(<구>_0610_v4/network/stops.csv)",
+    )
     args = parser.parse_args()
-    store = Store(args.a_gtfs, args.service_date)
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(store))
+    store = Store(args.a_gtfs, args.service_date, args.transit_data, args.rail_gis_file, args.rail_gis_live, args.bus_geometry_file)
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", args.port),
+        make_handler(
+            store, SimulationStore(args.simulation_results, args.simulation_inputs)
+        ),
+    )
     print(f"D 대시보드: http://127.0.0.1:{args.port}/")
     print("DEMO는 합성 자료입니다. 실제 운행 안내가 아닙니다.")
     try:

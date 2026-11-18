@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from busstrike.api.d_dashboard import Store
 from busstrike.api.d_geo import (
     DataError,
+    _prune_rail_shortcuts,
     demand_geojson,
     load_a_gtfs,
     load_demo,
@@ -65,6 +66,23 @@ def small_gtfs(
 
 
 class DashboardDataTests(unittest.TestCase):
+    def test_rail_schematic_removes_skip_stop_diagonal_but_keeps_required_link(self):
+        stops = [
+            {"stop_id": sid, "coordinates": [lon, 37.5]}
+            for sid, lon in [
+                ("A", 127.0),
+                ("B", 127.02),
+                ("C", 127.04),
+                ("D", 127.1),
+                ("E", 127.14),
+            ]
+        ]
+        links, removed = _prune_rail_shortcuts(
+            {"L5": [["A", "B"], ["B", "C"], ["A", "C"], ["D", "E"]]}, stops
+        )
+        self.assertEqual(removed, 1)
+        self.assertEqual(links["L5"], [["A", "B"], ["B", "C"], ["D", "E"]])
+
     def test_demo_capacity_allocation_changes_with_route_and_preserves_people(self):
         snapshot = load_demo(DEMO)
         route = {

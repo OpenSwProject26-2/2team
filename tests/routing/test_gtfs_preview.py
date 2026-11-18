@@ -47,6 +47,15 @@ class TestGtfsPreview(unittest.TestCase):
         self.assertEqual(result["plan_mode"], "simulation")
         self.assertEqual(result["verification"], "not_independently_verified")
 
+    def test_three_states_keep_strike_and_demo_shuttle_distinct(self) -> None:
+        normal = self.query(journey_state="normal")
+        self.assertEqual([x["trip_id"] for x in normal["legs"]], ["normal:n1"])
+        with self.assertRaises(PreviewError) as missing:
+            self.query(journey_state="strike")
+        self.assertEqual(missing.exception.code, "NO_PATH")
+        demo = self.query(journey_state="strike_demo")
+        self.assertEqual(demo["legs"][0]["mode"], "shuttle")
+
     def test_after_midnight_keeps_service_date_and_offset(self) -> None:
         result = self.query(departure="2026-11-08T00:09:00+09:00")
         self.assertEqual(

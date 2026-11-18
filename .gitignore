@@ -4,7 +4,9 @@ __pycache__/
 .env
 raw/
 data/processed/
+data/d_selection.json
 *.zip
 VW_KSCC_*.csv
 data/raw/
 *.egg-info/
+.browser-check*/

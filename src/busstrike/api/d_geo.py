@@ -362,6 +362,51 @@ def _representative_stop_ids(
     )
 
 
+def _prune_rail_shortcuts(
+    links_by_route: dict[str, list[list[str]]], stops: list[dict]
+) -> tuple[dict[str, list[list[str]]], int]:
+    """Remove long GTFS skip-stop chords when nearby station links already connect them.
+
+    These remain schematic links, never verified railway geometry.
+    """
+    coordinates = {stop["stop_id"]: stop["coordinates"] for stop in stops}
+    result: dict[str, list[list[str]]] = {}
+    removed = 0
+    for route_id, links in links_by_route.items():
+        nearby: dict[str, set[str]] = {}
+        distances: list[tuple[list[str], float | None]] = []
+        for left, right in links:
+            a, b = coordinates.get(left), coordinates.get(right)
+            distance = None
+            if a and b:
+                latitude = (a[1] + b[1]) / 2
+                distance = (
+                    ((a[0] - b[0]) * 111.2 * math.cos(math.radians(latitude))) ** 2
+                    + ((a[1] - b[1]) * 111.2) ** 2
+                ) ** 0.5
+                if distance <= 2.5:
+                    nearby.setdefault(left, set()).add(right)
+                    nearby.setdefault(right, set()).add(left)
+            distances.append(([left, right], distance))
+        kept = []
+        for link, distance in distances:
+            if distance is not None and distance > 2.5:
+                start, destination = link
+                seen = {start}
+                pending = [start]
+                while pending and destination not in seen:
+                    for neighbor in nearby.get(pending.pop(), ()):
+                        if neighbor not in seen:
+                            seen.add(neighbor)
+                            pending.append(neighbor)
+                if destination in seen:
+                    removed += 1
+                    continue
+            kept.append(link)
+        result[route_id] = kept
+    return result, removed
+
+
 def load_a_gtfs(path: Path, service_date: str) -> MapSnapshot:
     """정상 GTFS에서 지도용 정류장·노선·공식 shapes만 가져온다.
 
@@ -471,6 +516,7 @@ def load_a_gtfs(path: Path, service_date: str) -> MapSnapshot:
                     "source_namespace": "a_gtfs",
                 }
             )
+        rail_links, removed_rail_shortcuts = _prune_rail_shortcuts(rail_links, stops)
         shapes: dict[str, list[tuple[int, list[float]]]] = {
             sid: [] for sid in shape_by_route.values()
         }
@@ -551,6 +597,10 @@ def load_a_gtfs(path: Path, service_date: str) -> MapSnapshot:
             warnings.append(
                 "shapes.txt가 없어 실제 노선 선형이 없습니다. 지도 점선은 정차 관계 개략도이며 실제 도로·철로가 아닙니다."
             )
+        if removed_rail_shortcuts:
+            warnings.append(
+                f"급행·건너뛴 정차 패턴의 장거리 철도 개략 연결 {removed_rail_shortcuts}개를 제외했습니다."
+            )
         return MapSnapshot(
             snapshot_id="a-gtfs-" + digest[:16],
             source="a_gtfs_approximate_schedule",
@@ -580,7 +630,7 @@ def map_geojson(
                     "type": "Feature",
                     "id": route["route_id"],
                     "geometry": {
-                        "type": "LineString",
+                        "type": route.get("geometry_type", "LineString"),
                         "coordinates": route["coordinates"],
                     },
                     "properties": {
