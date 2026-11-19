@@ -1,15 +1,17 @@
-"""걷기(도보 R m)를 넣은 평가와 "형평 먼저" 생성을 한 구에서 돌린다(hub_sweep 결과 위에서).
+"""걷기(도보 R m)를 넣은 안 만들기와 평가를 한 구에서 돌린다(hub_sweep 결과 위에서).
 
     python3 experiments/routegen_lab/walk_eval.py --sweep <hub_sweep2/<구>> --region <region> --osm <구_roads.json> \
-        --gu <slug> --out <저장소 밖>/walk_eval/<구> [--radius 400] [--targets 0.6,0.7,0.8] [--jobs 6]
+        --gu <slug> --out <저장소 밖>/walk_eval/<구> [--radius 400] [--service-start 07:00,06:00] [--no-run] [--jobs 6]
 
 안(plan)
 - muni: 지자체안(`<sweep>/muni/plan.json`, eval_municipal이 망에 맞춘 것). 그 대수에서만.
 - s12: 기존 우리 안(허브 135·정차 12, hub_sweep 결과 그대로).
-- walk: 같은 후보(허브 135·정차 12)로, 배분기가 걷기를 반영해 덮는 수요를 셈(형평 조건 없음).
-- covXX: 형평 먼저 — 걸어서 R m 안 수요가 XX%가 될 때까지 덮는 범위가 넓은 노선을 최소 대수(배차 20분 이하)로 고정하고,
-  남은 대수를 걷기 반영 배분기로 채운다. 예산 안에서 목표에 못 닿으면 닿는 데까지.
-- covXXrL: 형평 먼저에서 노선 점수 = 새로 덮는 수요 + L × 새로 탈 수 있게 되는 수요(--lambdas). L = 0이 covXX.
+- walk: 같은 후보(허브 135·정차 12)로, 배분기가 평가 규칙으로 덮는 수요를 셈(형평 하한 없음).
+- eqHH(3단계 기본): 같은 후보로, 배분기(`allocate`)가 형평 하한(탈 수 있는 수요 비율 전체·역 800m 밖 ≥ 지자체안 값,
+  `equity` 설정)과 노선 대당 하한(근사 대당 탑승 ≥ `equity.route_min_per_vehicle`)을 지키며 근사 탑승을 최대로 한다.
+  HH = 운행 시작 시각(07이면 07:00 시작: 근사가 6시 수요를 태우지 못한다고 본다). 하한을 못 맞추면 경고하고 기록한다.
+  근사의 정원 항은 구간별 최대 재차 인원(`cap_mode="segment"`, spans = 평가 규칙의 재배정 짝).
+- (재현용) covXX / covXXrL: 예전 "형평 먼저"(`walk.coverage_first`). `--targets`를 줄 때만 만든다. 기본 경로는 쓰지 않는다.
 --only로 안 이름을 주면 그 안만 만들고 돌려 기존 walk_eval.json에 더한다(걷기 없음 결과는 runs_nowalk/<안>-f<대수>/에).
 시뮬레이터 가정(모든 안 같음)
 - nowalk: 지금까지와 같다(승객은 원래 정류장에서만 탄다).
@@ -47,6 +49,7 @@ from busstrike.planning.routegen import generate as G  # noqa: E402
 from busstrike.planning.routegen import gu_config  # noqa: E402
 from busstrike.planning.routegen import walk as WK  # noqa: E402
 from busstrike.planning.routegen.absorb import Absorber, residual_rows  # noqa: E402
+from busstrike.planning.routegen.equity import EquityIndex  # noqa: E402
 from busstrike.planning.routegen.reach import Reach, StationIndex  # noqa: E402
 from busstrike.sim import io as sio  # noqa: E402
 from busstrike.sim.arrivals import build_run_inputs  # noqa: E402
@@ -107,6 +110,11 @@ def walk_bundles(src: Path, dst: Path, routes: list[list[str]], nb: dict, st_sto
             "walk_m_avg": round(agg["walk_m"] / agg["walked"], 1) if agg["walked"] else 0.0}
 
 
+def _hhmm(x: str) -> int:
+    h, m = x.split(":")
+    return int(h) * 3600 + int(m) * 60
+
+
 def finished(out: Path, n: int) -> bool:
     """out/runs.json에 n건이 있고 모두 M07 통과면 끝난 것(다시 돌 때 건너뛴다)."""
     try:
@@ -146,6 +154,11 @@ def main() -> int:
     ap.add_argument("--near-m", type=float, default=None)
     ap.add_argument("--muni", action="append", default=[], help="지자체안 변형 이름=eval_municipal 결과 폴더(여러 번)")
     ap.add_argument("--legacy-rule", action="store_true", help="2단계 전 규칙(역 고정, 역 쪽 지정 정류장 걷기)으로 설계·평가")
+    ap.add_argument("--service-start", default=None, help="안 만들기 운행 시작 시각(쉼표로 여러 개, 비우면 설정 파일 walk.service_starts)")
+    ap.add_argument("--equity-floor", default=None, help='형평 하한: muni / none / "전체,역800m밖"(비율). 비우면 설정 파일 equity.floor')
+    ap.add_argument("--route-min", type=float, default=None, help="노선 근사 대당 탑승 하한(비우면 설정 파일 equity.route_min_per_vehicle)")
+    ap.add_argument("--cap-mode", default="segment", choices=list(A.CAP_MODES), help="근사 정원 항")
+    ap.add_argument("--no-run", action="store_true", help="안만 만들고 시뮬레이션은 하지 않는다(평가는 eval_rules.py)")
     ap.add_argument("--lines", type=Path, default=HERE.parent / "station_lines.csv", help="역 → 호선·지선 꼬리표 표")
     args = ap.parse_args()
     muni_dirs = {k: Path(v).resolve() for k, v in (x.split("=", 1) for x in args.muni)}
@@ -156,7 +169,12 @@ def main() -> int:
     args.near_discount = args.near_discount if args.near_discount is not None else float(wc.get("near_discount", 1.0))
     args.multi = args.multi if args.multi is not None else bool(wc.get("multi", False))
     args.lambdas = args.lambdas or ",".join(str(x) for x in wc.get("lambdas", [0]))
-    args.targets = args.targets or ",".join(str(x) for x in wc.get("targets", [0.6, 0.7, 0.8]))
+    args.targets = args.targets or ",".join(str(x) for x in wc.get("targets", []))   # 비면 형평 먼저(예전)를 만들지 않는다
+    starts = [x for x in (args.service_start or ",".join(wc.get("service_starts", ["06:00"]))).split(",") if x]
+    eqc = cfg.equity
+    floor_cfg = args.equity_floor if args.equity_floor is not None else eqc["floor"]
+    route_min = args.route_min if args.route_min is not None else float(eqc["route_min_per_vehicle"])
+    far_m = float(eqc["far_m"])
     only = set(filter(None, args.only.split(",")))
     want = lambda label: not only or label in only
     sw, out = args.sweep.resolve(), args.out.resolve()
@@ -190,8 +208,8 @@ def main() -> int:
     home = {s for s, x in base.stops.items() if x.gu == info["gu"]}
     weight = {s: w for s, w in WK.stop_weights(demand.od, st_stops).items() if s in home}
     # 역 근처(지정 정류장 도보 near_m 안): 지하철까지 걸어갈 수 있어 형평 우선순위를 낮출 수 있다
-    nb_near = walk_neighbors(rn, args.near_m, set(weight))
-    near = {k for k in weight if any(x in st_stops for x in nb_near.get(k, {}))}
+    nb_near = walk_neighbors(rn, max(args.near_m, far_m), home)
+    near = {k for k in weight if any(x in st_stops and w <= args.near_m + 1e-9 for x, w in nb_near.get(k, {}).items())}
     weight_far = {k: v for k, v in weight.items() if k not in near}
     weight_eq = {k: v * (args.near_discount if k in near else 1.0) for k, v in weight.items()}
     dsfx = "d" if args.near_discount < 1.0 else ""
@@ -213,8 +231,16 @@ def main() -> int:
     gres = G.generate(net, demand, scen, p, reach=reach)
     pool = G.pools(gres.candidates, p.jaccard)["ours"][0]
     by = {c.route_id: c for c in pool}
-    wkeys = {c.route_id: (WK.walk_cover_keys(list(c.stops), keys, nb) if reach is None else reach.cover_keys(c.stops))
+    ride = None
+    if reach is not None:
+        from eval_rules import ride_fn
+        ride = ride_fn(net.tt)
+    spans = {c.route_id: (None if reach is None else reach.spans(c.stops, ride=ride)) for c in pool}
+    wkeys = {c.route_id: (WK.walk_cover_keys(list(c.stops), keys, nb) if reach is None else spans[c.route_id][0])
              for c in pool}
+    sp_of = {rid: (None if v is None else v[1]) for rid, v in spans.items()}
+    # 형평 지표(설계 2.2): 그 구 동네 정류장 수요, 역 far_m 밖 = 지정 정류장 도로 도보 far_m 안에 없는 정류장
+    eq_ix = EquityIndex.build({k: demand.od_total(k) for k in keys}, st_stops, home, nb_near, far_m)
     log = {"gu": info["gu"], "radius_m": args.radius, "fleets": fleets, "pool": len(pool),
            "rule": "legacy" if reach is None else reach.rule.record(),
            "params": {**cfg.record(), "used": {"radius_m": args.radius, "near_m": args.near_m,
@@ -240,7 +266,11 @@ def main() -> int:
         path = write_plan(out / "plans" / f"{label}-f{fleet}.json", f"plan-{label}-f{fleet}", snap, routes)
         plan_specs.setdefault(label, {})[fleet] = path
         stops = {s for r, _ in routes for s in r}
+        eqv = eq_ix.of_plan(reach, [r for r, _ in routes]) if reach is not None else \
+            eq_ix.ratios(set().union(*(set(WK.walk_cover_keys(list(r), keys, nb)) for r, _ in routes)))
         log["plans"][f"{label}-f{fleet}"] = {"label": label, "fleet": fleet, "routes": len(routes),
+                                             "equity": {"total": round(eqv["total"], 4), "far": round(eqv["far"], 4),
+                                                        "rule": "legacy" if reach is None else reach.rule.label()},
                                              "vehicles": sum(v for _, v in routes), "stops": len(stops),
                                              "coverage": round(WK.coverage(stops, nb, weight), 4),
                                              "coverage_far": round(WK.coverage(stops, nb, weight_far), 4),
@@ -266,12 +296,59 @@ def main() -> int:
     # walk / covXX
     groups = {c.route_id: "·".join(c.hubs) for c in pool}
     cands = [(c.route_id, list(c.stops), c.cycle_s) for c in pool]
+    # 형평 하한: 같은 규칙에서 잰 지자체안 값(muni) / 고정값 / 끔
+    log["equity_base"] = eq_ix.record()
+    floor = None
+    if floor_cfg not in (None, "none"):
+        if floor_cfg == "muni":
+            mp = json.loads((next(iter(muni_src.values())) if muni_src else sw / "muni") .joinpath("plan.json")
+                            .read_text(encoding="utf-8"))
+            mv = (eq_ix.of_plan(reach, [r["stops"] for r in mp["routes"]]) if reach is not None else
+                  eq_ix.ratios(set().union(*(set(WK.walk_cover_keys(list(r["stops"]), keys, nb)) for r in mp["routes"]))))
+            floor = {"total": mv["total"], "far": mv["far"], "source": "muni"}
+        else:
+            ft = floor_cfg if isinstance(floor_cfg, dict) else dict(zip(("total", "far"), map(float, floor_cfg.split(","))))
+            floor = {"total": float(ft["total"]), "far": float(ft["far"]), "source": "fixed"}
+    log["equity_floor"] = None if floor is None else {k: (round(v, 4) if isinstance(v, float) else v) for k, v in floor.items()}
+    log["alloc"] = {"cap_mode": args.cap_mode, "route_min_per_vehicle": route_min, "service_starts": starts}
+
+    def model(start: str | None, eq_floor=None, rmin: float = 0.0) -> A.Model:
+        ap_ = A.AllocParams(cap_mode=args.cap_mode, route_min_per_vehicle=rmin,
+                            service_start_s=None if start in (None, "06:00") else _hhmm(start))
+        ef = None if eq_floor is None else A.EquityFloor.from_index(eq_ix, eq_floor["total"], eq_floor["far"])
+        return A.Model([(rid, cyc, wkeys[rid], sp_of[rid]) for rid, _, cyc in cands], demand.od, ap_, groups, equity=ef)
+
+    def alloc_record(a: dict) -> dict:
+        return {k: a[k] for k in ("value", "violation", "feasible", "equity", "per_vehicle", "route_shortfall",
+                                  "cap_mode", "service_start_s", "hour_weights", "warnings", "chosen")}
+
     for f in fleets:
         if want("walk" + sfx):
-            m = A.Model([(rid, cyc, wkeys[rid]) for rid, _, cyc in cands], demand.od, A.AllocParams(), groups)
+            m = model(None)
             a = A.allocate(m, f)
-            record("walk" + sfx, f, [(list(by[k].stops), v) for k, v in sorted(a["n"].items())], {"approx": round(a["value"], 1)})
-        for t in [float(x) for x in args.targets.split(",")]:
+            record("walk" + sfx, f, [(list(by[k].stops), v) for k, v in sorted(a["n"].items())],
+                   {"approx": round(a["value"], 1), "alloc": alloc_record(a)})
+        for st in starts:
+            label = "eq" + sfx + st.split(":")[0]
+            if not want(label) or reach is None:
+                continue
+            m = model(st, floor, route_min)
+            a = A.allocate(m, f)
+            free = A.allocate(model(st), f)                      # 같은 근사, 하한 없이(하한이 걸렸는지 보려고)
+            fe = m.equity_of(free["n"]) if floor is not None else None
+            record(label, f, [(list(by[k].stops), v) for k, v in sorted(a["n"].items())],
+                   {"approx": round(a["value"], 1), "service_start": st, "alloc": alloc_record(a),
+                    "route_ids": [k for k, _ in sorted(a["n"].items())],
+                    "unconstrained": {"n": free["n"], "approx": round(free["value"], 1),
+                                      "per_vehicle": free["per_vehicle"],
+                                      "equity": None if fe is None else {"total": round(fe["total"], 4),
+                                                                         "far": round(fe["far"], 4)},
+                                      "same_as_constrained": free["n"] == a["n"]}})
+            print(f"{label}-f{f}: 근사 {a['value']:.1f}, 하한 만족 {a['feasible']}, 형평 {a['equity']}, "
+                  f"하한 없이 {free['value']:.1f} {fe}", flush=True)
+            for w in a["warnings"]:
+                print(f"경고 {label}-f{f}: {w}", flush=True)
+        for t in [float(x) for x in args.targets.split(",") if x]:
             for lam in [float(x) for x in args.lambdas.split(",")]:
                 label = f"cov{int(round(t * 100))}" + (f"r{lam:g}" if lam else "") + sfx + dsfx
                 if not want(label):
@@ -292,6 +369,8 @@ def main() -> int:
             continue
         print(k, {x: v[x] for x in v if x != "route_list"}, flush=True)
 
+    if args.no_run:
+        return 0
     # 시뮬레이션: nowalk(모든 안 한 번에) · walk(안마다 재배정 묶음)
     for split in ("exp", "test"):
         nb_dir = out / "bundles_nowalk" / split

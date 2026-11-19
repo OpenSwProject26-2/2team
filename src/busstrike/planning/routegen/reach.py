@@ -327,6 +327,20 @@ class Reach:
                         out.append(key)
         return tuple(sorted(out))
 
+    def spans(self, seq, keys: Iterable[tuple[str, str]] | None = None, ride: Callable | None = None):
+        """정차열 하나로 탈 수 있는 OD 키와 키마다 (탈 정차 순번, 내릴 정차 순번).
+
+        짝은 평가 재배정(`best_pair`, 이 노선 하나만 있을 때)과 같다. 배분기 근사의 구간별 정원(allocate cap_mode="segment")에 쓴다.
+        """
+        seq = list(seq)
+        ks = self.cover_keys(seq, keys)
+        pos = {x: i for i, x in enumerate(seq)}
+        out = []
+        for k in ks:
+            b = self.best_pair(k, [seq], ride)
+            out.append((pos[b[1]], pos[b[2]]) if b is not None else (0, len(seq) - 1))
+        return ks, tuple(out)
+
     def cover_value(self, seq, od_total: dict[tuple[str, str], float]) -> float:
         return sum(od_total.get(k, 0.0) for k in self.cover_keys(seq))
 

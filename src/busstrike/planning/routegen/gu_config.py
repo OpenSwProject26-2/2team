@@ -6,9 +6,13 @@
     "generate": {...},            # 모든 생성 설정에 공통으로 넣을 Params 값(예: distance_basis)
     "configs": {"이름": {...}},    # 구별 실험(hub_sweep)에서 돌릴 생성 설정들(Params 값)
     "absorb": {...},              # 정밀 흡수 가정(AbsorbParams 값)
-    "walk": {                     # 걷기·형평 실험(walk_eval)
-      "radius_m": 400, "near_m": 800, "near_discount": 0.3, "lambdas": [3], "targets": [0.7], "multi": true,
+    "walk": {                     # 걷기 반영 안 만들기(walk_eval)
+      "radius_m": 400, "multi": false, "service_starts": ["07:00", "06:00"],
       "generate": {...}           # 후보 풀을 만들 Params 값
+      # 예전 "형평 먼저" 재현용(기본 경로는 쓰지 않음): "near_m", "near_discount", "lambdas", "targets"
+    },
+    "equity": {                   # 형평 지표·배분기 형평 하한(설계 2.2·6.2, 3단계)
+      "far_m": 800, "floor": "muni", "route_min_per_vehicle": 90
     },
     "eval": {                     # 평가 규칙(설계 7절, reach.EvalRule 값) + 함께 낼 조합
       "station_mode": "same_line", "walk_radius_m": 400, "station_arrival": "candidates", "shared_stop": "flow_union",
@@ -32,7 +36,9 @@ from .absorb import AbsorbParams
 from .generate import Params
 from .reach import EvalRule
 
-WALK_KEYS = {"radius_m", "near_m", "near_discount", "lambdas", "targets", "multi", "generate"}
+WALK_KEYS = {"radius_m", "near_m", "near_discount", "lambdas", "targets", "multi", "generate", "service_starts"}
+EQUITY_KEYS = {"far_m", "floor", "route_min_per_vehicle"}
+EQUITY_DEFAULT = {"far_m": 800, "floor": "muni", "route_min_per_vehicle": 90.0}
 
 
 def _merge(a: dict, b: dict) -> dict:
@@ -60,11 +66,19 @@ class GuConfig:
         self.configs = {name: _check({**base, **kw}, Params, f"configs.{name}")
                         for name, kw in self.raw.get("configs", {}).items()}
         self.absorb = _check(self.raw.get("absorb", {}), AbsorbParams, "absorb")
-        walk = self.raw.get("walk", {})
+        walk = {k: v for k, v in self.raw.get("walk", {}).items() if not k.startswith("_")}
         bad = sorted(set(walk) - WALK_KEYS)
         if bad:
             raise ValueError(f"walk: 모르는 값 {bad}")
         self.walk = {**walk, "generate": _check({**base, **walk.get("generate", {})}, Params, "walk.generate")}
+        eqc = {k: v for k, v in self.raw.get("equity", {}).items() if not k.startswith("_")}
+        bad = sorted(set(eqc) - EQUITY_KEYS)
+        if bad:
+            raise ValueError(f"equity: 모르는 값 {bad}")
+        self.equity = {**EQUITY_DEFAULT, **eqc}
+        fl = self.equity["floor"]
+        if not (fl is None or fl == "muni" or (isinstance(fl, dict) and set(fl) <= {"total", "far"})):
+            raise ValueError(f"equity.floor는 \"muni\", null, {{\"total\": x, \"far\": y}} 중 하나: {fl}")
         ev = {k: v for k, v in self.raw.get("eval", {}).items() if not k.startswith("_")}
         self.eval_combo_axes = ev.pop("combos", {"station_mode": ["fixed", "same_line", "any"],
                                                  "walk_radius_m": [0, 200, 400]})

@@ -17,10 +17,13 @@ spec.json
              "bundles": {"exp": "<묶음 폴더>", "test": "<묶음 폴더>"}, "start": "07:00" | null,
              "dates": ["20261028"] | null, "combos": ["same_line-w400"] | null}],
   "renumber": false,                                    # true면 참고 구현처럼 aggregate_id를 a0000001…로 다시 매김
-  "keep_events": "cov70r3md-f11/same_line-w400/exp/20261028"   # events.jsonl·realization.jsonl을 남길 실행 하나
+  "keep_events": "cov70r3md-f11/same_line-w400/exp/20261028",  # events.jsonl·realization.jsonl을 남길 실행 하나
+  "equity": true,                                       # 안 × 조합마다 형평 지표(탈 수 있는 수요 비율 두 값)를 낸다(기본 켬)
+  "nb_far": "<도보 이웃 800m json>" | null              # 역 800m 밖 판정(없으면 osm으로 재서 out에 저장)
 }
 결과: `<out>/runs/<tag>/<조합>/<split>/`(run_matrix 결과 + group.json), `<out>/results.json`(실행마다 한 줄),
-`<out>/meta.json`(코드 커밋·규칙·망·설정). 이미 끝난 묶음(group.json이 있고 모두 M07 통과)은 건너뛴다.
+`<out>/meta.json`(코드 커밋·규칙·망·설정), `<out>/equity.json`(안 × 조합 형평 두 값, 설계 2.2, `equity_eval`).
+이미 끝난 묶음(group.json이 있고 모두 M07 통과)은 건너뛴다. 결과 한 줄에도 그 안·조합의 형평 두 값(`equity`)을 넣는다.
 """
 
 from __future__ import annotations
@@ -228,6 +231,17 @@ def main() -> int:
                 tts[h] = ride_fn(TravelTimeTable.from_dict(json.loads(k)))
         return tts[h]
 
+    equity: dict = {}
+    if spec.get("equity", True):
+        from equity_eval import plan_equity, setup
+        ectx = setup(root, cfg, Path(spec["osm"]), out, test_root, nb=nb,
+                     nb_far_path=Path(spec["nb_far"]) if spec.get("nb_far") else None, lines=Path(lines))
+        for p in spec["plans"]:
+            routes = [r["stops"] for r in json.loads(Path(p["plan"]).read_text(encoding="utf-8"))["routes"]]
+            equity[p["tag"]] = plan_equity(ectx, routes, combos)
+        (out / "equity.json").write_text(json.dumps({"code": git_state(), "equity_base": ectx["eq"].record(),
+                                                     "nb_far": ectx["nb_far_src"], "plans": equity},
+                                                    ensure_ascii=False, indent=1), encoding="utf-8")
     meta = {"code": git_state(), "spec": spec, "spec_path": str(args.spec), "nb": nb_src, "lines": lines,
             "base_rule": base_rule.record(), "rules": {c.label(): c.record() for c in combos},
             "params": cfg.record(), "missing_line_stations": [[k, ix.names.get(k, "")] for k in ix.missing_lines],
@@ -239,6 +253,10 @@ def main() -> int:
 
     def one(g):
         recs = run_group(g, out, reaches[g["rule"].label()], ride_of, args.jobs, bool(spec.get("renumber")), keep)
+        eqv = equity.get(g["plan"]["tag"], {}).get(g["rule"].label())
+        if eqv:
+            for r in recs:
+                r["equity"] = {"total": eqv["total"], "far": eqv["far"]}
         with _lock:
             results.extend(recs)
             bad = [r for r in recs if r.get("verify_pass") is not True]
