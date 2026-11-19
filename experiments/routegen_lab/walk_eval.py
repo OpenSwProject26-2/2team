@@ -17,6 +17,10 @@
   안마다 수요 묶음(demand_bins)의 승하차 정류장만 바꾸고 run_inputs를 다시 만든다. 도보 시간은 넣지 않는다.
 망·흡수는 hub_sweep과 같다(도로 망, 정밀 흡수 기본 가정). 지자체안이 쓰는 무정차 구간을 담은 `road_muni.json`을 모든 안에 쓴다
 (다른 안은 그 구간을 쓰지 않는다).
+`--muni 이름=<eval_municipal 결과 폴더>`(여러 번): 지자체안 변형(이음 측정 방식·운행 시작 시각 등)을 그 폴더의 plan.json과
+묶음(`<폴더>/{exp,test}/bundles`, 그 변형의 road_muni.json·시나리오)으로 따로 돌린다(걷기 없음 `runs_nowalk/<이름>-f<대수>/`,
+걷기 `runs_walk/<이름>-f<대수>/`). 이때 우리 안은 지자체안 구간이 없는 `<sweep>/net/road.json` 묶음으로 돈다
+(변환기의 공차 복귀 경로가 지자체안 무정차 구간을 쓰지 않게).
 """
 
 from __future__ import annotations
@@ -64,6 +68,8 @@ def walk_bundles(src: Path, dst: Path, routes: list[list[str]], nb: dict, st_sto
     """src 묶음들을 복사하고 demand_bins를 걷기 재배정한 뒤 run_inputs를 다시 만든다."""
     agg = {"direct": 0, "walked": 0, "none": 0, "walk_m": 0.0}
     for b in sorted(src.iterdir()):
+        if not b.is_dir():
+            continue
         t = dst / b.name
         if t.exists():
             shutil.rmtree(t)
@@ -127,7 +133,9 @@ def main() -> int:
     ap.add_argument("--near-discount", type=float, default=None,
                     help="형평 먼저 단계에서 역(지정 정류장) 도보 --near-m 안 수요의 무게 배수(1이면 할인 없음, 안 이름 끝에 d)")
     ap.add_argument("--near-m", type=float, default=None)
+    ap.add_argument("--muni", action="append", default=[], help="지자체안 변형 이름=eval_municipal 결과 폴더(여러 번)")
     args = ap.parse_args()
+    muni_dirs = {k: Path(v).resolve() for k, v in (x.split("=", 1) for x in args.muni)}
     cfg = gu_config.load(args.params, args.gu)
     wc = cfg.walk                                     # 명령줄 값이 있으면 그것, 없으면 구별 설정 파일
     args.radius = args.radius if args.radius is not None else float(wc.get("radius_m", 400))
@@ -151,7 +159,7 @@ def main() -> int:
     rn = RoadNet(args.osm, root)
     nb = walk_neighbors(rn, args.radius)
     # 망: 지자체 무정차 구간까지 담은 도로 망
-    tt_path = sw / "muni" / "road_muni.json"
+    tt_path = sw / "net" / "road.json" if muni_dirs else sw / "muni" / "road_muni.json"
     doc = json.loads(tt_path.read_text(encoding="utf-8"))
     turns_p = sw / "net" / "turns.json"
     if not turns_p.exists():
@@ -216,9 +224,16 @@ def main() -> int:
                                              "route_list": [{"stops": r, "vehicles": v} for r, v in routes]}
 
     # muni
-    mp = json.loads((sw / "muni" / "plan.json").read_text(encoding="utf-8"))
-    mf = sum(r["vehicles"] for r in mp["routes"])
-    record("muni", mf, [(r["stops"], r["vehicles"]) for r in mp["routes"]], {})
+    muni_src: dict[str, Path] = {}
+    for lab, mdir in (muni_dirs.items() if muni_dirs else [("muni", sw / "muni")]):
+        mp = json.loads((mdir / "plan.json").read_text(encoding="utf-8"))
+        mf = sum(r["vehicles"] for r in mp["routes"])
+        mrec = json.loads((mdir / "muni.json").read_text(encoding="utf-8")) if (mdir / "muni.json").exists() else {}
+        record(lab, mf, [(r["stops"], r["vehicles"]) for r in mp["routes"]],
+               {"muni_dir": str(mdir), **{k: mrec.get(k) for k in ("links_mode", "service_start", "plan_revision")}}
+               if muni_dirs else {})
+        if muni_dirs:
+            muni_src[lab] = mdir
     # s12(기존)
     for pl in hs["plans"]:
         if pl.get("config") == "hub135_s12":
@@ -260,12 +275,19 @@ def main() -> int:
             bundles_for(sw / split, nb_dir.parent / f"_{split}", tt_path, VARIANT, fleets)
             (nb_dir.parent / f"_{split}" / "bundles").rename(nb_dir)
             shutil.rmtree(nb_dir.parent / f"_{split}", ignore_errors=True)
-        specs = [f"{lab}:{f}={path}" for lab, fs in sorted(plan_specs.items()) for f, path in sorted(fs.items())]
+        specs = [f"{lab}:{f}={path}" for lab, fs in sorted(plan_specs.items()) for f, path in sorted(fs.items())
+                 if lab not in muni_src]
+        for lab in sorted(set(plan_specs) & set(muni_src)):       # 지자체안 변형: 그 변형의 묶음으로 따로
+            for f, path in sorted(plan_specs[lab].items()):
+                run(muni_src[lab] / split / "bundles", out / "runs_nowalk" / f"{lab}-f{f}" / split, [f"{lab}:{f}={path}"],
+                    args.jobs)
         if only:   # 기존 색인을 덮어쓰지 않도록 안마다 따로
             for lab, fs in sorted(plan_specs.items()):
+                if lab in muni_src:
+                    continue
                 for f, path in sorted(fs.items()):
                     run(nb_dir, out / "runs_nowalk" / f"{lab}-f{f}" / split, [f"{lab}:{f}={path}"], args.jobs)
-        else:
+        elif specs:
             run(nb_dir, out / "runs_nowalk" / split, specs, args.jobs)
         for lab, fs in sorted(plan_specs.items()):
             for f, path in sorted(fs.items()):
@@ -274,7 +296,8 @@ def main() -> int:
                 if finished(out / "runs_walk" / f"{lab}-f{f}" / split, len(list(nb_dir.iterdir()))) \
                         and f"{lab}-f{f}-{split}" in log["walk_stats"]:
                     continue
-                log["walk_stats"][f"{lab}-f{f}-{split}"] = walk_bundles(nb_dir, wdir, routes, nb, st_stops, fleets)
+                src_b, fl_b = (muni_src[lab] / split / "bundles", [f]) if lab in muni_src else (nb_dir, fleets)
+                log["walk_stats"][f"{lab}-f{f}-{split}"] = walk_bundles(src_b, wdir, routes, nb, st_stops, fl_b)
                 run(wdir, out / "runs_walk" / f"{lab}-f{f}" / split, [f"{lab}:{f}={path}"], args.jobs)
                 shutil.rmtree(wdir, ignore_errors=True)          # 묶음은 크다. 결과만 남긴다
                 (out / "walk_eval.json").write_text(json.dumps(log, ensure_ascii=False, indent=1), encoding="utf-8")

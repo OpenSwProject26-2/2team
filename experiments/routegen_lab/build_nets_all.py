@@ -11,6 +11,9 @@
 - 결과: `<out>/nets/<구>/`(road.json, turns.json, roadnet_stats.json, snap.json), `<out>/uturn/<구>/{old_node,new_edge}.json`,
   `<out>/logs/<구>.{node,edge}.log`, 요약 `<out>/nets_summary.json`·`<out>/nets_summary.md`.
 - 다시 실행하면 결과 json이 있는 단계는 건너뛴다.
+- `--prev <이전 out>`: 옛 망 측정은 다시 하지 않고 `<prev>/uturn/<구>/old_node.json`을 읽는다. 새 망은 이전 새 망
+  (`<prev>/uturn/<구>/new_edge.json`)과 3정류장을 맞대고, 이전 대비 표(`prev_compare.md/json`: 정류장 배치가 바뀐 수,
+  매칭·긴 경로·속도 상한으로 버린 긴 경로·끝까지 없음, U턴 판정과 <45° 수, 새로 생긴·없어진 직진 U턴)를 더 만든다.
 """
 
 from __future__ import annotations
@@ -40,7 +43,7 @@ def run(cmd: list[str], logfile: Path) -> int:
     return rc
 
 
-def one(work: Path, out: Path, gu: str) -> dict:
+def one(work: Path, out: Path, gu: str, prev: Path | None = None) -> dict:
     py = sys.executable
     root = region_of(work, gu) / f"{gu}_0610_v4"
     osm = work / "osm" / f"{gu}_roads.json"
@@ -49,6 +52,11 @@ def one(work: Path, out: Path, gu: str) -> dict:
     od = out / "uturn" / gu
     old, new = od / "old_node.json", od / "new_edge.json"
     common = ["--root", str(root), "--osm", str(osm), "--gu", gu]
+    cmp_with = old
+    if prev is not None:
+        old, cmp_with = prev / "uturn" / gu / "old_node.json", prev / "uturn" / gu / "new_edge.json"
+        if not (old.exists() and cmp_with.exists()):
+            return {"gu": gu, "error": f"이전 결과 없음: {cmp_with}"}
     if not old.exists():
         cmd = [py, str(HERE / "uturn_check.py"), *common, "--snap-mode", "node", "--out", str(old)]
         if (work / "hub_sweep2" / gu / "net" / "turns.json").exists():
@@ -56,7 +64,7 @@ def one(work: Path, out: Path, gu: str) -> dict:
         if run(cmd, out / "logs" / f"{gu}.node.log"):
             return {"gu": gu, "error": "node 측정 실패"}
     if not new.exists():
-        cmd = [py, str(HERE / "uturn_check.py"), *common, "--snap-mode", "edge", "--compare", str(old),
+        cmd = [py, str(HERE / "uturn_check.py"), *common, "--snap-mode", "edge", "--compare", str(cmp_with),
                "--write-net", str(out / "nets" / gu), "--out", str(new)]
         if run(cmd, out / "logs" / f"{gu}.edge.log"):
             return {"gu": gu, "error": "edge 측정 실패"}
@@ -84,13 +92,13 @@ def pick(r: dict) -> dict:
             "median_bus_speed_kmh": r["roadnet"].get("median_bus_speed_kmh")}
 
 
-def summarize(out: Path, gus: list[str], errors: dict) -> None:
+def summarize(out: Path, gus: list[str], errors: dict, prev: Path | None = None) -> None:
     rows = {}
     for gu in gus:
         od = out / "uturn" / gu
         if not (od / "new_edge.json").exists():
             continue
-        o = json.loads((od / "old_node.json").read_text(encoding="utf-8"))
+        o = json.loads(((prev / "uturn" / gu if prev else od) / "old_node.json").read_text(encoding="utf-8"))
         n = json.loads((od / "new_edge.json").read_text(encoding="utf-8"))
         rows[gu] = {"old": pick(o), "new": pick(n), "compare_cross": n.get("compare", {}).get("cross"),
                     "net_bytes": sum(p.stat().st_size for p in (out / "nets" / gu).iterdir())}
@@ -133,6 +141,65 @@ def summarize(out: Path, gus: list[str], errors: dict) -> None:
         lines += ["", "실패: " + ", ".join(f"{k}({v})" for k, v in errors.items())]
     (out / "nets_summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
+    if prev is not None:
+        compare_prev(out, prev, list(rows))
+
+
+def _lt45(rows: list[dict]) -> set[tuple[str, ...]]:
+    return {tuple(r["t"]) for r in rows if r["uturn"] and r["angle"] is not None and r["angle"] < 45}
+
+
+def compare_prev(out: Path, prev: Path, gus: list[str]) -> None:
+    """이전 새 망(prev) 대비 이번 새 망(out): 정류장 배치·매칭·U턴 판정 변화."""
+    res, allnew, allgone = {}, set(), set()
+    for gu in gus:
+        a = json.loads((prev / "uturn" / gu / "new_edge.json").read_text(encoding="utf-8"))
+        b = json.loads((out / "uturn" / gu / "new_edge.json").read_text(encoding="utf-8"))
+        sa = json.loads((prev / "nets" / gu / "snap.json").read_text(encoding="utf-8"))
+        sb = json.loads((out / "nets" / gu / "snap.json").read_text(encoding="utf-8"))
+        key = lambda p: (tuple(p["edge"]), round(p["t"], 9), tuple(map(tuple, p["dirs"])))
+        moved = sorted(s for s in set(sa) | set(sb) if s not in sa or s not in sb or key(sa[s]) != key(sb[s]))
+        pa, pb = pick(a), pick(b)
+        la, lb = _lt45(a["triples"]), _lt45(b["triples"])
+        ua = {tuple(r["t"]) for r in a["triples"] if r["uturn"]}
+        ub = {tuple(r["t"]) for r in b["triples"] if r["uturn"]}
+        names = {}
+        for r in (b.get("compare") or {}).get("cases", {}).get("new_uturn_lt45", []):
+            names[tuple(r["t"])] = r["names"]
+        rej = b["segments"].get("long_rejected_list") or []
+        res[gu] = {"moved_stops": moved, "moved_n": len(moved),
+                   "refine_guarded": b.get("snap_refine_guarded", []),
+                   "prev": {k: pa[k] for k in ("bus_matched", "bus_long_match", "bus_no_path", "judged", "uturn", "uturn_lt45",
+                                                "uturn_45_135", "uturn_ge135", "unjudged", "added", "walk_pairs")},
+                   "new": {**{k: pb[k] for k in ("bus_matched", "bus_long_match", "bus_no_path", "judged", "uturn", "uturn_lt45",
+                                                  "uturn_45_135", "uturn_ge135", "unjudged", "added", "walk_pairs")},
+                           "bus_long_rejected": b["segments"].get("bus_long_rejected") or 0},
+                   "long_rejected": [{k: x.get(k) for k in ("from", "from_name", "to", "to_name", "crow_m", "road_m",
+                                                            "min_time_s", "road_speed_kmh")} for x in rej],
+                   "uturn_gone": sorted(map(list, ua - ub)), "uturn_new": sorted(map(list, ub - ua)),
+                   "lt45_gone": sorted(map(list, la - lb)), "lt45_new": [{"t": list(t), "names": names.get(t)} for t in sorted(lb - la)]}
+        allnew |= lb - la
+        allgone |= la - lb
+    (out / "prev_compare.json").write_text(json.dumps({"prev": str(prev), "gus": res,
+                                                       "distinct_lt45_new": sorted(map(list, allnew)),
+                                                       "distinct_lt45_gone": sorted(map(list, allgone))},
+                                                      ensure_ascii=False, indent=1), encoding="utf-8")
+    hdr = ["구", "배치 바뀐 정류장", "다듬기 금지 적용 정류장", "보통 매칭 이전→이번", "긴 경로 이전→이번", "속도 상한으로 버림",
+           "끝까지 없음 이전→이번", "판정 가능 이전→이번", "U턴 이전→이번", "<45° 이전→이번", "45~135°", "≥135°",
+           "U턴 없어짐/새로 생김", "추가 구간 이전→이번", "도보 400m 쌍 이전→이번"]
+    lines = ["| " + " | ".join(hdr) + " |", "|" + "---|" * len(hdr)]
+    for gu, r in res.items():
+        a, b = r["prev"], r["new"]
+        lines.append("| " + " | ".join(str(x) for x in [
+            gu, r["moved_n"], len(r["refine_guarded"]), f"{a['bus_matched']}→{b['bus_matched']}",
+            f"{a['bus_long_match']}→{b['bus_long_match']}", b["bus_long_rejected"], f"{a['bus_no_path']}→{b['bus_no_path']}",
+            f"{a['judged']}→{b['judged']}", f"{a['uturn']}→{b['uturn']}", f"{a['uturn_lt45']}→{b['uturn_lt45']}",
+            f"{a['uturn_45_135']}→{b['uturn_45_135']}", f"{a['uturn_ge135']}→{b['uturn_ge135']}",
+            f"{len(r['uturn_gone'])}/{len(r['uturn_new'])}", f"{a['added']}→{b['added']}",
+            f"{a['walk_pairs']}→{b['walk_pairs']}"]) + " |")
+    lines += ["", f"서로 다른 직진(<45°) U턴: 없어짐 {len(allgone)}, 새로 생김 {len(allnew)}"]
+    (out / "prev_compare.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print("\n".join(lines))
 
 
 def main() -> int:
@@ -142,18 +209,20 @@ def main() -> int:
     ap.add_argument("--parallel", type=int, default=3)
     ap.add_argument("--only", default="")
     ap.add_argument("--summary-only", action="store_true")
+    ap.add_argument("--prev", type=Path, default=None, help="이전 결과 폴더(옛 망 측정 재사용 + 이전 새 망 대비 표)")
     args = ap.parse_args()
     work, out = args.work.resolve(), args.out.resolve()
+    prev = args.prev.resolve() if args.prev else None
     gus = sorted({p.name.removesuffix("_0610_v4") for p in (work / "region_all").glob("*_0610_v4")})
     if args.only:
         gus = [g for g in gus if g in args.only.split(",")]
     errors = {}
     if not args.summary_only:
         with ThreadPoolExecutor(args.parallel) as ex:
-            for r in ex.map(lambda g: one(work, out, g), gus):
+            for r in ex.map(lambda g: one(work, out, g, prev), gus):
                 if "error" in r:
                     errors[r["gu"]] = r["error"]
-    summarize(out, gus, errors)
+    summarize(out, gus, errors, prev)
     return 0
 
 

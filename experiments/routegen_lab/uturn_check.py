@@ -16,7 +16,8 @@
 - `--compare`: 다른 망의 결과 json과 같은 3정류장끼리 판정을 맞대어 본다(옛 망에서 U턴이던 것이 새 망에서 어떻게 되었나).
 - `--write-net`: 다시 만든 망을 그 폴더에 쓴다(road.json, turns.json, roadnet_stats.json, snap.json; `roadnet.write_net`).
 - 기존 버스 구간 매칭은 보통 매칭 / 긴 경로 매칭(상한 밖, U턴 없음) / 도중 U턴 매칭 / 끝까지 없음으로 나눠 센다.
-  `--no-long-match`는 긴 경로 매칭을 끈다(1단계 망 재현용).
+  `--no-long-match`는 긴 경로 매칭을 끈다(1단계 망 재현용). `--long-max-kmh none --no-refine-guard`는 1b 망 재현용
+  (긴 경로 속도 상한·다듬기의 반대 방향 일방 선분 금지를 끔). 속도 상한으로 버린 긴 경로는 `long_rejected_list`.
 절대 경로·중간 파일 없이 인자만으로 다시 계산한다.
 """
 
@@ -172,10 +173,14 @@ def main() -> int:
     ap.add_argument("--compare", type=Path, default=None)
     ap.add_argument("--write-net", type=Path, default=None, help="다시 만든 망 파일을 쓸 폴더")
     ap.add_argument("--no-long-match", action="store_true", help="긴 경로 매칭 끄기(1단계 망 재현)")
+    ap.add_argument("--long-max-kmh", default="60", help="긴 경로 도로 경로 속도 상한 km/h(넘으면 판단하지 않음). none = 끔(1b 망 재현)")
+    ap.add_argument("--no-refine-guard", action="store_true", help="다듬기의 반대 방향 일방 선분 금지 끄기(1b 망 재현)")
     ap.add_argument("--out", required=True, type=Path)
     args = ap.parse_args()
 
-    rn = RoadNet(args.osm, args.root, snap_mode=args.snap_mode, long_match=not args.no_long_match)
+    rn = RoadNet(args.osm, args.root, snap_mode=args.snap_mode, long_match=not args.no_long_match,
+                 long_max_kmh=None if args.long_max_kmh.lower() == "none" else float(args.long_max_kmh),
+                 refine_oneway_guard=not args.no_refine_guard)
     stats = rn.build()
     turns = rn.turn_edges()
     doc = rn.road_doc
@@ -212,7 +217,9 @@ def main() -> int:
                        "bus_long_match": stats.get("bus_segments_long_match"),
                        "bus_uturn_match": stats.get("bus_segments_matched_with_uturn"),
                        "bus_no_path": (stats.get("unmatched_by_reason") or {}).get("no_path", 0)}
-    for key in ("long_match", "uturn_match"):
+    rec["snap_refine_guarded"] = getattr(rn, "refine_guarded", [])
+    rec["segments"]["bus_long_rejected"] = stats.get("bus_segments_long_rejected")
+    for key in ("long_match", "uturn_match", "long_rejected"):
         if key in stats:
             rec["segments"][key + "_list"] = [
                 dict(x, from_name=base.stops[x["from"]].name if x["from"] in base.stops else None,

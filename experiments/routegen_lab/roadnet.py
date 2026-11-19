@@ -12,6 +12,9 @@ U턴 원칙: U턴을 막는 이유는 "도로가 좁아 버스가 실제로 돌 
      진행 방향 근거: (a) 그 정류장의 기존 버스 구간(travel_times의 p→s, s→q)이 가리키는 방위,
      (b) 근거가 없으면 우측 통행(진행 방향 오른쪽에 정류장), (c) 근거가 엇갈리거나(회차·종점) 판단이 안 되면 양방향 모두.
      기존 버스 구간 방위와 맞는 선분이 가장 가까운 선분보다 `align_slack_m` 안에 있으면 그 선분을 고른다(교차로·곁길 대책).
+     다듬기(`_refine`, 기존 버스 구간을 U턴 없는 도로 경로로 잇는 배치로 고침)는 기존 버스 구간 방위와 반대 방향인 일방
+     선분(반대 표 > 같은 방향 표)으로는 정류장을 옮기지 않는다(`refine_oneway_guard`, 분리 차로의 반대 차로로 옮겨
+     직진 노선이 되짚기가 되는 것 방지).
      정류장을 둘 수 없는 도로(`no_stop_highways`, 기본 고속도로)에는 붙이지 않는다.
    - "node": 예전 방식(60m 안의 가장 가까운 도로 노드). 옛 망 재현·비교용.
 3. 기존 버스 구간 A→B마다 도로 위 최단경로를 찾는다(길이 ≤ max(2×직선, 직선+400m)). 그 도로에 1을 표시하고,
@@ -20,7 +23,9 @@ U턴 원칙: U턴을 막는 이유는 "도로가 좁아 버스가 실제로 돌 
      U턴 없는 경로를 다시 찾는다("긴 경로 매칭", `long_segments`). 찾으면 도로 조각 기록(turns)만 남긴다. 구간 시간·
      `distance_m`은 실측 그대로 두고, 속도 표본·버스 도로(1)에는 넣지 않는다(실제 버스가 다니지 않을 수 있는 긴 길이
      버스 도로가 되어 추가 구간이 생기지 않게). OSM 연결·회전 정보가 실제와 다른 곳이 많아, 도로 경로 속도
-     (`road_speed_kmh` = 경로 길이 ÷ 실측 최소 시간)를 함께 기록한다.
+     (`road_speed_kmh` = 경로 길이 ÷ 실측 최소 시간)를 함께 기록한다. 이 속도가 `long_max_kmh`(기본 60km/h)를 넘으면
+     실측 시간 안에 그 길로 갈 수 없으니 실제 경로가 아니다: 긴 경로 매칭을 버리고 "판단하지 않음"(끝까지 없음과 같은
+     처리, 조각 기록 없음, 도중 U턴 경로도 찾지 않음, 사유 `long_too_fast`, `long_rejected` 목록)으로 둔다.
    - 그래도 없을 때만 도중 U턴 1회 허용 경로(기존 상한)로 잇는다(`uturn_segments`). 원칙상 도중 U턴은 실제로 불가능하므로
      따로 센다. 끝까지 못 찾으면 조각 기록 없이 둔다(그 구간이 낀 3정류장은 판단하지 않음).
 4. 버스 도로 = 1인 도로 + 양방향 도로면 그 반대 방향.
@@ -37,6 +42,8 @@ U턴 원칙: U턴을 막는 이유는 "도로가 좁아 버스가 실제로 돌 
 - "node" 망: 예전 형식(구간 → [첫 조각 u, v, 마지막 조각 u, v]).
 기존 버스 구간의 `distance_m`도 매칭한 도로 길이로 바꾼다(매칭 못 한 구간·긴 경로 매칭 구간은 원래 값).
 `write_net`은 망 파일(road.json, turns.json, roadnet_stats.json, snap.json)을 한 폴더에 쓴다.
+`osm_link`(build 뒤)는 망 밖 이음(지자체안처럼 망에 직접 구간이 없는 연속 정차)을 원 OSM 도로 최단 경로(U턴만 금지,
+버스 도로 여부 무관, 지나야 할 좌표 가능)로 재고, 시간은 그 도로 길이 ÷ 버스 속도(`edge_speed`)로 낸다.
 """
 
 from __future__ import annotations
@@ -83,7 +90,8 @@ class RoadNet:
                  align_slack_m: float = 20.0, no_stop_highways: tuple[str, ...] = ("motorway", "motorway_link"),
                  center_m: float = 1.0, refine_m: float = 30.0, refine_gain_m: float = 30.0, refine_loop_m: float = 100.0, uturn_fallback: bool = True,
                  tail_m: float = 300.0, head_m: float | None = None,
-                 long_match: bool = True, long_factor: float = 4.0, long_extra_m: float = 1500.0):
+                 long_match: bool = True, long_factor: float = 4.0, long_extra_m: float = 1500.0,
+                 long_max_kmh: float | None = 60.0, refine_oneway_guard: bool = True):
         if snap_mode not in ("edge", "node"):
             raise ValueError(f"snap_mode는 edge 또는 node: {snap_mode}")
         self.snap_mode = snap_mode
@@ -92,6 +100,8 @@ class RoadNet:
         self.tail_m, self.head_m = tail_m, head_m
         self.uturn_fallback = uturn_fallback
         self.long_match, self.long_factor, self.long_extra_m = long_match, long_factor, long_extra_m
+        self.long_max_kmh = long_max_kmh
+        self.refine_oneway_guard = refine_oneway_guard
         self.refine_gain_m, self.refine_loop_m = refine_gain_m, refine_loop_m
         osm = json.loads(Path(osm_path).read_text(encoding="utf-8"))
         self.node = {e["id"]: (e["lat"], e["lon"]) for e in osm["elements"] if e["type"] == "node"}
@@ -195,6 +205,7 @@ class RoadNet:
                 for j in range(int(min(o1, o2) / 0.001), int(max(o1, o2) / 0.001) + 1):
                     grid[(i, j)].append(key)
         ev = self._evidence()
+        self._ev, self._grid = ev, grid
         hw_of = {k: self.edge_hw.get(k) or self.edge_hw.get((k[1], k[0]), "") for k in und}
         self._hw_of = hw_of
         alt = oneway_conflict = 0
@@ -352,7 +363,9 @@ class RoadNet:
             return sum(1 for x in ls if x is None), sum(x for x in ls if x is not None)
 
         g = self.refine_gain_m
-        out = {"stops": 0, "road_changed": 0, "direction_changed": 0, "two_to_one": 0, "segments_fixed": 0}
+        out = {"stops": 0, "road_changed": 0, "direction_changed": 0, "two_to_one": 0, "segments_fixed": 0,
+               "oneway_against_skipped": 0}
+        skipped_stops: set[str] = set()
         for _ in range(2):
             changed = 0
             for sid in sorted(inc):
@@ -364,7 +377,11 @@ class RoadNet:
                 for c in cands:
                     if c[0] > cands[0][0] + self.refine_m:
                         break
-                    for x in self._dirs_of(c[1]):
+                    dl = self._dirs_of(c[1])
+                    for x in dl:
+                        if self.refine_oneway_guard and len(dl) == 1 and self._against(sid, c, x):
+                            skipped_stops.add(sid)     # 기존 버스 구간 방위와 반대인 일방 선분으로는 옮기지 않는다
+                            continue
                         self._place(sid, c, [x], "refined", c is cands[0])
                         ls = lens(sid)
                         m, t = summ(ls)
@@ -413,7 +430,18 @@ class RoadNet:
                 changed += 1
             if not changed:
                 break
+        out["oneway_against_skipped"] = len(skipped_stops)
+        self.refine_guarded = sorted(skipped_stops)
         return out
+
+    def _against(self, sid: str, cand, x: tuple[int, int]) -> bool:
+        """선분 cand의 진행 방향 x가 그 정류장의 기존 버스 구간 방위와 반대인가(반대 표 > 같은 방향 표, |cos| ≥ 0.5만 셈)."""
+        _, key, _, _, dvec = cand
+        v = dvec if tuple(x) == tuple(key) else (-dvec[0], -dvec[1])
+        evs = self._ev.get(sid, [])
+        f = sum(1 for e in evs if e[0] * v[0] + e[1] * v[1] >= 0.5)
+        b = sum(1 for e in evs if e[0] * v[0] + e[1] * v[1] <= -0.5)
+        return b > f
 
     def _split_graph(self) -> None:
         """고른 배치대로 가상 정차 노드를 유향 간선에 끼운다."""
@@ -579,6 +607,7 @@ class RoadNet:
         self.uturn_segments: set[tuple[str, str]] = set()
         self.uturn_info: dict[tuple[str, str], dict] = {}
         self.long_segments: dict[tuple[str, str], dict] = {}
+        self.long_rejected: dict[tuple[str, str], dict] = {}
         SN = self.stop_nodes
         for s in self.tt["segments"]:
             a, b = s["from_stop_id"], s["to_stop_id"]
@@ -602,11 +631,19 @@ class RoadNet:
                             # 긴 경로 매칭: 조각 기록(turns)만 남긴다. 구간 시간·distance_m은 실측 그대로,
                             # 속도 표본·버스 도로(bus_set)에는 넣지 않는다(실제 버스가 안 다니는 길에 추가 구간이 생기지 않게).
                             L, end = min(lhit)
-                            p = self.walk(prev, None, end)
-                            self.long_segments[(a, b)] = self._seg_info(s, crow, lcut, L)
-                            self.seg_path[(a, b)] = p
-                            continue
-                    if self.snap_mode == "edge" and self.uturn_fallback:
+                            info = self._seg_info(s, crow, lcut, L)
+                            sp = info["road_speed_kmh"]
+                            if self.long_max_kmh is not None and sp is not None and sp > self.long_max_kmh:
+                                # 실측 최소 시간으로 그 길을 갈 수 없다(도로 경로 속도 > long_max_kmh) → 실제 경로가 아니다.
+                                # 판단하지 않음(끝까지 없음과 같은 처리, 조각 기록 없음, 도중 U턴 경로도 찾지 않음).
+                                why = "long_too_fast"
+                                self.long_rejected[(a, b)] = info
+                            else:
+                                p = self.walk(prev, None, end)
+                                self.long_segments[(a, b)] = info
+                                self.seg_path[(a, b)] = p
+                                continue
+                    if why == "no_path" and self.snap_mode == "edge" and self.uturn_fallback:
                         got = self.path_one_uturn(SN[a], tg, max(2 * crow, crow + 400))
                         if got:
                             # 도중 U턴 1회 경로. 원칙상 도로가 좁아 실제로는 돌 수 없는 곳이므로 따로 센다.
@@ -620,7 +657,7 @@ class RoadNet:
             if why:
                 unmatched[why] += 1
                 u = {"from": a, "to": b, "why": why}
-                if why == "no_path":
+                if why in ("no_path", "long_too_fast"):
                     u["crow_m"] = round(crow)
                 self.unmatched_segments.append(u)
                 continue
@@ -654,16 +691,8 @@ class RoadNet:
             for i, xs in e.items():
                 allsp[i].extend(xs)
         med = {i: st.median(allsp[i]) for i in range(len(self.bins))}
-
-        def speed(u, v, i):
-            U, V = self.base(u, v)
-            xs = samples.get((U, V), {}).get(i) or samples.get((V, U), {}).get(i)
-            return st.median(xs) if xs else med[i]
-
-        def seglen(u, v):
-            if self.snap_mode == "node":
-                return hav(*self.node[u], *self.node[v])
-            return next(L for y, L in self.adj[u] if y == v)
+        self._samples, self._med = samples, med
+        speed, seglen = self.edge_speed, self.seglen
 
         stop_nodes = self.node_stops
         have = {(s["from_stop_id"], s["to_stop_id"]) for s in self.tt["segments"]}
@@ -712,13 +741,107 @@ class RoadNet:
                                "bus_segments_matched_with_uturn": len(self.uturn_segments),
                                "bus_segments_long_match": len(self.long_segments),
                                "long_match_rule": {"enabled": self.long_match, "factor": self.long_factor,
-                                                   "extra_m": self.long_extra_m},
+                                                   "extra_m": self.long_extra_m, "max_road_speed_kmh": self.long_max_kmh},
+                               "bus_segments_long_rejected": len(self.long_rejected),
+                               "long_rejected": [dict(v, **{"from": a, "to": b}) for (a, b), v in sorted(self.long_rejected.items())],
                                "long_match": [dict(v, **{"from": a, "to": b}) for (a, b), v in sorted(self.long_segments.items())],
                                "uturn_match": [dict(v, **{"from": a, "to": b}) for (a, b), v in sorted(self.uturn_info.items())],
                                "unmatched": list(self.unmatched_segments),
                                "snap": self.snap_stats, "turns_format": TURNS_V2,
                                "tail_m": self.tail_m, "head_m": self.head_m})
         return self.stats
+
+    def edge_speed(self, u: int, v: int, i: int) -> float:
+        """조각 u→v의 i번째 시간대 버스 속도(m/s): 그 도로(양방향 합침)의 실측 표본 중앙값, 없으면 그 시간대 전체 중앙값."""
+        U, V = self.base(u, v)
+        xs = self._samples.get((U, V), {}).get(i) or self._samples.get((V, U), {}).get(i)
+        return st.median(xs) if xs else self._med[i]
+
+    def seglen(self, u: int, v: int) -> float:
+        if self.snap_mode == "node":
+            return hav(*self.node[u], *self.node[v])
+        return next(L for y, L in self.adj[u] if y == v)
+
+    def nearest_segment(self, la: float, lo: float, max_m: float | None = None):
+        """(edge 망) 좌표에서 가장 가까운 정차 가능 도로 선분(무방향 키)과 거리. 없으면 None."""
+        lim = self.snap_m if max_m is None else max_m
+        gi, gj = int(la / 0.001), int(lo / 0.001)
+        best = None
+        for di in (-1, 0, 1):
+            for dj in (-1, 0, 1):
+                for key in self._grid.get((gi + di, gj + dj), ()):
+                    if self._hw_of[key] in self.no_stop_highways:
+                        continue
+                    d = _project(la, lo, self.node[key[0]], self.node[key[1]])[0]
+                    if d <= lim and (best is None or (d, key) < best):
+                        best = (d, key)
+        return None if best is None else (best[1], best[0])
+
+    def osm_link(self, a: str, b: str, via: list[tuple[float, float]] = (), cutoff: float | None = None) -> dict | None:
+        """(edge 망, build 뒤) 정류장 a→b의 원 OSM 도로 최단 경로(U턴만 금지, 버스 도로 여부 무관).
+
+        via = 지나야 하는 좌표 목록(순서대로). 각 좌표는 가장 가까운 정차 가능 선분에 투영하고, 경로가 그 선분을
+        (어느 방향으로든) 지나면 그 좌표를 지난 것으로 본다(층 그래프 탐색). 시간대별 시간 = Σ 조각 길이 ÷ 그 도로의
+        버스 속도(`edge_speed`: 실측 표본 중앙값, 없으면 그 시간대 전체 중앙값).
+        돌려주는 것: {"length_m", "profile"(travel_times 형식 [[bin, s]]), "path"(노드 열), "via_segments", "via_offset_m"} 또는 None.
+        """
+        SN = self.stop_nodes
+        if a not in SN or b not in SN:
+            return None
+        vs, voff = [], []
+        for la, lo in via:
+            got = self.nearest_segment(la, lo)
+            if got is None:
+                return None
+            key, d = got
+            vs.append({key, (key[1], key[0])})
+            voff.append(round(d, 1))
+        crow = hav(*self.stops[a], *self.stops[b])
+        cut = cutoff if cutoff is not None else max(6 * crow, crow + 5000)
+        K = len(vs)
+        tg = set(SN[b])
+        bo = self.base_of
+        best, back, h = {}, {}, []
+        for s0 in SN[a]:
+            st0 = (0, None, s0)
+            best[st0], back[st0] = 0.0, None
+            h.append((0.0, 0, -1, s0))
+        heapq.heapify(h)
+        found = None
+        while h:
+            d, k, pu, u = heapq.heappop(h)
+            state = (k, None if pu == -1 else pu, u)
+            if d > best.get(state, 1e18):
+                continue
+            if k == K and u in tg:
+                found = (d, state)
+                break
+            if state[1] is not None:
+                bx, by = bo.get((state[1], u), (state[1], u))
+                rev = (by, bx)
+            else:
+                rev = None
+            for v, L in self.adj.get(u, ()):
+                bv = bo.get((u, v), (u, v))
+                if rev is not None and bv == rev:
+                    continue                                   # U턴 금지
+                kk = k + 1 if k < K and bv in vs[k] else k
+                nd = d + L
+                ns = (kk, u, v)
+                if nd <= cut and nd < best.get(ns, 1e18):
+                    best[ns], back[ns] = nd, state
+                    heapq.heappush(h, (nd, kk, u, v))
+        if found is None:
+            return None
+        L, state = found
+        p = []
+        while state is not None:
+            p.append(state[2])
+            state = back[state]
+        p = p[::-1]
+        prof = [[t0, max(1, round(sum(self.seglen(x, y) / self.edge_speed(x, y, i) for x, y in zip(p, p[1:]))))]
+                for i, t0 in enumerate(self.bins)]
+        return {"length_m": max(1, round(L)), "profile": prof, "path": p, "via_offset_m": voff}
 
     def _window(self, p: list[int], from_end: bool) -> list[list[int]]:
         """경로 p의 앞(또는 끝)에서 head_m(tail_m) 안에 걸친 OSM 유향 간선(중복 없이, 지나는 순서). None = 경로 전체."""

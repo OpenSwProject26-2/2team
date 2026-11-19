@@ -315,6 +315,107 @@ class LongMatchTest(unittest.TestCase):
         self.assertEqual(json.loads((d / "net" / "turns.json").read_text(encoding="utf-8"))["A>B"]["l"], 1)
 
 
+    def test_long_match_too_fast_is_not_judged(self):
+        """(1c 결정 5) 도로 경로 속도(경로 길이 ÷ 실측 최소 시간)가 상한을 넘는 긴 경로는 판단하지 않음."""
+        _, rn, stats = self.build(long_max_kmh=30.0)          # 1,000m / 60초 = 약 60km/h > 30
+        self.assertEqual(stats["bus_segments_long_match"], 0)
+        self.assertEqual(stats["bus_segments_long_rejected"], 1)
+        self.assertEqual(stats["long_rejected"][0]["from"], "A")
+        self.assertGreater(stats["long_rejected"][0]["road_speed_kmh"], 30.0)
+        self.assertEqual(stats["unmatched_by_reason"], {"long_too_fast": 1})
+        self.assertEqual(stats["bus_segments_matched_with_uturn"], 0)
+        self.assertNotIn("A>B", rn.turn_edges())               # 조각 기록 없음 = 끝까지 없음과 같은 처리
+        self.assertEqual(stats["long_match_rule"]["max_road_speed_kmh"], 30.0)
+        _, rn2, stats2 = self.build(long_max_kmh=None)          # 상한 끄기 = 1b 망
+        self.assertEqual(stats2["bus_segments_long_match"], 1)
+        self.assertEqual(stats2["bus_segments_long_rejected"], 0)
+
+
+class RefineOnewayGuardTest(unittest.TestCase):
+    """(1c 결정 7) 다듬기는 기존 버스 구간 방위와 반대 방향인 일방 선분으로 정류장을 옮기지 않는다(아현초등학교 사례).
+
+    분리 차로: 남쪽 동행 일방(y=0)과 북쪽 서행 일방(y=0.25, 25m 북쪽), x = -4..9. 북→남 연결(x=0), 남→북 연결(x=4).
+    S는 두 차로 사이(남쪽 10m, 북쪽 15m). S의 기존 버스 구간은 동쪽 P→S, S→Q(2개)와 서쪽 R→S(1개).
+    S가 남쪽(동행)이면 R→S가 상한 안에서 안 이어지고, 북쪽(서행)이면 셋 다 이어진다. 그래서 규칙이 없으면 다듬기가
+    S를 반대 차로(서행, 반대 표 2 > 같은 방향 표 1)로 옮긴다.
+    """
+
+    def build(self, **kw):
+        t = tempfile.TemporaryDirectory()
+        self.addCleanup(t.cleanup)
+        d = Path(t.name)
+        nodes = {i: (i - 5, 0.0) for i in range(1, 15)}                 # 남쪽: id 1..14, x = -4..9
+        nodes.update({i: (i - 25, 0.25) for i in range(21, 35)})       # 북쪽: id 21..34, x = -4..9
+        ow = {"highway": "primary", "oneway": "yes"}
+        ways = [(list(range(1, 15)), ow), (list(range(34, 20, -1)), ow), ([25, 5], ow), ([9, 29], ow)]
+        stops = {"P": (-3.0, -0.1), "S": (2.5, 0.10), "Q": (8.0, -0.1), "R": (4.5, 0.35)}
+        make(d, ways, nodes, stops, [("P", "S"), ("S", "Q"), ("R", "S")])
+        rn = RoadNet(d / "osm.json", d, **kw)
+        rn.build()
+        return rn
+
+    def test_without_guard_moves_to_opposite_carriageway(self):
+        rn = self.build(refine_oneway_guard=False)
+        self.assertEqual(rn.proj["S"]["how"], "refined")
+        self.assertTrue(rn.proj["S"]["flipped"])
+        self.assertEqual(rn.proj["S"]["highway"], "primary")
+        self.assertGreater(rn.node[rn.stop_nodes["S"][0]][0], LAT + 0.2 * DLAT)   # 북쪽(서행) 차로
+
+    def test_guard_keeps_bus_direction(self):
+        rn = self.build()
+        self.assertNotEqual(rn.proj["S"]["how"], "refined")
+        self.assertLess(rn.node[rn.stop_nodes["S"][0]][0], LAT + 0.05 * DLAT)     # 남쪽(동행) 차로 그대로
+        self.assertIn("S", rn.refine_guarded)
+        self.assertGreaterEqual(rn.snap_stats["refined"]["oneway_against_skipped"], 1)
+
+
+class OsmLinkTest(unittest.TestCase):
+    """(1c 결정 1) 망 밖 이음: 원 OSM 도로 최단 경로(U턴만 금지, 버스 도로 여부 무관, 지나야 할 좌표)."""
+
+    def build(self):
+        t = tempfile.TemporaryDirectory()
+        self.addCleanup(t.cleanup)
+        d = Path(t.name)
+        # 동서 양방향 큰길(노드 1..6, x=0..5, 버스 도로)과 남쪽 골목(7(x=1,y=-1) → 8(x=4,y=-1), 버스 안 다님)
+        nodes = dict(MAIN)
+        nodes.update({7: (1.0, -1.0), 8: (4.0, -1.0), 9: (2.5, -1.0)})
+        ways = [(list(MAIN), TWO_WAY), ([2, 7, 9, 8, 5], {"highway": "residential"})]
+        stops = {"A": (0.5, -0.15), "B": (4.5, -0.15), "C": (2.5, -0.15)}
+        make(d, ways, nodes, stops, [("A", "C"), ("C", "B")])
+        rn = RoadNet(d / "osm.json", d)
+        rn.build()
+        return rn
+
+    def test_shortest_and_time(self):
+        rn = self.build()
+        got = rn.osm_link("A", "B")
+        self.assertAlmostEqual(got["length_m"], 400, delta=10)             # 큰길 직진
+        self.assertEqual([b for b, _ in got["profile"]], [b for b, _ in PROF])
+        # 시간 = 도로 길이 ÷ 그 도로 버스 속도(실측 구간 A→C 200m/60s, C→B 200m/60s → 약 3.33m/s)
+        self.assertAlmostEqual(got["profile"][0][1], 120, delta=4)
+
+    def test_via_point_forces_side_road(self):
+        rn = self.build()
+        lat, lon = LAT - 1.0 * DLAT - 0.00005, LON + 2.5 * DLON               # 골목 위 좌표(약 5m 옆)
+        got = rn.osm_link("A", "B", via=[(lat, lon)])
+        self.assertAlmostEqual(got["length_m"], 600, delta=10)               # 골목으로 돌아간다(50+100+300+100+50)
+        self.assertTrue({7, 9, 8} <= set(got["path"]))
+        self.assertLess(got["via_offset_m"][0], 10)
+        # 골목에는 버스 표본이 없다 → 그 시간대 전체 중앙값 속도. 시간은 길이에 비례해 는다
+        self.assertGreater(got["profile"][0][1], rn.osm_link("A", "B")["profile"][0][1])
+
+    def test_no_uturn(self):
+        rn = self.build()
+        # B(동행) → A(동행): 동쪽 끝(6)에서 돌아 나와야 하는데 U턴 금지라 막다른 큰길에서는 못 간다.
+        # 골목 고리(2-7-9-8-5)를 돌면 된다: 그래도 경로가 있고, 방금 지난 조각을 되짚지 않는다.
+        got = rn.osm_link("B", "A")
+        if got is not None:
+            p = got["path"]
+            es = [rn.base(u, v) for u, v in zip(p, p[1:])]
+            for x, y in zip(es, es[1:]):
+                self.assertNotEqual(y, (x[1], x[0]))
+
+
 def seg_len(rn: RoadNet, a: str, b: str) -> int:
     return rn.road_len[(a, b)]
 
