@@ -11,7 +11,7 @@ from pathlib import Path
 from .d_geo import DataError, MapSnapshot, map_geojson
 
 ROOT = Path(__file__).resolve().parents[3]
-BOUNDARIES = ROOT / "web" / "operator" / "data" / "districts.geojson"
+BOUNDARIES = ROOT / "web" / "operator" / "data" / "districts_all.geojson"
 DISTRICT_CODES = {
     "guro": "11530",
     "dongjak": "11590",
@@ -21,8 +21,13 @@ DISTRICT_CODES = {
 
 
 @lru_cache(maxsize=1)
+def _boundary_collection() -> dict:
+    return json.loads(BOUNDARIES.read_text(encoding="utf-8"))
+
+
+@lru_cache(maxsize=1)
 def districts() -> dict[str, dict]:
-    source = json.loads(BOUNDARIES.read_text(encoding="utf-8"))
+    source = _boundary_collection()
     by_code = {str(f["properties"]["sgg"]): f for f in source["features"]}
     if not all(code in by_code for code in DISTRICT_CODES.values()):
         raise DataError("DATA_INCOMPLETE", "자치구 경계 파일이 불완전합니다.")
@@ -31,7 +36,7 @@ def districts() -> dict[str, dict]:
 
 def district_options() -> dict:
     return {
-        "source": "SGIS 2026-07-01 via vuski/admdongkor; simplified by mapcn-kr",
+        "source": _boundary_collection().get("source", "unknown"),
         "districts": [
             {
                 "id": key,

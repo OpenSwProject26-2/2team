@@ -21,15 +21,15 @@
 
 - `GET /api/d/transit/status`: 관측일, 기준표 규모, A GTFS ID 교집합만 반환. 로컬 절대경로와 비공개 원본은 반환하지 않음.
 - `GET /api/d/transit/observed?district=guro&date=2026-10-26&hour=07`: k5 공유 집계를 정류장별로 합산한 결과. `demand_kind=observed_normal_boardings`, `k=5`를 명시한다. k5에서 제거된 인원은 복원하지 않는다.
-- `GET /api/d/districts`, `/api/d/network?mode=real&district=guro&extent=inside|full`: SGIS 기반 2026-07-01 자치구 경계를 이용해 노선·정류장을 공간 필터링한다. 경계 교차 구간을 포함하고, 내부 구간과 노선 전체를 구분한다. 선택 노선의 전체 정류장 좌표는 별도 `route_stops` 필드로 제공한다.
+- `GET /api/d/districts`, `/api/d/network?mode=real&district=guro&extent=inside|full`: 런타임은 `web/operator/data/districts_all.geojson`의 서울 25개 OSM 행정경계를 읽는다. 현재 선택 목록은 구로·동작·강서·강동 4개 구다. 노선·정류장을 공간 필터링하고 경계 교차 노선을 포함하며, 구 내부 구간과 노선 전체를 구분한다. 선택 노선의 전체 정류장 좌표는 별도 `route_stops` 필드로 제공한다.
 
-자치구 경계는 SGIS 기반 `vuski/admdongkor` 2026-07-01을 `mapcn-kr`이 단순화·시군구 병합한 공개 GeoJSON에서 4개 구만 추출했다. 약 0.0001도 정밀도의 표시용 경계이며 법정 경계 판정용은 아니다. 출처 표시는 API와 문서에 유지한다.
+`web/operator/data/districts_all.geojson`은 OpenStreetMap `admin_level=6` 경계를 약 0.0001도(약 10m) 허용 오차로 단순화한 표시용 자료이며, ODbL 1.0 및 © OpenStreetMap contributors 출처를 유지해야 한다. `web/operator/build_districts.py`는 Overpass `out geom` 응답에서 이 파일을 다시 만드는 도구다. 기존 `web/operator/data/districts.geojson`은 4개 SGIS 경계의 로컬 자료로 보존했지만 런타임은 사용하지 않는다. OSM 경계는 법정 경계 판정용이 아니다.
 
 ## 선형과 시뮬레이션 제한
 
-A GTFS에는 `shapes.txt`가 없고 제공 데이터셋의 `sources/`에도 버스 GPS 경로·철도 중심선이 없다. [공공데이터포털 서울 버스 노선정보조회 서비스](https://www.data.go.kr/data/15000193/openapi.do)의 `getRoutePath`·`getStaionByRoute` 어댑터를 추가했지만 현재 인증키가 없어 공식 응답을 검증하지 못했다. `.keys`는 사용하지 않았다. OSM 공개 Overpass 구로 노선 조회는 시간 초과했다. 별도로 **OSRM 자동차 도로 라우팅**을 시도해 마을 3·시내 4개 노선의 추정 선형을 검증했다. 버스의 공식 운행 경로가 아니라 `osrm_estimate`이며 미확인 버스는 기존 점선 정차 관계로 표시한다. 지하철에는 자동차 도로 추정을 적용하지 않는다.
+A GTFS에는 `shapes.txt`가 없고 제공 데이터셋의 `sources/`에도 버스 GPS 경로·철도 중심선이 없다. [공공데이터포털 서울 버스 노선정보조회 서비스](https://www.data.go.kr/data/15000193/openapi.do)의 `getRoutePath`·`getStaionByRoute` 어댑터를 추가했지만 현재 인증키가 없어 공식 응답을 검증하지 못했다. `.keys`는 사용하지 않았다. OSM 공개 Overpass 구로 노선 조회는 시간 초과했다. 별도로 **OSRM 자동차 도로 라우팅**을 시도해 마을 3·시내 4개 노선의 추정 선형을 검증했다. 버스의 공식 운행 경로가 아니라 `osrm_estimate`이며 미확인 버스는 정차 관계 실선 개략도로 표시한다. 지하철에는 자동차 도로 추정을 적용하지 않는다.
 
-철도는 별도로 [Esri Korea의 MOIS_KR_Subway 선형 레이어](https://portal.esrikr.com/arcgis/rest/services/Hosted/MOIS_KR_Subway/FeatureServer/2)를 조회할 수 있다. `--rail-gis-live`로 서버 시작 시 읽거나 `--rail-gis-file`로 로컬 GeoJSON을 연결한다. A GTFS 노선명과 GIS `sub_nm`이 맞고 대표 운행편의 모든 역이 물리 선로에서 250m 이내일 때만 실선으로 표시한다. 실제 2026-11-02 A 배포본에서는 1·2·3·4·5·6·8·9호선 8개가 일치했고 7호선은 한 역이 약 1.1km 떨어져 점선으로 남는다. 선로는 물리적인 통로이며 급행·분기·상하행 운행 패턴의 검증된 경로는 아니다. 원본 GeoJSON은 저장소에 넣지 않는다.
+철도는 별도로 [Esri Korea의 MOIS_KR_Subway 선형 레이어](https://portal.esrikr.com/arcgis/rest/services/Hosted/MOIS_KR_Subway/FeatureServer/2)를 조회할 수 있다. `--rail-gis-live`로 서버 시작 시 읽거나 `--rail-gis-file`로 로컬 GeoJSON을 연결한다. A GTFS 노선명과 GIS `sub_nm`이 맞고 대표 운행편의 모든 역이 물리 선로에서 250m 이내일 때만 GIS 실선으로 표시한다. 실제 2026-11-02 A 배포본에서는 1·2·3·4·5·6·8·9호선 8개가 일치했고 7호선은 한 역이 약 1.1km 떨어져 정차 관계 실선 개략도로 남는다. 선로는 물리적인 통로이며 급행·분기·상하행 운행 패턴의 검증된 경로는 아니다. 원본 GeoJSON은 저장소에 넣지 않는다.
 
 버스 공식·OSM·OSRM 선형을 확보한 팀원은 검증된 GeoJSON을 저장소 밖에 두고 `--bus-geometry-file`로 연결한다. 각 LineString feature에는 `a_gtfs_route_id`, 원본 `source_route_id`, `route_short_name`, A GTFS의 `agency_id`, 대표 운행편과 동일한 순서의 `stop_ids`, `geometry_source`(`official`, `osm_route`, `osrm_estimate`), `source_namespace`, `source_version`가 필요하다. 이 교차표와 모든 정류장이 선형에서 120m 이내에 순서대로 나타나는지 서버가 검사한다. 불일치한 feature는 채택하지 않는다. 현재 OSRM 결과 7개는 OS 임시 폴더의 로컬 파일이며 Git에 포함되지 않는다. 같은 GTFS에서 전처리 명령을 재실행해야 재현된다.
 
@@ -49,4 +49,4 @@ ODsay의 `searchBusLane`·`loadLane`은 [API 문서](https://lab.odsay.com/guide
 
 합성 DEMO에서는 지도 표시 체크와 운행 가정을 분리한다. `시내버스·마을버스·경기버스·지하철 운행` 체크나 가상 셔틀 추가·제외만 합성 배분 API를 다시 호출하며, 지도 레이어 체크는 계산 입력을 바꾸지 않는다. 직전 조건과 같은 시간대의 정류장 거점별 미충족 인원·미충족률을 비교하고 빨간 원 반지름을 보간한다. 실제 B 결과 모드에서는 입력 번들의 잔여 수요 원과, 별도의 `passenger_outcomes.csv`가 있을 때만 셔틀 투입 후 미충족 수요 원을 표시한다. 보고서의 구 전체 충족률은 정류장 원으로 임의 배분하지 않는다.
 
-A GTFS의 철도 정차 관계 개략도에서는 모든 운행편을 합칠 때 급행·정차 생략 패턴이 만드는 장거리 대각선이 생길 수 있다. 같은 노선의 2.5km 이하 인접 연결을 따라 양 끝역에 도달 가능한 장거리 연결만 제외한다. 이 처리는 실제 철도 선형 확보가 아니며, 남은 연결도 점선 개략도다.
+A GTFS의 철도 정차 관계 개략도에서는 모든 운행편을 합칠 때 급행·정차 생략 패턴이 만드는 장거리 대각선이 생길 수 있다. 같은 노선의 2.5km 이하 인접 연결을 따라 양 끝역에 도달 가능한 장거리 연결만 제외한다. 이 처리는 실제 철도 선형 확보가 아니며, 남은 연결은 실선 개략도다.

@@ -4,11 +4,12 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 const colors = {strike:'#ed3d51', city:'#2563eb', gyeonggi:'#f39b28', village:'#17a56c', metro:'#864ad7', shuttle:'#0eaaad', unknown_bus:'#64748b', unknown:'#64748b'};
 const labels = {strike:'파업 노선', city:'정상 시내버스', gyeonggi:'경기버스', village:'마을버스', metro:'지하철', shuttle:'대체 셔틀', unknown_bus:'미분류 버스', unknown:'미분류 노선'};
 const demoNormalKinds = new Set(['city','gyeonggi','village','metro']);
-const state = {mode:'demo', district:'all', extent:'inside', boundary:null, routeStops:null, observedDate:'2026-10-26', observedMode:false, listmode:'strike', selectedRouteId:null, hoveredStopId:null, hoverMarker:null, query:'', hour:'07', demandMode:'total', visible:new Set(['strike','city','gyeonggi','village','metro','shuttle','unknown_bus','unknown','busStops','metroStops','observedDemand','unmetDemand']), operatingKinds:new Set(['city','gyeonggi','village','metro']), summary:null, routes:[], geo:null, demand:null, demandRequestSeq:0, scenarioRoutes:null, scenarioResult:null, scenarioBefore:null, unmetValues:null, unmetAnimation:0, sources:null, map:null, maplibregl:null, popup:null};
+const state = {mode:'demo', district:'all', extent:'inside', boundary:null, routeStops:null, observedDate:'2026-10-26', observedMode:false, listmode:'strike', selectedRouteId:null, hoveredStopId:null, hoverMarker:null, query:'', hour:'07', demandMode:'total', visible:new Set(['strike','city','gyeonggi','village','metro','shuttle','shuttleStops','unknown_bus','unknown','busStops','metroStops','districtBoundary','observedDemand','unmetDemand']), operatingKinds:new Set(['city','gyeonggi','village','metro']), summary:null, routes:[], geo:null, demand:null, demandRequestSeq:0, scenarioRoutes:null, scenarioResult:null, scenarioBefore:null, unmetValues:null, unmetAnimation:0, sources:null, map:null, maplibregl:null, popup:null};
 
 // D에서 직접 작성한 SVG 픽토그램. 타사 아이콘 패키지의 자산이 아니다.
+const busStopSvg=(color,shape='circle')=>`<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">${shape==='diamond'?`<path d="M24 2 46 24 24 46 2 24Z" fill="#fff" stroke="${color}" stroke-width="3"/>`:`<circle cx="24" cy="24" r="22" fill="#fff" stroke="${color}" stroke-width="3"/>`}<rect x="12" y="12" width="24" height="22" rx="5" fill="${color}"/><rect x="15" y="15" width="18" height="9" rx="2" fill="#fff"/><path d="M12 26h24" stroke="#fff" stroke-width="2"/><circle cx="18" cy="30" r="2" fill="#fff"/><circle cx="30" cy="30" r="2" fill="#fff"/></svg>`;
 const stopSvg = {
-  bus:`<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><circle cx="24" cy="24" r="22" fill="#fff" stroke="#405b77" stroke-width="3"/><rect x="12" y="12" width="24" height="22" rx="5" fill="#2b679c"/><rect x="15" y="15" width="18" height="9" rx="2" fill="#d9f4ff"/><path d="M12 26h24" stroke="#fff" stroke-width="2"/><circle cx="18" cy="30" r="2" fill="#fff"/><circle cx="30" cy="30" r="2" fill="#fff"/><path d="M17 34v3m14-3v3" stroke="#405b77" stroke-width="3"/></svg>`,
+  bus:busStopSvg('#64748b'),city:busStopSvg('#2563eb'),gyeonggi:busStopSvg('#e88a18','diamond'),village:busStopSvg('#16a66c'),mixed:`<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><circle cx="24" cy="24" r="22" fill="#fff" stroke="#475569" stroke-width="3"/><rect x="12" y="12" width="24" height="22" rx="5" fill="#475569"/><rect x="15" y="15" width="18" height="9" rx="2" fill="#fff"/><circle cx="18" cy="30" r="2" fill="#fff"/><circle cx="30" cy="30" r="2" fill="#fff"/><circle cx="39" cy="10" r="8" fill="#fff" stroke="#475569" stroke-width="2"/><path d="M39 6v8m-4-4h8" stroke="#475569" stroke-width="2"/></svg>`,
   metro:`<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><circle cx="24" cy="24" r="22" fill="#fff" stroke="#6334aa" stroke-width="3"/><rect x="13" y="11" width="22" height="24" rx="7" fill="#864ad7"/><rect x="16" y="16" width="16" height="9" rx="2" fill="#f3eaff"/><circle cx="18" cy="30" r="2" fill="#fff"/><circle cx="30" cy="30" r="2" fill="#fff"/><path d="m17 36-3 4m17-4 3 4" stroke="#6334aa" stroke-width="3"/></svg>`
 };
 async function addStopIcon(map, kind) {
@@ -21,7 +22,7 @@ function clearStopHover() { state.hoverMarker?.remove(); state.hoverMarker=null;
 function showStopHover(feature) {
   if(state.hoveredStopId===feature.id)return;
   clearStopHover();
-  const kind=feature.properties.kind==='metro'?'metro':'bus';
+  const kind=feature.properties.kind==='metro'?'metro':feature.properties.stop_kind||'bus';
   const element=document.createElement('div');element.className='stop-hover-marker';
   element.innerHTML=stopSvg[kind]+`<span class="name">${esc(feature.properties.name||feature.properties.stop_id)}</span>`;
   state.hoverMarker=new state.maplibregl.Marker({element,anchor:'left',offset:[-14,0]}).setLngLat(feature.geometry.coordinates).addTo(state.map);
@@ -45,6 +46,9 @@ async function loadData() {
   ]);
   if (mode !== state.mode || summary.snapshot_id !== network.snapshot_id || summary.snapshot_id !== network.map.snapshot_id) return;
   state.summary=summary; state.routes=network.routes; state.geo=network.map; state.routeStops=network.route_stops; state.boundary=network.boundary; state.sources=sources;
+  const stopServices=new Map();
+  for(const route of state.routes){if(!['city','gyeonggi','village'].includes(route.kind))continue;for(const id of route.all_stop_ids||route.representative_stop_ids||route.stop_ids||[]){const key=String(id);if(!stopServices.has(key))stopServices.set(key,new Set());stopServices.get(key).add(route.kind);}}
+  state.stopServices=stopServices;
   if(mode==='demo'&&!state.scenarioRoutes)state.scenarioRoutes=state.routes.filter(r=>r.kind==='shuttle').map(r=>({route_id:r.route_id,stop_ids:r.stop_ids,vehicles:r.assigned_vehicles,active:true}));
   if(mode==='demo')restoreCustomRoutes();
   if (!state.routes.some(r=>r.route_id===state.selectedRouteId)) state.selectedRouteId=null;
@@ -107,9 +111,9 @@ function renderAll() {
   renderScenarioControls(sourceRows);
   $('#mapStatus').textContent=`${sourceText()} · ${s.snapshot_id} · 실제 운행/탑승 보장 아님`;
   $('.map-head-title').innerHTML=`교통망 지도 <span style="color:#9aa6b8;font-size:11px;font-weight:500">· 실제 서울 지도 배경 / ${esc(sourceText())}</span>`;
-  $('.map-corner').innerHTML=`<span>◉ ${esc(sourceText())}</span><span>${state.mode==='demo'?(hasRoadEstimate?'실선=OSRM 자동차도로 추정 · 점선=선형 미확인 · 겹친 셔틀 선 투명':'점선=선형 미확인 · 도로 경로 미연결'):(state.routes.some(r=>r.geometry_status==='osrm_estimate')?'버스 옅은 실선=OSRM 도로 기반 추정 · ': '')+(state.routes.some(r=>r.geometry_status==='rail_gis_verified_corridor')?'지하철 실선=GIS 물리 선로 · ':'')+'미확인 점선=GTFS 정차 관계 개략도'}</span>`;
+  $('.map-corner').innerHTML=`<span>◉ ${esc(sourceText())}</span><span>${state.mode==='demo'?(hasRoadEstimate?'실선=OSRM 자동차도로 추정 · 선형 미확인 노선도 실선 개략 표시 · 겹친 셔틀 선 투명':'실선=정차점 연결 개략도 · 도로 경로 미연결'):(state.routes.some(r=>r.geometry_status==='osrm_estimate')?'버스 옅은 실선=OSRM 도로 기반 추정 · ': '')+(state.routes.some(r=>r.geometry_status==='rail_gis_verified_corridor')?'지하철 실선=GIS 물리 선로 · ':'')+'실선=GTFS 정차 관계 개략도(검증 선형 미제공)'}</span>`;
   $('.map-source').textContent=`${sourceText()} · ${s.feed_version||'버전 미제공'}`;
-  $('.report').innerHTML=`⚠ <b>출처 안내:</b> ${state.mode==='demo'?`서울 지도 배경은 OpenFreeMap/OSM, 버스 선형은 ${hasRoadEstimate?'OSRM/OSM 자동차 도로망 추정':'도로 미연결 정차점 연결선'}입니다. 정류장·OD·차량은 합성이고 수송률은 정차 순서·시간당 정원만 적용한 가상 배분입니다. 버스 통행 적합성·실제 운행은 검증되지 않았습니다.`:'A GTFS의 노선·정류장과 정차 관계를 표시합니다. 점선은 역·정류장을 이은 개략도이며 실제 도로·철로가 아닙니다. OD·파업 범위·셔틀·평가는 미연결이고 버스 시간표는 근사 생성 자료일 수 있습니다.'}`;
+  $('.report').innerHTML=`⚠ <b>출처 안내:</b> ${state.mode==='demo'?`서울 지도 배경은 OpenFreeMap/OSM, 버스 선형은 ${hasRoadEstimate?'OSRM/OSM 자동차 도로망 추정':'도로 미연결 정차점 연결선'}입니다. 정류장·OD·차량은 합성이고 수송률은 정차 순서·시간당 정원만 적용한 가상 배분입니다. 버스 통행 적합성·실제 운행은 검증되지 않았습니다.`:'A GTFS의 노선·정류장과 정차 관계를 표시합니다. 실선은 역·정류장을 이은 개략도일 수 있으며 실제 도로·철로가 아닙니다. OD·파업 범위·셔틀·평가는 미연결이고 버스 시간표는 근사 생성 자료일 수 있습니다.'}`;
   $('.note').textContent=s.warnings.join(' · ');
   $('.map-legend .legend-foot').textContent=state.demand?.status==='observed'?'정상일 관측 승차 k5 · 5명 미만 칸 제거 · 파업 잔여 수요와 다름':state.mode==='demo'?state.demandMode==='total'?'거점별 연한 원=전체 가상 OD · 진한 원=미충족 · 크기·진하기는 인원에 비례':state.demandMode==='unmet'?'거점별 진한 원=미충족 가상 OD · 크기·진하기는 인원에 비례':state.demandMode==='affected'?'파업 영향 수요는 미계산':'거점별 원=선택한 가상 수요 · 크기·진하기는 인원에 비례':'수요·중복: 자료 미연결';
   $$('.map-legend .leg-row').at(-1).innerHTML=`<span style="height:17px;width:17px;background:#e878ac66;border:1px solid #d85790;border-radius:50%"></span>${state.demand?.status==='observed'?'관측 승차 k5 원':'거점별 합성 수요 원'}`;
@@ -181,7 +185,7 @@ function renderDetail() {
   const route=state.routes.find(r=>r.route_id===state.selectedRouteId);
   const stopIds=route?.representative_stop_ids||route?.stop_ids||[];
   const allStopIds=route?.all_stop_ids||[];
-  const fallbackGeometry=state.mode==='real'?'정차 관계 점선 개략도 · 실제 선형 미제공':'미제공·표시 안 함';
+  const fallbackGeometry=state.mode==='real'?'정차 관계 실선 개략도 · 실제 선형 미제공':'미제공·표시 안 함';
   const stops=new Map((state.routeStops?.features||state.geo?.features||[]).filter(f=>f.properties.feature_type==='stop').map(f=>[f.properties.stop_id,f]));
   const stopList=stopIds.length?`<details class="route-stops"><summary>${state.mode==='real'?'대표 운행편':'가상 노선'} 정차점 ${fmt(stopIds.length)}곳 · 순서 보기</summary><ol>${stopIds.map(id=>`<li><button type="button" data-route-stop="${esc(id)}">${esc(stops.get(id)?.properties.name||id)} <small>(${esc(id)})</small></button></li>`).join('')}</ol></details>`:'<p class="smalltext">이 노선의 정차점 순서가 제공되지 않았습니다.</p>';
   const allStopList=state.mode==='real'&&allStopIds.length?`<details class="route-stops"><summary>전체 활성 운행편 정차점 ${fmt(allStopIds.length)}곳 · 중복 제거</summary><p class="smalltext">상·하행과 변형 운행편을 합친 집합입니다. 아래 ID 정렬은 실제 운행 순서가 아닙니다.</p><ol>${allStopIds.map(id=>`<li><button type="button" data-route-stop="${esc(id)}">${esc(stops.get(id)?.properties.name||id)} <small>(${esc(id)})</small></button></li>`).join('')}</ol></details>`:'';
@@ -189,13 +193,14 @@ function renderDetail() {
   $$('#detailPanel [data-route-stop]').forEach(button=>button.onclick=()=>{const feature=stops.get(button.dataset.routeStop);if(!feature||!state.map){toast('정류장 좌표를 사용할 수 없습니다.');return;}state.map.flyTo({center:feature.geometry.coordinates,zoom:15.3,duration:550});state.popup?.remove();state.popup=new state.maplibregl.Popup({closeOnMove:false}).setLngLat(feature.geometry.coordinates).setText(`${feature.properties.name} · ${feature.properties.stop_id} · ${sourceText()}`).addTo(state.map);});
 }
 function renderLayers() {
-  const options=[['strike','파업','#ed3d51'],['city','시내버스','#2563eb'],['gyeonggi','경기버스','#f39b28'],['village','마을버스','#17a56c'],['metro','지하철','#864ad7'],['shuttle','셔틀','#0eaaad'],['unknown_bus','미분류 버스','#64748b'],['busStops','버스 정류장','#546a80'],['metroStops','지하철역','#864ad7'],['observedDemand','관측 수요 원(기존 모드)','#5695df'],['unmetDemand','잔여·미충족 수요 원','#d43161']];
+  const options=[['districtBoundary','자치구 경계','#334155'],['strike','파업','#ed3d51'],['city','시내버스','#2563eb'],['gyeonggi','경기버스','#f39b28'],['village','마을버스','#17a56c'],['metro','지하철','#864ad7'],['shuttle','셔틀안 노선','#0eaaad'],['shuttleStops','셔틀 정차 정류장','#0eaaad'],['unknown_bus','미분류 버스','#64748b'],['busStops','버스 정류장','#546a80'],['metroStops','지하철역','#864ad7'],['observedDemand','관측 수요 원(기존 모드)','#5695df'],['unmetDemand','잔여·미충족 수요 원','#d43161'],['walk400Demand','걸어서 400m 밖 수요 (셔틀안 기준) · 미연결','#d43161'],['municipalShuttle','지자체 셔틀안 (1월 실운행) · 노선자료 미연결','#148f9c']];
   const list=$('#layerList'); list.replaceChildren();
   for(const [id,name,color] of options) {
     const label=document.createElement('label'); label.dataset.layer=id; label.style.cssText='display:flex;align-items:center;gap:7px;margin:7px 0;font-size:11px;color:#4d5c72;cursor:pointer';
-    const input=document.createElement('input'); input.type='checkbox'; input.checked=state.visible.has(id); input.onchange=()=>{input.checked?state.visible.add(id):state.visible.delete(id);updateVisibility();};
+    const input=document.createElement('input'); input.type='checkbox'; input.checked=state.visible.has(id);input.disabled=['walk400Demand','municipalShuttle'].includes(id);if(input.disabled){label.title=id==='walk400Demand'?'실제 보행 네트워크 거리와 셔틀안 기준 수요 데이터가 연결되면 활성화됩니다.':'2026년 1월 지자체 셔틀 노선·정차점 원본 자료가 연결되면 활성화됩니다.';label.style.opacity='.58';} input.onchange=()=>{input.checked?state.visible.add(id):state.visible.delete(id);updateVisibility();};
     label.append(input); const dot=document.createElement('span'); dot.style.cssText=`width:9px;height:9px;border-radius:50%;background:${color}`; label.append(dot,document.createTextNode(name)); list.append(label);
   }
+  const key=document.createElement('p');key.className='smalltext';key.textContent='정류장 표식: 파랑 원=시내 · 주황 마름모=경기 · 초록 원=마을 · 회색 +=복수 유형 · 보라 열차=지하철';list.append(key);
 }
 function renderDemandTable() {
   const data=state.demand;
@@ -296,7 +301,6 @@ function updateSelection() {
   const map=state.map;if(!map||!map.getLayer('selected-route'))return;
   map.setFilter('selected-route',['==',['get','route_id'],state.selectedRouteId||'__none__']);
   const route=state.routes.find(r=>r.route_id===state.selectedRouteId);
-  map.setPaintProperty('selected-route','line-dasharray',route?.geometry_status?.startsWith('synthetic')?[2,2]:[1,.01]);
   map.getSource('d-selected-stops')?.setData(featureCollection(selectedStopFeatures()));
   updateSchematic();
 }
@@ -313,7 +317,8 @@ function updateMapData() {
 function updateVisibleStops() {
   const map=state.map;if(!map||!map.getSource('d-stops')||!state.geo)return;
   const bounds=map.getBounds();
-  const features=state.mode==='real'?pointFeatures().filter(f=>bounds.contains(f.geometry.coordinates)):pointFeatures();
+  const visible=state.mode==='real'?pointFeatures().filter(f=>bounds.contains(f.geometry.coordinates)):pointFeatures();
+  const features=visible.map(f=>{const kinds=[...(state.stopServices?.get(String(f.properties.stop_id))||[])];const stopKind=f.properties.kind==='metro'?'metro':kinds.length>1?'mixed':kinds[0]||'bus';return {...f,properties:{...f.properties,stop_kind:stopKind,served_kinds:kinds.join(',')}};});
   map.getSource('d-stops').setData(featureCollection(features));
 }
 // API의 80개 가상 OD 셀은 유지하고 지도 표시만 정류장 거점별로 합산한다.
@@ -358,14 +363,15 @@ function updateVisibility() {
   const map=state.map;if(!map||!map.getSource('d-routes'))return;
   if(state.mode==='demo')map.getSource('d-routes').setData(featureCollection(routeFeatures()));
   for (const kind of Object.keys(colors))for(const suffix of ['','-unverified'])if(map.getLayer('route-'+kind+suffix))map.setLayoutProperty('route-'+kind+suffix,'visibility',state.visible.has(kind)?'visible':'none');
-  for(const [layer,key] of [['bus-stops','busStops'],['metro-stops','metroStops'],['demand-circles','observedDemand'],['demand-unmet','unmetDemand']]) if(map.getLayer(layer))map.setLayoutProperty(layer,'visibility',state.visible.has(key)?'visible':'none');
+  for(const [layer,key] of [['bus-stops','busStops'],['metro-stops','metroStops'],['metro-stop-labels','metroStops'],['demand-circles','observedDemand'],['demand-unmet','unmetDemand']]) if(map.getLayer(layer))map.setLayoutProperty(layer,'visibility',state.visible.has(key)?'visible':'none');
+  if(map.getLayer('district-boundary'))map.setLayoutProperty('district-boundary','visibility',state.visible.has('districtBoundary')?'visible':'none');
   const selected=state.routes.find(r=>r.route_id===state.selectedRouteId);if(map.getLayer('selected-route'))map.setLayoutProperty('selected-route','visibility',selected&&state.visible.has(selected.kind)?'visible':'none');
   updateSchematic();
   document.dispatchEvent(new Event('d-layer-visibility'));
 }
 function addSourcesAndLayers(map) {
   map.addSource('d-district',{type:'geojson',data:featureCollection([])});
-  map.addLayer({id:'district-boundary',type:'line',source:'d-district',paint:{'line-color':'#263852','line-width':2.5,'line-dasharray':[3,2]}});
+  map.addLayer({id:'district-boundary',type:'line',source:'d-district',paint:{'line-color':'#263852','line-width':2.5}});
   map.addSource('d-routes',{type:'geojson',data:featureCollection([])});
   map.addSource('d-schematic',{type:'geojson',data:featureCollection([])});
   map.addSource('d-stops',{type:'geojson',data:featureCollection([])});
@@ -376,16 +382,17 @@ function addSourcesAndLayers(map) {
     const typeFilter=['==',['get','kind'],kind];
     const uncertain=['any',['==',['get','geometry_status'],'synthetic'],['==',['get','geometry_status'],'synthetic_unverified']];
     map.addLayer({id:'route-'+kind,type:'line',source:'d-routes',filter:['all',typeFilter,['!',uncertain]],paint:{'line-color':color,'line-width':kind==='shuttle'?5:3.5,'line-opacity':['case',['==',['get','geometry_status'],'osrm_estimate'],.58,.79]}});
-    map.addLayer({id:'route-'+kind+'-unverified',type:'line',source:'d-routes',filter:['all',typeFilter,uncertain],paint:{'line-color':color,'line-width':kind==='shuttle'?5:3.5,'line-opacity':.79,'line-dasharray':[2,2]}});
+    map.addLayer({id:'route-'+kind+'-unverified',type:'line',source:'d-routes',filter:['all',typeFilter,uncertain],paint:{'line-color':color,'line-width':kind==='shuttle'?5:3.5,'line-opacity':.79}});
   }
   map.addLayer({id:'selected-route',type:'line',source:'d-routes',filter:['==',['get','route_id'],'__none__'],paint:{'line-color':['match',['get','kind'],'strike',colors.strike,'city',colors.city,'gyeonggi',colors.gyeonggi,'village',colors.village,'metro',colors.metro,'shuttle',colors.shuttle,colors.unknown],'line-width':8,'line-opacity':1}});
   const schematicColor=['match',['get','kind'],'metro',colors.metro,'city',colors.city,'village',colors.village,'gyeonggi',colors.gyeonggi,'unknown_bus',colors.unknown_bus,colors.unknown];
-  map.addLayer({id:'schematic-routes',type:'line',source:'d-schematic',paint:{'line-color':schematicColor,'line-width':2.5,'line-opacity':.5,'line-dasharray':[2,3]}});
-  map.addLayer({id:'schematic-selected',type:'line',source:'d-schematic',filter:['==',['get','selected'],true],paint:{'line-color':schematicColor,'line-width':4,'line-opacity':.9,'line-dasharray':[2,2]}});
+  map.addLayer({id:'schematic-routes',type:'line',source:'d-schematic',paint:{'line-color':schematicColor,'line-width':2.5,'line-opacity':.5}});
+  map.addLayer({id:'schematic-selected',type:'line',source:'d-schematic',filter:['==',['get','selected'],true],paint:{'line-color':schematicColor,'line-width':4,'line-opacity':.9}});
   map.addLayer({id:'demand-circles',type:'circle',source:'d-demand',paint:{'circle-color':'#e55a89','circle-opacity':['interpolate',['linear'],['get','passenger_count'],0,0,20,.17,50,.28,100,.43,170,.6,250,.76],'circle-stroke-color':'#b53a68','circle-stroke-opacity':['interpolate',['linear'],['get','passenger_count'],0,0,20,.2,100,.5,250,.8],'circle-stroke-width':1.5,'circle-radius':['interpolate',['linear'],['get','passenger_count'],0,0,20,8,50,13,100,19,170,27,250,35]}});
   map.addLayer({id:'demand-unmet',type:'circle',source:'d-unmet',paint:{'circle-color':'#d43161','circle-opacity':['interpolate',['linear'],['get','passenger_count'],0,0,20,.24,50,.4,100,.58,170,.74,250,.88],'circle-stroke-color':'#a21b4c','circle-stroke-opacity':['interpolate',['linear'],['get','passenger_count'],0,0,20,.28,100,.65,250,.9],'circle-stroke-width':1,'circle-radius':['interpolate',['linear'],['get','passenger_count'],0,0,20,5,50,9,100,15,170,22,250,28]}});
-  map.addLayer({id:'bus-stops',type:'symbol',source:'d-stops',filter:['!=',['get','kind'],'metro'],minzoom:10,layout:{'icon-image':'d-bus-icon','icon-size':['interpolate',['linear'],['zoom'],10,.30,12,.43,15,.65],'icon-allow-overlap':false,'icon-ignore-placement':false}});
-  map.addLayer({id:'metro-stops',type:'symbol',source:'d-stops',filter:['==',['get','kind'],'metro'],minzoom:9,layout:{'icon-image':'d-metro-icon','icon-size':['interpolate',['linear'],['zoom'],9,.42,12,.58,15,.78],'icon-allow-overlap':false,'icon-ignore-placement':false}});
+  map.addLayer({id:'bus-stops',type:'symbol',source:'d-stops',filter:['!=',['get','kind'],'metro'],minzoom:10,layout:{'icon-image':['match',['get','stop_kind'],'city','d-city-icon','gyeonggi','d-gyeonggi-icon','village','d-village-icon','mixed','d-mixed-icon','d-bus-icon'],'icon-size':['interpolate',['linear'],['zoom'],10,.40,12,.54,15,.72],'icon-allow-overlap':false,'icon-ignore-placement':false}});
+  map.addLayer({id:'metro-stops',type:'symbol',source:'d-stops',filter:['==',['get','kind'],'metro'],minzoom:9,layout:{'icon-image':'d-metro-icon','icon-size':['interpolate',['linear'],['zoom'],9,.48,12,.67,15,.84],'icon-allow-overlap':true,'icon-ignore-placement':true}});
+  map.addLayer({id:'metro-stop-labels',type:'symbol',source:'d-stops',filter:['==',['get','kind'],'metro'],minzoom:9,layout:{'text-field':['coalesce',['get','name'],['get','stop_id']],'text-size':['interpolate',['linear'],['zoom'],9,9,13,12,16,14],'text-offset':[0,1.55],'text-anchor':'top','text-allow-overlap':true,'text-ignore-placement':true},paint:{'text-color':'#28334a','text-halo-color':'#fff','text-halo-width':2.5}});
   map.addLayer({id:'selected-route-stops',type:'circle',source:'d-selected-stops',paint:{'circle-color':'#ffda4b','circle-stroke-color':'#263852','circle-stroke-width':1.5,'circle-radius':['interpolate',['linear'],['zoom'],9,4,13,6,16,8]}});
   map.addLayer({id:'selected-stop-labels',type:'symbol',source:'d-selected-stops',minzoom:11,layout:{'text-field':['concat',['to-string',['get','order']],' · ',['get','name']],'text-size':11,'text-offset':[0,1.3],'text-anchor':'top','text-allow-overlap':false},paint:{'text-color':'#172238','text-halo-color':'#fff','text-halo-width':2}});
   for(const layer of ['schematic-routes','schematic-selected']) {
@@ -395,16 +402,16 @@ function addSourcesAndLayers(map) {
   }
   for(const kind of Object.keys(colors))for(const suffix of ['','-unverified']) {
     const layer='route-'+kind+suffix;
-    map.on('click',layer,event=>{if(map.queryRenderedFeatures(event.point,{layers:['bus-stops','metro-stops','selected-route-stops']}).length)return;const feature=event.features?.[0];if(feature)selectRoute(feature.properties.route_id);});
+    map.on('click',layer,event=>{if(map.queryRenderedFeatures(event.point,{layers:['bus-stops','metro-stops','metro-stop-labels','selected-route-stops']}).length)return;const feature=event.features?.[0];if(feature)selectRoute(feature.properties.route_id);});
     map.on('mouseenter',layer,()=>{map.getCanvas().style.cursor='pointer';});
     map.on('mouseleave',layer,()=>{map.getCanvas().style.cursor='';});
   }
-  for(const layer of ['bus-stops','metro-stops','selected-route-stops','demand-circles','demand-unmet']) {
+  for(const layer of ['bus-stops','metro-stops','metro-stop-labels','selected-route-stops','demand-circles','demand-unmet']) {
     map.on('mouseenter',layer,()=>{map.getCanvas().style.cursor='pointer';});
     map.on('mouseleave',layer,()=>{map.getCanvas().style.cursor='';});
-    map.on('click',layer,event=>{const f=event.features?.[0];if(!f)return;if((layer==='demand-circles'||layer==='demand-unmet')&&map.queryRenderedFeatures(event.point,{layers:['bus-stops','metro-stops','selected-route-stops']}).length)return;const p=f.properties;const comparison=layer==='demand-unmet'&&p.previous_unmet!=null?` · 직전 ${fmt(p.previous_unmet)}명 → 현재 ${fmt(p.passenger_count)}명 (${Number(p.delta_unmet)>=0?'+':''}${fmt(p.delta_unmet)}명) · 미충족률 ${Number(p.previous_unmet_rate).toFixed(1)}% → ${Number(p.unmet_rate).toFixed(1)}%`:'';const label=layer==='demand-circles'||layer==='demand-unmet'?`${p.name||p.stop_id} · ${p.demand_label} ${fmt(p.passenger_count)}명${comparison}${layer==='demand-unmet'?` · 평가 수요 ${fmt(p.evaluated_total)}명 · 합성 DEMO`:''}`:`${p.name||p.stop_id} · ${p.stop_id}`;state.popup?.remove();state.popup=new state.maplibregl.Popup({closeOnMove:true}).setLngLat(event.lngLat).setText(label).addTo(map);});
+    map.on('click',layer,event=>{const f=event.features?.[0];if(!f)return;if((layer==='demand-circles'||layer==='demand-unmet')&&map.queryRenderedFeatures(event.point,{layers:['bus-stops','metro-stops','metro-stop-labels','selected-route-stops']}).length)return;const p=f.properties;const comparison=layer==='demand-unmet'&&p.previous_unmet!=null?` · 직전 ${fmt(p.previous_unmet)}명 → 현재 ${fmt(p.passenger_count)}명 (${Number(p.delta_unmet)>=0?'+':''}${fmt(p.delta_unmet)}명) · 미충족률 ${Number(p.previous_unmet_rate).toFixed(1)}% → ${Number(p.unmet_rate).toFixed(1)}%`:'';const label=layer==='demand-circles'||layer==='demand-unmet'?`${p.name||p.stop_id} · ${p.demand_label} ${fmt(p.passenger_count)}명${comparison}${layer==='demand-unmet'?` · 평가 수요 ${fmt(p.evaluated_total)}명 · 합성 DEMO`:''}`:`${p.name||p.stop_id} · ${p.stop_id}`;state.popup?.remove();state.popup=new state.maplibregl.Popup({closeOnMove:true}).setLngLat(event.lngLat).setText(label).addTo(map);});
   }
-  for(const layer of ['bus-stops','metro-stops']) {
+  for(const layer of ['bus-stops','metro-stops','metro-stop-labels']) {
     map.on('mousemove',layer,event=>{
       const feature=event.features?.[0]; if(!feature)return;
       showStopHover(feature);
@@ -421,17 +428,17 @@ async function initMap() {
     state.maplibregl=await import('/vendor/maplibre-gl.mjs');
     const map=new state.maplibregl.Map({container:'map',style:'/vendor/openfreemap-liberty.json',center:[126.984,37.546],zoom:12.2,attributionControl:true});
     state.map=map;
-    map.once('style.load',async()=>{try {await Promise.all([addStopIcon(map,'bus'),addStopIcon(map,'metro')]);addSourcesAndLayers(map);$('#map').dataset.layersReady='true';$('#mapError').style.display='none';document.dispatchEvent(new Event('d-map-ready'));}catch(error){$('#map').dataset.layersReady='false';$('#mapError').textContent=`지도 레이어 초기화 실패: ${error.message}${location.search.includes('debug')?' · '+error.stack:''}`;$('#mapError').style.display='flex';}});
+    map.once('style.load',async()=>{try {await Promise.all(['bus','city','gyeonggi','village','mixed','metro'].map(kind=>addStopIcon(map,kind)));addSourcesAndLayers(map);$('#map').dataset.layersReady='true';$('#mapError').style.display='none';document.dispatchEvent(new Event('d-map-ready'));}catch(error){$('#map').dataset.layersReady='false';$('#mapError').textContent=`지도 레이어 초기화 실패: ${error.message}${location.search.includes('debug')?' · '+error.stack:''}`;$('#mapError').style.display='flex';}});
     map.on('moveend',updateVisibleStops);
     map.on('error',event=>{if(map.getSource('d-routes')){$('#mapStatus').textContent='배경 타일 연결이 불안정합니다. 노선·수요 레이어는 계속 표시합니다.';}else{$('#mapError').textContent=`지도 스타일 로딩 실패: ${event.error?.message||'연결 상태 확인 필요'}`;$('#mapError').style.display='flex';}});
     setTimeout(()=>{if(!map.getSource('d-routes')) {$('#mapError').textContent='지도 스타일 로딩이 지연됩니다. 로컬 지도 파일과 브라우저 WebGL 상태를 확인하세요.';$('#mapError').style.display='flex';}},20000);
   } catch(error) { $('#mapError').textContent=`MapLibre 로딩 실패: ${error.message}. 네트워크 연결을 확인하세요.`;$('#mapError').style.display='flex'; }
 }
 function bindUI() {
-  $('#districtSelect').onchange=async event=>{state.district=event.target.value;state.selectedRouteId=null;if(state.district!=='all'&&state.mode!=='real'){state.mode='real';state.listmode='all';}if(state.district!=='all')state.observedMode=true;$('#observedToggle').checked=state.observedMode;await loadData();$('#districtStatus').textContent=state.district==='all'?'서울 전체 교통망':`${$('#districtSelect').selectedOptions[0].textContent} · 공간 교차 노선 ${state.routes.length}개 · ${state.extent==='inside'?'구 내부 구간':'노선 전체'}`;};
+  $('#districtSelect').onchange=async event=>{state.district=event.target.value;state.selectedRouteId=null;if(state.district!=='all'&&state.mode!=='real'){state.mode='real';state.listmode='all';}if(state.district!=='all')state.observedMode=true;$('#observedToggle').checked=state.observedMode;await loadData();$('#districtStatus').textContent=state.district==='all'?'서울 전체 교통망':`${$('#districtSelect').selectedOptions[0].textContent} · 공간 교차 노선 ${state.routes.length}개 · ${state.extent==='inside'?'구 내부 구간':'노선 전체'}`;document.dispatchEvent(new CustomEvent('d-district-selected',{detail:{district:state.district}}));};
   $('#districtExtent').onchange=async event=>{state.extent=event.target.value;state.selectedRouteId=null;await loadData();};
-  const observed=document.createElement('label');observed.className='district-field';observed.innerHTML='<input id="observedToggle" type="checkbox"> 관측 승차(k5)';$('#districtStatus').before(observed);
-  const date=document.createElement('select');date.id='observedDate';for(const day of ['2026-10-26','2026-10-27','2026-10-28','2026-10-29','2026-10-30','2026-11-02']){const option=document.createElement('option');option.value=day;option.textContent=day;date.append(option);}observed.after(date);
+  const observed=document.createElement('label');observed.className='district-field observed-field';observed.innerHTML='<input id="observedToggle" type="checkbox"> 관측 승차(k5)';$('#districtStatus').before(observed);
+  const date=document.createElement('select');date.id='observedDate';date.className='district-date';for(const day of ['2026-10-26','2026-10-27','2026-10-28','2026-10-29','2026-10-30','2026-11-02']){const option=document.createElement('option');option.value=day;option.textContent=day;date.append(option);}observed.after(date);
   $('#observedToggle').onchange=async event=>{state.observedMode=event.target.checked;await loadDemand();renderAll();updateDemand();};
   date.onchange=async event=>{state.observedDate=event.target.value;await loadDemand();renderAll();updateDemand();};
   $('#routeSearch').addEventListener('input',event=>{state.query=event.target.value;renderRoutes();});
@@ -441,7 +448,7 @@ function bindUI() {
   const affected=document.createElement('button');affected.className='pill';affected.dataset.demandmode='affected';affected.textContent='파업 영향 수요';affected.onclick=()=>chooseDemandMode('affected');$('[data-demandmode="dest"]').after(affected);
   $('#showAll').onclick=fitAll; $('#focusSelected').onclick=focusSelected;
   $('#zoomIn').onclick=()=>state.map?.zoomIn();$('#zoomOut').onclick=()=>state.map?.zoomOut();$('#zoomReset').onclick=fitAll;
-  $('#allLayers').onclick=()=>{Object.keys(colors).forEach(key=>state.visible.add(key));['busStops','metroStops','observedDemand','unmetDemand'].forEach(key=>state.visible.add(key));renderLayers();updateVisibility();};
+   $('#allLayers').onclick=()=>{Object.keys(colors).forEach(key=>state.visible.add(key));['busStops','metroStops','districtBoundary','shuttleStops','observedDemand','unmetDemand'].forEach(key=>state.visible.add(key));renderLayers();updateVisibility();};
   $('#selectShuttle').onclick=()=>{const shuttle=state.routes.find(r=>r.kind==='shuttle');if(shuttle)selectRoute(shuttle.route_id);};
   $('#resetAll').onclick=async()=>{state.selectedRouteId=null;state.query='';state.hour='07';state.demandMode='total';$('#routeSearch').value='';if(state.mode==='real') {try {const response=await fetch('/api/d/sources/refresh',{method:'POST'});const result=await response.json();if(!response.ok)throw new Error(result.message);}catch(error){toast('새로고침 실패 · 이전 정상본 유지: '+error.message);}}await loadData();};
 }
@@ -454,8 +461,6 @@ try {
     map:state.map,maplibregl:state.maplibregl,
     getBaseMode:()=>state.mode,
     setDistrict:async district=>{state.district=district;state.extent='inside';state.observedMode=false;$('#districtSelect').value=district;$('#districtExtent').value='inside';$('#observedToggle').checked=false;state.selectedRouteId=null;await loadData();},
-    enableA:async()=>{if(state.sources?.A?.status==='ready'&&state.mode!=='real'){state.mode='real';state.selectedRouteId=null;state.listmode='all';await loadData();}},
-    restore:async(previous)=>{if(previous&&state.mode!==previous){state.mode=previous;state.selectedRouteId=null;state.listmode=previous==='demo'?'strike':'all';await loadData();}else{renderAll();updateMapData();}},
     isVisible:key=>state.visible.has(key)
   });
 } catch(error) {
