@@ -9,6 +9,11 @@
     "walk": {                     # 걷기·형평 실험(walk_eval)
       "radius_m": 400, "near_m": 800, "near_discount": 0.3, "lambdas": [3], "targets": [0.7], "multi": true,
       "generate": {...}           # 후보 풀을 만들 Params 값
+    },
+    "eval": {                     # 평가 규칙(설계 7절, reach.EvalRule 값) + 함께 낼 조합
+      "station_mode": "same_line", "walk_radius_m": 400, "station_arrival": "candidates", "shared_stop": "flow_union",
+      "transfer_complex": false, "walk_speed_m_min": 75, "walk_wait_limit_s": 1200,
+      "combos": {"station_mode": ["fixed", "same_line", "any"], "walk_radius_m": [0, 200, 400]}
     }
   },
   "gu": {"guro": {"configs": {...}, "walk": {"near_discount": 0.5}}, ...}
@@ -25,6 +30,7 @@ from pathlib import Path
 
 from .absorb import AbsorbParams
 from .generate import Params
+from .reach import EvalRule
 
 WALK_KEYS = {"radius_m", "near_m", "near_discount", "lambdas", "targets", "multi", "generate"}
 
@@ -59,6 +65,25 @@ class GuConfig:
         if bad:
             raise ValueError(f"walk: 모르는 값 {bad}")
         self.walk = {**walk, "generate": _check({**base, **walk.get("generate", {})}, Params, "walk.generate")}
+        ev = {k: v for k, v in self.raw.get("eval", {}).items() if not k.startswith("_")}
+        self.eval_combo_axes = ev.pop("combos", {"station_mode": ["fixed", "same_line", "any"],
+                                                 "walk_radius_m": [0, 200, 400]})
+        bad = sorted(set(self.eval_combo_axes) - {"station_mode", "walk_radius_m"})
+        if bad:
+            raise ValueError(f"eval.combos: 모르는 축 {bad}")
+        self.eval = ev
+        EvalRule.from_dict(ev)                       # 오타·잘못된 값을 여기서 막는다
+
+    def eval_rule(self, **override) -> EvalRule:
+        """평가·설계 기본 규칙(설정 파일 eval 절) 위에 override만 바꾼 규칙."""
+        return EvalRule.from_dict({**self.eval, **override})
+
+    def eval_combos(self) -> list[EvalRule]:
+        """함께 낼 조합(기본: 목적 역 3 × 걷기 0/200/400m = 9개). 순서: 목적 역 → 걷기."""
+        ax = self.eval_combo_axes
+        modes = ax.get("station_mode") or [self.eval_rule().station_mode]
+        radii = ax.get("walk_radius_m") or [self.eval_rule().walk_radius_m]
+        return [self.eval_rule(station_mode=m, walk_radius_m=float(r)) for m in modes for r in radii]
 
     def params(self, name: str, **fixed) -> Params:
         return Params(**{**self.configs[name], **fixed})

@@ -16,6 +16,17 @@
       "targets": [0.6, 0.7, 0.8],
       "multi": false,
       "generate": {"hub_min": 135, "max_stops": 12}
+    },
+    "eval": {
+      "_설명": "평가 규칙(설계 7절). 생성기·배분기의 덮는 수요(walk_eval)와 평가(eval_rules)가 같은 값을 쓴다. 값의 뜻은 src/busstrike/planning/routegen/reach.py의 EvalRule",
+      "station_mode": "same_line",
+      "walk_radius_m": 400,
+      "station_arrival": "candidates",
+      "shared_stop": "flow_union",
+      "transfer_complex": false,
+      "walk_speed_m_min": 75,
+      "walk_wait_limit_s": 1200,
+      "combos": {"station_mode": ["fixed", "same_line", "any"], "walk_radius_m": [0, 200, 400]}
     }
   },
   "gu": {}
