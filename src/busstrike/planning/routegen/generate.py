@@ -279,13 +279,26 @@ def sectors(stops: list[str], values: dict[str, float], center: tuple[float, flo
 
 
 class Builder:
-    def __init__(self, net: Network, graph: Graph, demand: Demand, p: Params):
+    def __init__(self, net: Network, graph: Graph, demand: Demand, p: Params, reach=None):
         self.net, self.g, self.demand, self.p = net, graph, demand, p
         self.od_total = {k: sum(v) for k, v in demand.od.items()}
+        # 평가 규칙(reach.Reach): 있으면 삽입·2-opt의 덮는 수요와 후보의 덮는 OD 키를 그 규칙(목적 역 대체·역 도착·걷기)으로
+        # 센다. 없으면 예전처럼 정차열 위 (출발, 도착) 그대로만 센다.
+        self.reach = reach
         # 거절 사유 집계: (단계, kind, 사유) → 횟수. 사유는 여러 개가 함께 붙을 수 있다(편도·정차 수·우회율).
         self.reasons: dict[tuple[str, str, str], int] = {}
         # 거절 사유 조합: (단계, kind, "l_max+detour" 같은 조합) → 횟수(단독 원인을 셀 때 쓴다)
         self.reason_sets: dict[tuple[str, str, str], int] = {}
+
+    def cover_of(self, stops: tuple[str, ...]) -> float:
+        if self.reach is not None:
+            return self.reach.cover_value(stops, self.od_total)
+        return cover_value(stops, self.od_total)
+
+    def cover_keys_of(self, stops: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
+        if self.reach is not None:
+            return tuple(k for k in self.reach.cover_keys(stops) if k in self.demand.od)
+        return tuple(covered_keys(stops, self.demand.od))
 
     def check(self, pattern: Pattern, anchors: list[str], lim: Limits) -> tuple[tuple[str, ...] | None, list[str]]:
         stops = self.g.expand(anchors)
@@ -312,7 +325,7 @@ class Builder:
         stops = self.route_of(pattern, anchors, lim)
         if stops is None:
             return None
-        cur_dem = cover_value(stops, self.od_total)
+        cur_dem = self.cover_of(stops)
         cur_t = self.g.oneway_s(stops)
         while True:
             on = set(stops)
@@ -325,7 +338,7 @@ class Builder:
                     new = self.route_of(pattern, trial, lim, stage)
                     if new is None:
                         continue
-                    d_dem = cover_value(new, self.od_total) - cur_dem
+                    d_dem = self.cover_of(new) - cur_dem
                     if d_dem <= 1e-9:
                         continue
                     d_t = self.g.oneway_s(new) - cur_t
@@ -336,14 +349,14 @@ class Builder:
             if best is None:
                 break
             _, anchors, stops = best
-            cur_dem = cover_value(stops, self.od_total)
+            cur_dem = self.cover_of(stops)
             cur_t = self.g.oneway_s(stops)
         return self.two_opt(pattern, anchors, stops, lim)
 
     def two_opt(self, pattern: Pattern, anchors: list[str], stops: tuple[str, ...], lim: Limits) -> tuple[str, ...]:
         """한 번 훑기: 움직일 수 있는 anchor 구간을 뒤집어 편도가 줄고 덮개가 줄지 않으면 받는다."""
         cur_t = self.g.oneway_s(stops)
-        cur_dem = cover_value(stops, self.od_total)
+        cur_dem = self.cover_of(stops)
         mv = list(pattern.movable(anchors))
         for x in range(len(mv)):
             for y in range(x + 1, len(mv)):
@@ -353,7 +366,7 @@ class Builder:
                 if new is None:
                     continue
                 t = self.g.oneway_s(new)
-                dem = cover_value(new, self.od_total)
+                dem = self.cover_of(new)
                 if t < cur_t and dem >= cur_dem - 1e-9:
                     anchors, stops, cur_t, cur_dem = trial, new, t, dem
         return stops
@@ -430,7 +443,7 @@ def _finish(c: Candidate, b: Builder, scenario: Scenario, p: Params) -> bool:
     c.length_m = g.length_m(c.stops)
     c.detour = g.detour(c.stops)
     c.n_stops = sum(1 for s in c.stops if s not in end_stops)
-    c.cover_keys = tuple(covered_keys(c.stops, b.demand.od))
+    c.cover_keys = b.cover_keys_of(c.stops)
     c.cover = sum(b.od_total[k] for k in c.cover_keys)
     c.cross_gu = any(net.stops[s].gu != p.home_gu for s in c.stops)
     return True
@@ -473,7 +486,8 @@ def dedupe(cands: list[Candidate], threshold: float) -> tuple[list[Candidate], i
     return kept, len(cands) - len(kept)
 
 
-def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Params()) -> Result:
+def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Params(), reach=None) -> Result:
+    """reach(`reach.Reach`, 선택): 덮는 수요를 평가 규칙으로 센다(설계와 평가가 같은 규칙, 설계 6.2·7절)."""
     t0 = time.time()
     hubs = hubs_of(demand, net, p)
     graph = Graph(net, scenario.policy.dwell_base_s, cutoff_s=max(p.l_max_min) * 60, distance_basis=p.distance_basis)
@@ -488,7 +502,7 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
         cl["cross_gu"] = gus != [p.home_gu]
     t_setup = time.time()
 
-    b = Builder(net, graph, demand, p)
+    b = Builder(net, graph, demand, p, reach)
     raw: dict[tuple, Candidate] = {}
     dropped = {"seed_infeasible": 0, "conversion_failed": 0}
 

@@ -10,6 +10,9 @@
     ÷ 버스 속도(그 도로의 시간대별 실측 속도, 표본이 없으면 그 시간대 전체 중앙값). 망에 없는 임시 정류장(plan의
     `_temporary_stops` 좌표)은 정차하지 않고, 그 앞뒤 정차를 잇는 경로가 그 좌표(가장 가까운 정차 가능 선분)를 지나게 한다.
     망을 같은 설정으로 다시 만들어 `<sweep>/net/road.json`과 같은지 기록한다.
+    **같은 길 규칙**(`--same-road-tol`, 기본 0.01): 원 OSM 경로 길이가 버스 도로(망 구간) 최단 경로 길이와 1% 안으로 같고
+    경유할 임시 정류장이 없으면, 같은 길로 보고 버스 도로 경로의 시간(실측 구간 시간 합, 시간대별)과 길이를 쓴다. 더 짧은
+    다른 길일 때만 속도 규칙 시간을 쓴다(사용자 결정 2026-11-19). 이음마다 `time_rule`(net_same_road | osm_speed)을 남긴다.
 - `--service-start HH:MM`: 지자체안 묶음의 차량 가용 시작 시각을 그 시각으로 늦춘다(시나리오 입력의 `available_start_s`,
   시간표 첫 출발 = max(운영 시작, 가용 시작)). 운영 시간대·수요는 그대로다(그 전에 온 승객은 기다리다 떠날 수 있다).
   시뮬레이터·검증기는 그대로다. `run_inputs`는 시뮬레이터 함수로 다시 만든다.
@@ -71,6 +74,13 @@ def apportion(total: int, weights: list[float]) -> list[int]:
     return q
 
 
+def same_road(osm_m: float, net_m: float | None, tol: float, has_via: bool) -> bool:
+    """원 OSM 이음이 버스 도로 경로와 같은 길인가: 경유 임시 정류장이 없고 길이 차이가 tol 비율 안(tol < 0이면 끔)."""
+    if tol < 0 or has_via or not net_m:
+        return False
+    return abs(osm_m - net_m) <= tol * net_m
+
+
 def hhmm_s(x: str) -> int:
     h, m = x.split(":")
     return int(h) * 3600 + int(m) * 60
@@ -101,6 +111,9 @@ def main() -> int:
     ap.add_argument("--service-start", default=None, help="지자체안 운행 시작 HH:MM(차량 가용 시작). 비우면 묶음 그대로")
     ap.add_argument("--name", default="muni", help="결과 폴더 이름(<sweep>/<name>)")
     ap.add_argument("--no-run", action="store_true", help="묶음·plan만 만들고 시뮬레이션은 돌리지 않는다")
+    ap.add_argument("--same-road-tol", type=float, default=0.01,
+                    help="--links osm: 원 OSM 길이가 버스 도로 경로와 이 비율 안이면 버스 도로 경로 시간(음수면 끔)")
+    ap.add_argument("--out-dir", type=Path, default=None, help="결과 폴더(비우면 <sweep>/<name>)")
     args = ap.parse_args()
     sw = args.sweep.resolve()
     log = json.loads((sw / "hub_sweep.json").read_text(encoding="utf-8"))
@@ -114,7 +127,8 @@ def main() -> int:
     plan = json.loads(args.plan.read_text(encoding="utf-8"))
     temp = (plan.get("_temporary_stops") or {}).get("stops") or {}
     rec = {"plan": str(args.plan), "plan_revision": plan.get("revision"), "links_mode": args.links,
-           "service_start": args.service_start, "dropped_stops": {}, "dropped_routes": [], "added_segments": 0,
+           "service_start": args.service_start, "same_road_tol": args.same_road_tol if args.links == "osm" else None,
+           "dropped_stops": {}, "dropped_routes": [], "added_segments": 0,
            "unreachable": [], "links": []}
     rn = None
     if args.links == "osm":
@@ -155,7 +169,13 @@ def main() -> int:
                     ok = False
                     break
                 prof, dist = got["profile"], got["length_m"]
-                link.update(osm_m=dist, via_offset_m=got["via_offset_m"])
+                link.update(osm_m=dist, via_offset_m=got["via_offset_m"], osm_time_s={str(t0): t for t0, t in prof})
+                same = same_road(dist, net_m, args.same_road_tol, bool(via)) and all(p is not None for p in npaths)
+                if same:     # 같은 길: 버스 도로 경로의 실측 구간 시간 합(시간대별 경로)
+                    prof = [[t0, sum(seg[(x, y)]["profile"][i][1] for x, y in zip(p, p[1:]))]
+                            for i, ((t0, _), p) in enumerate(zip(doc["segments"][0]["profile"], npaths))]
+                    dist = net_m
+                link["time_rule"] = "net_same_road" if same else "osm_speed"
             else:
                 if any(p is None for p in npaths):
                     rec["unreachable"].append([r["route_id"], a, b])
@@ -177,7 +197,7 @@ def main() -> int:
         for r, v in zip(routes, apportion(fleet, [r["vehicles"] for r in routes])):
             r["vehicles"] = v
     rec.update({"plan_vehicles": total, "fleet": fleet, "routes": len(routes), "added_segments": len(added)})
-    out = sw / args.name
+    out = args.out_dir.resolve() if args.out_dir else sw / args.name
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)

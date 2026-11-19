@@ -13,8 +13,11 @@
 --only로 안 이름을 주면 그 안만 만들고 돌려 기존 walk_eval.json에 더한다(걷기 없음 결과는 runs_nowalk/<안>-f<대수>/에).
 시뮬레이터 가정(모든 안 같음)
 - nowalk: 지금까지와 같다(승객은 원래 정류장에서만 탄다).
-- walk: 원래 정류장에서 탈 수 없으면 도보 R m 안의 셔틀 정류장으로 걸어가 탄다(역 쪽도 지정 정류장 R m 안).
-  안마다 수요 묶음(demand_bins)의 승하차 정류장만 바꾸고 run_inputs를 다시 만든다. 도보 시간은 넣지 않는다.
+- walk: 평가 규칙(설정 파일 eval 절, `reach.EvalRule`, 걷기 반경 = --radius)으로 탈 수 없는 승객을 규칙 안의 (탈, 내릴)
+  정류장으로 옮긴다(목적 역 대체 · 역 도착 = 역 주변 정류장 목록 · 동네 쪽 걷기). 안마다 수요 묶음(demand_bins)의 승하차
+  정류장만 바꾸고 run_inputs를 다시 만든다. 도보 시간은 넣지 않는다(9개 조합·도보 시간은 eval_rules.py).
+  `--legacy-rule`: 2단계 전 규칙(역 고정, 역 쪽도 지정 정류장 R m 안 걷기, `walk.reassign`).
+설계(덮는 OD 키: 배분기·형평 먼저의 탈 수 있는 수요, 생성기 후보의 덮개)도 같은 규칙을 쓴다(`--legacy-rule`이면 예전 그대로).
 망·흡수는 hub_sweep과 같다(도로 망, 정밀 흡수 기본 가정). 지자체안이 쓰는 무정차 구간을 담은 `road_muni.json`을 모든 안에 쓴다
 (다른 안은 그 구간을 쓰지 않는다).
 `--muni 이름=<eval_municipal 결과 폴더>`(여러 번): 지자체안 변형(이음 측정 방식·운행 시작 시각 등)을 그 폴더의 plan.json과
@@ -44,6 +47,7 @@ from busstrike.planning.routegen import generate as G  # noqa: E402
 from busstrike.planning.routegen import gu_config  # noqa: E402
 from busstrike.planning.routegen import walk as WK  # noqa: E402
 from busstrike.planning.routegen.absorb import Absorber, residual_rows  # noqa: E402
+from busstrike.planning.routegen.reach import Reach, StationIndex  # noqa: E402
 from busstrike.sim import io as sio  # noqa: E402
 from busstrike.sim.arrivals import build_run_inputs  # noqa: E402
 from busstrike.sim.traveltime import TravelTimeTable  # noqa: E402
@@ -64,8 +68,9 @@ def write_plan(path: Path, pid: str, snap: str, routes: list[tuple[list[str], in
     return path
 
 
-def walk_bundles(src: Path, dst: Path, routes: list[list[str]], nb: dict, st_stops: set[str], fleets: list[int]) -> dict:
-    """src 묶음들을 복사하고 demand_bins를 걷기 재배정한 뒤 run_inputs를 다시 만든다."""
+def walk_bundles(src: Path, dst: Path, routes: list[list[str]], nb: dict, st_stops: set[str], fleets: list[int],
+                 reach: Reach | None = None) -> dict:
+    """src 묶음들을 복사하고 demand_bins를 걷기 재배정한 뒤 run_inputs를 다시 만든다(reach가 있으면 그 규칙, 없으면 예전 규칙)."""
     agg = {"direct": 0, "walked": 0, "none": 0, "walk_m": 0.0}
     for b in sorted(src.iterdir()):
         if not b.is_dir():
@@ -76,7 +81,12 @@ def walk_bundles(src: Path, dst: Path, routes: list[list[str]], nb: dict, st_sto
         shutil.copytree(b, t)
         with open(b / "demand_bins.csv", encoding="utf-8", newline="") as f:
             rows = list(csv.DictReader(f))
-        new, s = WK.reassign(rows, routes, nb, st_stops)
+        if reach is None:
+            new, s = WK.reassign(rows, routes, nb, st_stops)
+        else:
+            new, _, s = reach.reassign(rows, routes)
+            for k in ("same_station", "alt_station"):
+                agg[k] = agg.get(k, 0) + s[k]
         new.sort(key=lambda r: (r["origin"], r["destination"], int(r["bin_start_s"])))
         with open(t / "demand_bins.csv", "w", encoding="utf-8", newline="") as f:
             w = csv.writer(f, lineterminator="\n")
@@ -93,6 +103,7 @@ def walk_bundles(src: Path, dst: Path, routes: list[list[str]], nb: dict, st_sto
                              t / "travel_times.json", ri["seed"], t / f"run_inputs_f{fl}.json")
     n = len(list(src.iterdir()))
     return {"direct": round(agg["direct"] / n, 1), "walked": round(agg["walked"] / n, 1), "none": round(agg["none"] / n, 1),
+            **{k: round(agg[k] / n, 1) for k in ("same_station", "alt_station") if k in agg},
             "walk_m_avg": round(agg["walk_m"] / agg["walked"], 1) if agg["walked"] else 0.0}
 
 
@@ -134,6 +145,8 @@ def main() -> int:
                     help="형평 먼저 단계에서 역(지정 정류장) 도보 --near-m 안 수요의 무게 배수(1이면 할인 없음, 안 이름 끝에 d)")
     ap.add_argument("--near-m", type=float, default=None)
     ap.add_argument("--muni", action="append", default=[], help="지자체안 변형 이름=eval_municipal 결과 폴더(여러 번)")
+    ap.add_argument("--legacy-rule", action="store_true", help="2단계 전 규칙(역 고정, 역 쪽 지정 정류장 걷기)으로 설계·평가")
+    ap.add_argument("--lines", type=Path, default=HERE.parent / "station_lines.csv", help="역 → 호선·지선 꼬리표 표")
     args = ap.parse_args()
     muni_dirs = {k: Path(v).resolve() for k, v in (x.split("=", 1) for x in args.muni)}
     cfg = gu_config.load(args.params, args.gu)
@@ -187,12 +200,23 @@ def main() -> int:
     scen = D.read_scenario(next((sw / "exp" / "bundles").iterdir()), fleets[0])
     p = cfg.walk_params(home_gu=info["gu"], multi=args.multi)
     sfx = "m" if args.multi else ""
-    gres = G.generate(net, demand, scen, p)
+    keys = sorted(demand.od)
+    reach = None
+    if not args.legacy_rule:
+        rule = cfg.eval_rule(walk_radius_m=args.radius)
+        ix = StationIndex.from_root(root, args.lines)
+        ix.add_flows(rows)
+        troot = args.region / f"{args.gu}_0610_v4_test"
+        if troot.exists():
+            ix.add_flows(D.load_flows(troot))
+        reach = Reach(ix, rule, nb, keys)
+    gres = G.generate(net, demand, scen, p, reach=reach)
     pool = G.pools(gres.candidates, p.jaccard)["ours"][0]
     by = {c.route_id: c for c in pool}
-    keys = sorted(demand.od)
-    wkeys = {c.route_id: WK.walk_cover_keys(list(c.stops), keys, nb) for c in pool}
+    wkeys = {c.route_id: (WK.walk_cover_keys(list(c.stops), keys, nb) if reach is None else reach.cover_keys(c.stops))
+             for c in pool}
     log = {"gu": info["gu"], "radius_m": args.radius, "fleets": fleets, "pool": len(pool),
+           "rule": "legacy" if reach is None else reach.rule.record(),
            "params": {**cfg.record(), "used": {"radius_m": args.radius, "near_m": args.near_m,
                                                 "near_discount": args.near_discount, "multi": args.multi,
                                                 "lambdas": args.lambdas, "targets": args.targets}},
@@ -297,7 +321,7 @@ def main() -> int:
                         and f"{lab}-f{f}-{split}" in log["walk_stats"]:
                     continue
                 src_b, fl_b = (muni_src[lab] / split / "bundles", [f]) if lab in muni_src else (nb_dir, fleets)
-                log["walk_stats"][f"{lab}-f{f}-{split}"] = walk_bundles(src_b, wdir, routes, nb, st_stops, fl_b)
+                log["walk_stats"][f"{lab}-f{f}-{split}"] = walk_bundles(src_b, wdir, routes, nb, st_stops, fl_b, reach)
                 run(wdir, out / "runs_walk" / f"{lab}-f{f}" / split, [f"{lab}:{f}={path}"], args.jobs)
                 shutil.rmtree(wdir, ignore_errors=True)          # 묶음은 크다. 결과만 남긴다
                 (out / "walk_eval.json").write_text(json.dumps(log, ensure_ascii=False, indent=1), encoding="utf-8")
