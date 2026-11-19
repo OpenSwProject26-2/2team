@@ -92,6 +92,24 @@ class DashboardHttpTests(unittest.TestCase):
             payload = json.load(response)
         self.assertEqual(payload["code"], "DATA_INCOMPLETE")
 
+    def test_map_assets_and_district_api_are_served(self) -> None:
+        expected = {
+            "/vendor/maplibre-gl.mjs": "text/javascript",
+            "/vendor/maplibre-gl-worker.mjs": "text/javascript",
+            "/vendor/maplibre-gl.css": "text/css",
+            "/vendor/openfreemap-liberty.json": "application/json",
+        }
+        for path, content_type in expected.items():
+            with self.subTest(path=path), urlopen(self.base + path, timeout=3) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get_content_type(), content_type)
+                self.assertGreater(int(response.headers["Content-Length"]), 100)
+
+        districts = self.get_json("/api/d/districts")
+        self.assertEqual([item["id"] for item in districts["districts"]],
+                         ["guro", "dongjak", "gangseo", "gangdong"])
+        self.assertIn("OpenStreetMap", districts["source"])
+
     def test_simulation_report_api_and_missing_artifacts(self) -> None:
         options = self.get_json("/api/d/simulation/options")
         self.assertEqual(len(options["regions"]), 4)

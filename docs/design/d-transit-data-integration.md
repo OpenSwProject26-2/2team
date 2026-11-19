@@ -21,9 +21,9 @@
 
 - `GET /api/d/transit/status`: 관측일, 기준표 규모, A GTFS ID 교집합만 반환. 로컬 절대경로와 비공개 원본은 반환하지 않음.
 - `GET /api/d/transit/observed?district=guro&date=2026-10-26&hour=07`: k5 공유 집계를 정류장별로 합산한 결과. `demand_kind=observed_normal_boardings`, `k=5`를 명시한다. k5에서 제거된 인원은 복원하지 않는다.
-- `GET /api/d/districts`, `/api/d/network?mode=real&district=guro&extent=inside|full`: SGIS 기반 2026-07-01 자치구 경계를 이용해 노선·정류장을 공간 필터링한다. 경계 교차 구간을 포함하고, 내부 구간과 노선 전체를 구분한다. 선택 노선의 전체 정류장 좌표는 별도 `route_stops` 필드로 제공한다.
+- `GET /api/d/districts`, `/api/d/network?mode=real&district=guro&extent=inside|full`: 런타임은 `web/operator/data/districts_all.geojson`의 서울 25개 OSM 행정경계를 읽는다. 현재 선택 목록은 구로·동작·강서·강동 4개 구다. 노선·정류장을 공간 필터링하고 경계 교차 노선을 포함하며, 구 내부 구간과 노선 전체를 구분한다. 선택 노선의 전체 정류장 좌표는 별도 `route_stops` 필드로 제공한다.
 
-자치구 경계는 SGIS 기반 `vuski/admdongkor` 2026-07-01을 `mapcn-kr`이 단순화·시군구 병합한 공개 GeoJSON에서 4개 구만 추출했다. 약 0.0001도 정밀도의 표시용 경계이며 법정 경계 판정용은 아니다. 출처 표시는 API와 문서에 유지한다.
+`web/operator/data/districts_all.geojson`은 OpenStreetMap `admin_level=6` 경계를 약 0.0001도(약 10m) 허용 오차로 단순화한 표시용 자료이며, ODbL 1.0 및 © OpenStreetMap contributors 출처를 유지해야 한다. `web/operator/build_districts.py`는 Overpass `out geom` 응답에서 이 파일을 다시 만드는 도구다. 기존 `web/operator/data/districts.geojson`은 4개 SGIS 경계의 로컬 자료로 보존했지만 런타임은 사용하지 않는다. OSM 경계는 법정 경계 판정용이 아니다.
 
 ## 선형과 시뮬레이션 제한
 

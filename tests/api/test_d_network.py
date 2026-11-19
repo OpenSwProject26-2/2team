@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from busstrike.api.d_geo import MapSnapshot
-from busstrike.api.d_network import clip_line, contains, districts, network_view
+from busstrike.api.d_network import BOUNDARIES, clip_line, contains, districts, network_view
 from busstrike.api.d_transit_data import TransitData
 
 
@@ -18,6 +18,14 @@ class NetworkTests(unittest.TestCase):
             self.assertIn(
                 districts()[district]["geometry"]["type"], {"Polygon", "MultiPolygon"}
             )
+
+    def test_full_boundary_dataset_keeps_all_25_seoul_districts(self):
+        import json
+
+        collection = json.loads(BOUNDARIES.read_text(encoding="utf-8"))
+        codes = {feature["properties"]["sgg"] for feature in collection["features"]}
+        self.assertEqual(len(codes), 25)
+        self.assertEqual(collection["features"][0]["properties"]["sido"], "11")
 
     def test_crossing_route_without_inside_endpoint_is_retained(self):
         square = {

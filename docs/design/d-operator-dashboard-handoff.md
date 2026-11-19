@@ -4,6 +4,8 @@
 
 > **최신 갱신: 2026-11-16.** 아래 2026-11-15 기록은 당시 상태이며, 기능·검증 현황은 이 갱신을 우선한다. Git Commit/Push/PR은 수행하지 않았다.
 
+> **2026-11-19 후속 상태:** 이 파일은 D 운영자 화면 1차 이관의 이력 문서다. 이후 GIS 경계·선형과 시뮬레이션 manifest의 현재 상태 및 실행 의존성은 [현재 PR 인수인계](d-dashboard-pr-handoff.md), [교통 데이터 통합](d-transit-data-integration.md), [시뮬레이션 결과 계약](d-simulation-contract.md)을 기준으로 확인한다.
+
 > **최신 main 이관:** 이 문서의 D 코드가 `src/busstrike/api/`, `src/busstrike/routing/`, `web/operator/`, `web/citizen/`으로 복사되었고 테스트·합성 fixture가 `tests/`로 옮겨졌다. 원본 작업 폴더는 수정하지 않았다. 이관 결과의 테스트와 실행 경로 검증은 아래 최신 이관 검증 항목을 우선한다.
 
 ### 2026-11-16 Draft PR 직전 재검증

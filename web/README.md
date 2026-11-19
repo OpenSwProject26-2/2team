@@ -111,6 +111,8 @@ py -3 web/operator/serve.py --a-gtfs "C:\path\to\busstrike_data_release_20261111
 
 운영자 화면 `http://127.0.0.1:8766/`에서 **A GTFS**를 선택하고 구로·강동 등 구를 고르면 구 내부 철도 선형과 정류장이 표시된다. 노선을 선택하면 실선의 GIS 출처와 역 좌표 검증 수를 확인한다. `/api/d/sources`의 `rail_gis.matched_routes`로 연결 수를 확인할 수 있다. GIS 선형은 물리 선로이며 운행편별 분기·방향 경로의 인증 자료는 아니다. 서울 버스 공식 GPS 선형은 별도의 API 인증키 및 A GTFS와의 노선 ID·정류장 순서 검증이 아직 필요하다.
 
+자치구 경계는 `web/operator/data/districts_all.geojson`의 서울 25개 OSM 행정경계를 사용하고, 운영자 선택지는 현재 4개 구로 제한한다. 출처·ODbL 및 재생성 방법은 [교통 데이터 통합 문서](../docs/design/d-transit-data-integration.md)를 따른다. 기존 4개 구 전용 `districts.geojson`은 런타임에서 읽지 않는다.
+
 검증된 버스 선형 GeoJSON을 별도로 받았다면 `--bus-geometry-file "C:\path\to\bus-verified.geojson"`을 추가한다. 필수 매핑 필드와 채택 조건은 [교통 데이터 통합 문서](../docs/design/d-transit-data-integration.md)에 있다. 파일이 없으면 버스 정차점 연결은 점선으로 남는다.
 
 ### 버스 도로 경로를 로컬에서 생성
@@ -132,3 +134,5 @@ py -3 web/operator/serve.py `
 `116900013`은 A GTFS의 구로01이다. 이번 확인에서는 구로01을 포함해 4개 구 대표 노선 7개(마을 3, 시내 4)가 정류장 스냅·방문 순서·우회율 검사를 통과했다. 구로01의 최대 스냅은 14.3m, 도로 경로는 4.49km, 좌표 160개다. 결과는 `osrm_estimate` 출처와 옅은 연속 실선으로 표시한다. 버스 통행 허용이나 공식 운행 경로는 검증되지 않았다. `/api/d/sources`의 `bus_geometry`와 `/api/d/network?mode=real&district=guro`에서 연결 여부를 확인한다.
 
 공식 경로는 [공공데이터포털 서울특별시 노선정보조회 서비스](https://www.data.go.kr/data/15000193/openapi.do)에서 활용 신청 후 발급한 키를 `SEOUL_BUS_API_KEY` 환경변수에 설정하고 같은 전처리기에 `--source official`을 준다. 키를 파일·코드·PR에 넣지 않는다. 예를 들어 현재 PowerShell 세션에서 `$env:SEOUL_BUS_API_KEY = (Read-Host '서울 버스 API 키')`로 입력한다. 공식 API 응답의 노선 ID·이름·정류장 순서와 A GTFS 정류장 좌표가 맞아야 채택되며, 현재 키가 없어 실제 공식 응답 검증은 완료되지 않았다.
+
+시뮬레이션 결과 조회는 [결과 데이터 계약](../docs/design/d-simulation-contract.md)의 PR #47 `routegen-results/1` manifest를 지원한다. 결과 루트가 지정되지 않거나 manifest가 없으면 PR #41 보고서 평균 fallback만 제공하고 실제 후보 셔틀 노선·배정·날짜별 M05/M07은 표시하지 않는다.
