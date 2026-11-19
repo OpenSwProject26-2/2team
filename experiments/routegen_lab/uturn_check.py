@@ -2,7 +2,7 @@
 
     python3 experiments/routegen_lab/uturn_check.py --root <region>/guro_0610_v4 --osm <osm>/guro_roads.json \
         [--snap-mode edge|node] [--net <망 폴더(road.json·turns.json)>] [--params gu_params.json --gu guro] \
-        [--windows 150:600,50:100] [--compare <다른 결과 json>] --out <결과.json>
+        [--windows 150:600,50:100] [--compare <다른 결과 json>] [--write-net <폴더>] [--no-long-match] --out <결과.json>
 
 - 망: `roadnet.RoadNet(snap_mode)`로 다시 만든다. `--net`을 주면 그 폴더의 road.json·turns.json으로 판정하고,
   다시 만든 것과 같은지 기록한다(옛 망 재현 확인).
@@ -14,6 +14,9 @@
 - 도보 이웃 = `walknet.walk_neighbors` 400m 안 (정류장, 다른 정류장) 순서쌍 수.
 - `--windows T:H,...`(edge 망만): turns-v2의 tail(도착 전 T m)·head(출발 뒤 H m) 길이를 바꿨을 때의 판정 민감도.
 - `--compare`: 다른 망의 결과 json과 같은 3정류장끼리 판정을 맞대어 본다(옛 망에서 U턴이던 것이 새 망에서 어떻게 되었나).
+- `--write-net`: 다시 만든 망을 그 폴더에 쓴다(road.json, turns.json, roadnet_stats.json, snap.json; `roadnet.write_net`).
+- 기존 버스 구간 매칭은 보통 매칭 / 긴 경로 매칭(상한 밖, U턴 없음) / 도중 U턴 매칭 / 끝까지 없음으로 나눠 센다.
+  `--no-long-match`는 긴 경로 매칭을 끈다(1단계 망 재현용).
 절대 경로·중간 파일 없이 인자만으로 다시 계산한다.
 """
 
@@ -37,8 +40,17 @@ from busstrike.planning.routegen import data as D  # noqa: E402
 from busstrike.planning.routegen.graph import Graph  # noqa: E402
 from busstrike.sim.traveltime import TravelTimeTable  # noqa: E402
 
-from roadnet import RoadNet  # noqa: E402
+from roadnet import RoadNet, write_net  # noqa: E402
 from walknet import walk_neighbors  # noqa: E402
+
+
+def code_commit() -> str:
+    """코드 커밋 기록. 작업 폴더에 고친 것이 있으면 "작업 폴더(미커밋, 기준 <해시>)"."""
+    def git(*a):
+        return subprocess.run(["git", "-C", str(REPO), *a], capture_output=True, text=True, check=False).stdout.strip()
+    head = git("rev-parse", "HEAD")
+    dirty = git("status", "--porcelain", "--untracked-files=no", "--", "experiments/routegen_lab", "src")
+    return f"작업 폴더(미커밋, 기준 {head})" if dirty else head
 
 
 def angle(stops: dict, a: str, b: str, c: str) -> float | None:
@@ -142,7 +154,9 @@ def retrace_info(rn: RoadNet, a: str, b: str, c: str) -> dict:
     return {"side_switch": p1[-1] != p2[0], "ab_m": round(L1), "bc_m": round(L2),
             "retrace_after_b_m": hit[0] if hit else None, "retrace_before_b_m": hit[1] if hit else None,
             "ab_uturn_fallback": (a, b) in getattr(rn, "uturn_segments", set()),
-            "bc_uturn_fallback": (b, c) in getattr(rn, "uturn_segments", set())}
+            "bc_uturn_fallback": (b, c) in getattr(rn, "uturn_segments", set()),
+            "ab_long_match": (a, b) in getattr(rn, "long_segments", {}),
+            "bc_long_match": (b, c) in getattr(rn, "long_segments", {})}
 
 
 def main() -> int:
@@ -156,17 +170,18 @@ def main() -> int:
     ap.add_argument("--windows", default="", help="edge 망 tail:head 길이(m) 민감도, 예 150:600,300:inf,inf:inf")
     ap.add_argument("--walk-radius", type=float, default=400.0)
     ap.add_argument("--compare", type=Path, default=None)
+    ap.add_argument("--write-net", type=Path, default=None, help="다시 만든 망 파일을 쓸 폴더")
+    ap.add_argument("--no-long-match", action="store_true", help="긴 경로 매칭 끄기(1단계 망 재현)")
     ap.add_argument("--out", required=True, type=Path)
     args = ap.parse_args()
 
-    rn = RoadNet(args.osm, args.root, snap_mode=args.snap_mode)
+    rn = RoadNet(args.osm, args.root, snap_mode=args.snap_mode, long_match=not args.no_long_match)
     stats = rn.build()
     turns = rn.turn_edges()
     doc = rn.road_doc
-    rec: dict = {"args": {k: str(v) for k, v in vars(args).items()},
-                 "code_commit": subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"], capture_output=True,
-                                               text=True, check=False).stdout.strip(),
-                 "roadnet": stats}
+    rec: dict = {"args": {k: str(v) for k, v in vars(args).items()}, "code_commit": code_commit(), "roadnet": stats}
+    if args.write_net:
+        write_net(rn, args.write_net, dict(stats, code_commit=rec["code_commit"]))
     if args.net:
         saved_doc = json.loads((args.net / "road.json").read_text(encoding="utf-8"))
         saved_turns = json.loads((args.net / "turns.json").read_text(encoding="utf-8"))
@@ -193,7 +208,15 @@ def main() -> int:
                        "bus_segments": len(bus), "bus_matched": stats["bus_segments_matched"],
                        "bus_unmatched": stats["bus_segments_unmatched"], "added": stats["added_segments"],
                        "added_share": round(stats["added_segments"] / max(1, len(segs)), 4),
-                       "unmatched_by_reason": stats.get("unmatched_by_reason")}
+                       "unmatched_by_reason": stats.get("unmatched_by_reason"),
+                       "bus_long_match": stats.get("bus_segments_long_match"),
+                       "bus_uturn_match": stats.get("bus_segments_matched_with_uturn"),
+                       "bus_no_path": (stats.get("unmatched_by_reason") or {}).get("no_path", 0)}
+    for key in ("long_match", "uturn_match"):
+        if key in stats:
+            rec["segments"][key + "_list"] = [
+                dict(x, from_name=base.stops[x["from"]].name if x["from"] in base.stops else None,
+                     to_name=base.stops[x["to"]].name if x["to"] in base.stops else None) for x in stats[key]]
     if hasattr(rn, "unmatched_segments"):
         rec["segments"]["unmatched_list"] = [
             dict(u, from_name=base.stops[u["from"]].name if u["from"] in base.stops else None,
@@ -303,7 +326,7 @@ def main() -> int:
     if "compare" in rec:
         show["compare"] = {"cross": rec["compare"]["cross"], "cases_n": {k: len(v) for k, v in rec["compare"]["cases"].items()}}
     if isinstance(show["segments"], dict):
-        show["segments"] = {k: v for k, v in show["segments"].items() if k != "unmatched_list"}
+        show["segments"] = {k: v for k, v in show["segments"].items() if not k.endswith("_list")}
     print(json.dumps(show, ensure_ascii=False, indent=1))
     return 0
 

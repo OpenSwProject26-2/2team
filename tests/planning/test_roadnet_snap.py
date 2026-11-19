@@ -248,5 +248,76 @@ class TurnsFormatTest(unittest.TestCase):
             parse_turns({"S1>S2": {"s": 1}})
 
 
+class LongMatchTest(unittest.TestCase):
+    """(5) 거리 상한보다 긴 U턴 없는 경로만 있는 기존 버스 구간 = 긴 경로 매칭.
+
+    동쪽 일방 큰길(노드 1..11, x = 0..10)과 북쪽 일방 고리(x=7에서 북으로 200m → 서쪽으로 400m → x=3에서 남으로).
+    A(x=6.5) → B(x=4.5)는 직선 200m, 상한 max(2×200, 200+400) = 600m인데 U턴 없는 경로는 고리를 도는 1,000m뿐이다.
+    """
+
+    def build(self, **kw):
+        t = tempfile.TemporaryDirectory()
+        self.addCleanup(t.cleanup)
+        d = Path(t.name)
+        nodes = {i: (i - 1, 0.0) for i in range(1, 12)}
+        nodes.update({21: (7.0, 2.0), 22: (3.0, 2.0)})
+        ow = {"highway": "secondary", "oneway": "yes"}
+        ways = [(list(range(1, 12)), ow), ([8, 21], ow), ([21, 22], ow), ([22, 4], ow)]
+        stops = {"W": (1.5, -0.15), "B": (4.5, -0.15), "A": (6.5, -0.15)}
+        make(d, ways, nodes, stops, [("W", "B"), ("A", "B")])
+        rn = RoadNet(d / "osm.json", d, **kw)
+        stats = rn.build()
+        return d, rn, stats
+
+    def test_long_match_records_turns_only(self):
+        d, rn, stats = self.build()
+        self.assertEqual(stats["bus_segments_matched"], 1)
+        self.assertEqual(stats["bus_segments_long_match"], 1)
+        self.assertEqual(stats["bus_segments_matched_with_uturn"], 0)
+        self.assertEqual(stats["bus_segments_unmatched"], 0)
+        info = stats["long_match"][0]
+        self.assertEqual((info["from"], info["to"]), ("A", "B"))
+        self.assertAlmostEqual(info["road_m"], 1000, delta=15)
+        self.assertGreater(info["road_m"], 600)
+        self.assertLessEqual(info["road_m"], info["cutoff_m"])
+        turns = rn.turn_edges()
+        self.assertIn("A>B", turns)                             # 조각 기록은 남는다
+        self.assertEqual(turns["A>B"].get("l"), 1)
+        self.assertIn([8, 21], turns["A>B"]["head"])
+        seg = next(x for x in rn.road_doc["segments"] if (x["from_stop_id"], x["to_stop_id"]) == ("A", "B"))
+        self.assertEqual(seg["distance_m"], 100)                # 실측 구간: 거리·시간 그대로
+        self.assertEqual(seg["profile"], PROF)
+        for e in ((8, 21), (21, 22), (22, 4)):                  # 고리는 버스 도로가 아니다
+            self.assertNotIn(e, rn.bus_set)
+        loop = {21, 22}
+        for a, b in rn.added:                                   # 고리로 생긴 추가 구간 없음
+            self.assertFalse(loop & set(rn.seg_path[(a, b)]))
+        # 속도 표본에 안 들어간다: 중앙값은 W→B(300m/60s = 18km/h)만으로 정해진다
+        self.assertEqual(stats["median_bus_speed_kmh"]["21600"], round(3.6 * seg_len(rn, "W", "B") / 60, 1))
+
+    def test_long_match_off_leaves_unmatched(self):
+        _, rn, stats = self.build(long_match=False)
+        self.assertEqual(stats["bus_segments_long_match"], 0)
+        self.assertEqual(stats["bus_segments_unmatched"], 1)    # 일방 고리라 도중 U턴 경로도 없다
+        self.assertNotIn("A>B", rn.turn_edges())
+        self.assertEqual(rn.unmatched_segments[0]["why"], "no_path")
+
+    def test_write_net_marks_long_match(self):
+        from roadnet import write_net
+        d, rn, stats = self.build()
+        write_net(rn, d / "net", stats)
+        snap = json.loads((d / "net" / "snap.json").read_text(encoding="utf-8"))
+        self.assertEqual(snap["A"]["long_match"], ["A>B"])
+        self.assertEqual(snap["B"]["long_match"], ["A>B"])
+        self.assertNotIn("long_match", snap["W"])
+        st = json.loads((d / "net" / "roadnet_stats.json").read_text(encoding="utf-8"))
+        self.assertEqual(st["bus_segments_long_match"], 1)
+        self.assertEqual(json.loads((d / "net" / "turns.json").read_text(encoding="utf-8"))["A>B"]["l"], 1)
+
+
+def seg_len(rn: RoadNet, a: str, b: str) -> int:
+    return rn.road_len[(a, b)]
+
+
 if __name__ == "__main__":
     unittest.main()

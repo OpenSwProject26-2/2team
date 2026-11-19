@@ -1,5 +1,9 @@
 """실제 도로망(OSM)으로 '버스가 다니는 도로 = 1' 망을 만든다(실험용).
 
+U턴 원칙: U턴을 막는 이유는 "도로가 좁아 버스가 실제로 돌 수 없어서"다. 그래서 정류장이나 길 중간에서 제자리로 돌아
+나오는 것(방금 지난 도로 조각을 반대로 되짚기, 길 건너편 정차 노드로 바꿔 타기)은 막고, 블록·순환로를 돌아 반대쪽으로
+가는 것(지난 도로를 되짚지 않음)은 허용한다. 경로 탐색과 turns-v2 판정(graph.Graph.is_uturn)이 모두 이 원칙을 따른다.
+
 1. OSM 도로를 방향 그래프로 만든다(일방통행 반영). U턴(방금 지나온 도로 조각으로 되돌아가기)은 모든 경로에서 금지한다.
    회전 제한 관계(turn restriction)는 반영하지 않는다.
 2. 정류장을 도로에 붙인다(`snap_mode`).
@@ -12,6 +16,13 @@
    - "node": 예전 방식(60m 안의 가장 가까운 도로 노드). 옛 망 재현·비교용.
 3. 기존 버스 구간 A→B마다 도로 위 최단경로를 찾는다(길이 ≤ max(2×직선, 직선+400m)). 그 도로에 1을 표시하고,
    구간 실측 시간 ÷ 경로 길이로 시간대별 속도 표본을 남긴다.
+   - 상한 안에 U턴 없는 경로가 없으면(edge 망) 더 큰 상한 max(`long_factor`×직선, 직선+`long_extra_m`)(기본 4×, 1,500m)으로
+     U턴 없는 경로를 다시 찾는다("긴 경로 매칭", `long_segments`). 찾으면 도로 조각 기록(turns)만 남긴다. 구간 시간·
+     `distance_m`은 실측 그대로 두고, 속도 표본·버스 도로(1)에는 넣지 않는다(실제 버스가 다니지 않을 수 있는 긴 길이
+     버스 도로가 되어 추가 구간이 생기지 않게). OSM 연결·회전 정보가 실제와 다른 곳이 많아, 도로 경로 속도
+     (`road_speed_kmh` = 경로 길이 ÷ 실측 최소 시간)를 함께 기록한다.
+   - 그래도 없을 때만 도중 U턴 1회 허용 경로(기존 상한)로 잇는다(`uturn_segments`). 원칙상 도중 U턴은 실제로 불가능하므로
+     따로 센다. 끝까지 못 찾으면 조각 기록 없이 둔다(그 구간이 낀 3정류장은 판단하지 않음).
 4. 버스 도로 = 1인 도로 + 양방향 도로면 그 반대 방향.
 5. 정류장 a에서 버스 도로로 `cut_m` 안에 닿는 정류장 b마다, 경로 중간에 다른 정류장이 없으면 a→b 구간을 더한다.
    시간 = Σ 도로 길이 ÷ 그 도로의 버스 실측 속도(시간대별, 없으면 전체 중앙값). 이미 있는 구간은 그대로 둔다.
@@ -20,11 +31,12 @@
 구간마다 도로 조각 기록(`turn_edges`)을 남겨, 정류장에서 두 구간을 이을 때 U턴이 되는지 판정할 수 있게 한다.
 - "edge" 망: 형식 turns-v2. 구간 "a>b" → {"s": 출발 정차 노드, "e": 도착 정차 노드,
   "tail": 도착 전 `tail_m`(기본 300m) 안에서 지난 도로 조각(OSM 유향 간선) 목록, "head": 출발 뒤 `head_m` 안의 도로 조각
-  목록(기본 None = 구간 전체)}. 도로 경로를 U턴 1회 허용으로만 찾은 기존 버스 구간은 "u": 1.
+  목록(기본 None = 구간 전체)}. 도로 경로를 U턴 1회 허용으로만 찾은 기존 버스 구간은 "u": 1, 긴 경로 매칭 구간은 "l": 1.
   판정(graph.Graph.is_uturn): b에서 도착 노드 ≠ 출발 노드(길 건너편으로 바꿔 탐)이거나, b→c 경로가 a→b의 도착 전
   tail_m 안 도로를 반대 방향으로 지나면(되짚기) U턴이다. 되짚는 도로는 정류장 b에서 tail_m 안에 있다.
 - "node" 망: 예전 형식(구간 → [첫 조각 u, v, 마지막 조각 u, v]).
-기존 버스 구간의 `distance_m`도 매칭한 도로 길이로 바꾼다(매칭 못 한 구간만 원래 값).
+기존 버스 구간의 `distance_m`도 매칭한 도로 길이로 바꾼다(매칭 못 한 구간·긴 경로 매칭 구간은 원래 값).
+`write_net`은 망 파일(road.json, turns.json, roadnet_stats.json, snap.json)을 한 폴더에 쓴다.
 """
 
 from __future__ import annotations
@@ -70,7 +82,8 @@ class RoadNet:
     def __init__(self, osm_path: Path, root: Path, snap_m: float = 60.0, snap_mode: str = "edge",
                  align_slack_m: float = 20.0, no_stop_highways: tuple[str, ...] = ("motorway", "motorway_link"),
                  center_m: float = 1.0, refine_m: float = 30.0, refine_gain_m: float = 30.0, refine_loop_m: float = 100.0, uturn_fallback: bool = True,
-                 tail_m: float = 300.0, head_m: float | None = None):
+                 tail_m: float = 300.0, head_m: float | None = None,
+                 long_match: bool = True, long_factor: float = 4.0, long_extra_m: float = 1500.0):
         if snap_mode not in ("edge", "node"):
             raise ValueError(f"snap_mode는 edge 또는 node: {snap_mode}")
         self.snap_mode = snap_mode
@@ -78,6 +91,7 @@ class RoadNet:
         self.no_stop_highways = tuple(no_stop_highways)
         self.tail_m, self.head_m = tail_m, head_m
         self.uturn_fallback = uturn_fallback
+        self.long_match, self.long_factor, self.long_extra_m = long_match, long_factor, long_extra_m
         self.refine_gain_m, self.refine_loop_m = refine_gain_m, refine_loop_m
         osm = json.loads(Path(osm_path).read_text(encoding="utf-8"))
         self.node = {e["id"]: (e["lat"], e["lon"]) for e in osm["elements"] if e["type"] == "node"}
@@ -543,6 +557,18 @@ class RoadNet:
         return [[round(self.node[n][1], 6), round(self.node[n][0], 6)] for n in nodes]
 
     # ------------------------------------------------------------ 만들기
+    def long_cutoff(self, crow: float) -> float:
+        """긴 경로 매칭 거리 상한 = max(long_factor×직선, 직선+long_extra_m)."""
+        return max(self.long_factor * crow, crow + self.long_extra_m)
+
+    @staticmethod
+    def _seg_info(seg: dict, crow: float, cutoff: float, L: float) -> dict:
+        """긴 경로·도중 U턴 매칭 구간의 기록: 직선·상한·도로 경로 길이, 실측 최소 시간으로 본 도로 경로 속도(km/h)."""
+        ts = [t for _, t in seg["profile"] if t > 0]
+        return {"crow_m": round(crow), "cutoff_m": round(cutoff), "road_m": round(L), "distance_m": seg["distance_m"],
+                "min_time_s": min(ts) if ts else None,
+                "road_speed_kmh": round(3.6 * L / min(ts), 1) if ts else None}
+
     def build(self, cut_m: float = 900.0) -> dict:
         samples = defaultdict(lambda: defaultdict(list))
         bus_edge = set()
@@ -551,6 +577,8 @@ class RoadNet:
         unmatched: dict[str, int] = defaultdict(int)
         self.unmatched_segments: list[dict] = []
         self.uturn_segments: set[tuple[str, str]] = set()
+        self.uturn_info: dict[tuple[str, str], dict] = {}
+        self.long_segments: dict[tuple[str, str], dict] = {}
         SN = self.stop_nodes
         for s in self.tt["segments"]:
             a, b = s["from_stop_id"], s["to_stop_id"]
@@ -566,18 +594,35 @@ class RoadNet:
                 hit = [(dist[x], x) for x in sorted(tg) if x in dist]
                 if not hit:
                     why = "no_path"
+                    if self.snap_mode == "edge" and self.long_match:
+                        lcut = self.long_cutoff(crow)
+                        dist, prev = self.dijkstra(self.adj, SN[a], lcut, tg)
+                        lhit = [(dist[x], x) for x in sorted(tg) if x in dist]
+                        if lhit:
+                            # 긴 경로 매칭: 조각 기록(turns)만 남긴다. 구간 시간·distance_m은 실측 그대로,
+                            # 속도 표본·버스 도로(bus_set)에는 넣지 않는다(실제 버스가 안 다니는 길에 추가 구간이 생기지 않게).
+                            L, end = min(lhit)
+                            p = self.walk(prev, None, end)
+                            self.long_segments[(a, b)] = self._seg_info(s, crow, lcut, L)
+                            self.seg_path[(a, b)] = p
+                            continue
                     if self.snap_mode == "edge" and self.uturn_fallback:
                         got = self.path_one_uturn(SN[a], tg, max(2 * crow, crow + 400))
                         if got:
+                            # 도중 U턴 1회 경로. 원칙상 도로가 좁아 실제로는 돌 수 없는 곳이므로 따로 센다.
                             L, p = got
                             self.uturn_segments.add((a, b))
+                            self.uturn_info[(a, b)] = self._seg_info(s, crow, max(2 * crow, crow + 400), L)
                             self.seg_path[(a, b)] = p
                             self.road_len[(a, b)] = max(1, round(L))
                             bus_edge.update(zip(p, p[1:]))        # 속도 표본에는 넣지 않는다
                             continue
             if why:
                 unmatched[why] += 1
-                self.unmatched_segments.append({"from": a, "to": b, "why": why})
+                u = {"from": a, "to": b, "why": why}
+                if why == "no_path":
+                    u["crow_m"] = round(crow)
+                self.unmatched_segments.append(u)
                 continue
             matched += 1
             L, end = min(hit)
@@ -665,6 +710,12 @@ class RoadNet:
         if self.snap_mode == "edge":
             self.stats.update({"snap_mode": "edge", "unmatched_by_reason": dict(sorted(unmatched.items())),
                                "bus_segments_matched_with_uturn": len(self.uturn_segments),
+                               "bus_segments_long_match": len(self.long_segments),
+                               "long_match_rule": {"enabled": self.long_match, "factor": self.long_factor,
+                                                   "extra_m": self.long_extra_m},
+                               "long_match": [dict(v, **{"from": a, "to": b}) for (a, b), v in sorted(self.long_segments.items())],
+                               "uturn_match": [dict(v, **{"from": a, "to": b}) for (a, b), v in sorted(self.uturn_info.items())],
+                               "unmatched": list(self.unmatched_segments),
                                "snap": self.snap_stats, "turns_format": TURNS_V2,
                                "tail_m": self.tail_m, "head_m": self.head_m})
         return self.stats
@@ -700,6 +751,8 @@ class RoadNet:
                 out[f"{a}>{b}"] = {"s": p[0], "e": p[-1], "tail": self._window(p, True), "head": self._window(p, False)}
                 if (a, b) in self.uturn_segments:
                     out[f"{a}>{b}"]["u"] = 1           # 구간 도중 U턴 1회(path_one_uturn)
+                if (a, b) in getattr(self, "long_segments", {}):
+                    out[f"{a}>{b}"]["l"] = 1           # 긴 경로 매칭(거리 상한 밖, U턴 없음)
         return out
 
     def path_any(self, a: str, b: str, bus_only: bool = False) -> list[list[float]]:
@@ -766,3 +819,25 @@ class RoadNet:
             lines.append(self.coords([u, v]))
         return {"type": "Feature", "properties": {"layer": "bus_roads", "edges": len(lines)},
                 "geometry": {"type": "MultiLineString", "coordinates": lines}}
+
+
+def write_net(rn: RoadNet, out: Path, stats: dict | None = None) -> None:
+    """망 파일을 out/에 쓴다: road.json(travel_times), turns.json, roadnet_stats.json, snap.json(edge 망만, 정류장 배치).
+
+    snap.json = {정류장: 붙인 선분·진행 방향·근거, 그 정류장이 낀 긴 경로·도중 U턴 매칭 구간("long_match"·"uturn_match")}.
+    """
+    from busstrike.sim import io as sio
+    out = Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    sio.write_bytes(out / "road.json", sio.json_bytes(rn.road_doc))
+    (out / "turns.json").write_text(json.dumps(rn.turn_edges(), separators=(",", ":")), encoding="utf-8")
+    (out / "roadnet_stats.json").write_text(json.dumps(stats if stats is not None else rn.stats, ensure_ascii=False, indent=1),
+                                            encoding="utf-8")
+    if rn.proj:
+        snap = {s: {k: v for k, v in p.items() if k not in ("lat", "lon")} for s, p in sorted(rn.proj.items())}
+        for key, segs in (("long_match", getattr(rn, "long_segments", {})), ("uturn_match", getattr(rn, "uturn_segments", ()))):
+            for a, b in sorted(segs):
+                for x in (a, b):
+                    if x in snap:
+                        snap[x].setdefault(key, []).append(f"{a}>{b}")
+        (out / "snap.json").write_text(json.dumps(snap, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")

@@ -26,10 +26,9 @@ from busstrike.api.routegen_lab import make_bundle  # noqa: E402
 from busstrike.planning.routegen import data as D  # noqa: E402
 from busstrike.planning.routegen import gu_config  # noqa: E402
 from busstrike.planning.routegen.absorb import Absorber, residual_rows  # noqa: E402
-from busstrike.sim import io as sio  # noqa: E402
 from busstrike.sim.traveltime import TravelTimeTable  # noqa: E402
 
-from roadnet import RoadNet  # noqa: E402
+from roadnet import RoadNet, write_net  # noqa: E402
 from run_networks import plan_and_run  # noqa: E402
 
 PARAMS = HERE.parent / "gu_params.json"
@@ -56,14 +55,8 @@ def main() -> int:
     road_path = out / "net" / "road.json"
     rn = RoadNet(args.osm_dir / f"{args.gu}_roads.json", root)
     stats = rn.build()
-    sio.write_bytes(road_path, sio.json_bytes(rn.road_doc))
+    write_net(rn, out / "net", stats)     # road.json·turns.json·roadnet_stats.json·snap.json(edge 망: 정류장 배치)
     turns = rn.turn_edges()
-    (out / "net" / "turns.json").write_text(json.dumps(turns, separators=(",", ":")), encoding="utf-8")
-    (out / "net" / "roadnet_stats.json").write_text(json.dumps(stats, ensure_ascii=False, indent=1), encoding="utf-8")
-    if rn.proj:   # edge 망: 정류장마다 붙인 선분·진행 방향·근거
-        (out / "net" / "snap.json").write_text(json.dumps(
-            {s: {k: v for k, v in p.items() if k not in ("lat", "lon")} for s, p in sorted(rn.proj.items())},
-            ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     base = D.load_network(root)
     net = D.Network(TravelTimeTable.from_dict(rn.road_doc), base.stops, base.stations, turns)
     ap0 = cfg.absorb_params()
