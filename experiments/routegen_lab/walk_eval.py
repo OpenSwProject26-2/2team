@@ -180,6 +180,7 @@ def main() -> int:
                     help="순환 후보 방식(비우면 설정 파일 walk.generate.loop, none = 예전 편도 + 공차 복귀)")
     ap.add_argument("--gen-jobs", type=int, default=8, help="순환 돌아오는 길 만들기 프로세스 수(결과는 같다)")
     ap.add_argument("--free", action="store_true", help="하한 없는 비교 안 frHH도 안으로 쓴다(기록은 늘 남긴다)")
+    ap.add_argument("--gen", default="", help='생성 설정 덮어쓰기 JSON(예: \'{"loop_max_stops": null, "loop_max_stops_total": 20}\')')
     args = ap.parse_args()
     muni_dirs = {k: Path(v).resolve() for k, v in (x.split("=", 1) for x in args.muni)}
     cfg = gu_config.load(args.params, args.gu)
@@ -237,7 +238,8 @@ def main() -> int:
     # 후보(허브 135·정차 12) + 걷기 반영 덮는 OD
     scen = D.read_scenario(next((sw / "exp" / "bundles").iterdir()), fleets[0])
     p = cfg.walk_params(home_gu=info["gu"], multi=args.multi,
-                        **({} if args.loop is None else {"loop": None if args.loop == "none" else args.loop}))
+                        **({} if args.loop is None else {"loop": None if args.loop == "none" else args.loop}),
+                        **(json.loads(args.gen) if args.gen else {}))
     sfx = "m" if args.multi else ""
     keys = sorted(demand.od)
     reach = None
@@ -384,7 +386,20 @@ def main() -> int:
         return {k: a[k] for k in ("value", "violation", "feasible", "equity", "per_vehicle", "route_shortfall",
                                   "cap_mode", "service_start_s", "hour_weights", "warnings", "chosen")}
 
-    for (lsfx, ps), f in ((x, f) for x in psets for f in fleets):
+    # 초기해 보강(3단계 보고 5절 4): 같은 풀에서 먼저 만든 해(같은 대수의 다른 운행 시작 시각, 더 적은 대수 + 탐욕 채움)를
+    # 국소 탐색 초기해로 더한다. 순서: 대수 작은 것 → 큰 것, 시작 시각 이른 것 → 늦은 것. 결정론.
+    starts = sorted(starts, key=_hhmm)
+    solved: dict[tuple, dict[tuple[int, str], dict[str, int]]] = {}
+
+    def extra_starts(m: A.Model, kind: tuple, f: int, st: str) -> dict[str, dict[str, int]]:
+        out_ = {}
+        for (f2, st2), sol in sorted(solved.get(kind, {}).items()):
+            if (f2, st2) == (f, st) or f2 > f:
+                continue
+            out_[f"prev_f{f2}_{st2.replace(':', '')}"] = sol if f2 == f else A.fill(m, f, A.greedy(m, f, sol))
+        return out_
+
+    for (lsfx, ps), f in ((x, f) for x in psets for f in sorted(fleets)):
         cands = [(c.route_id, list(c.stops), c.cycle_s) for c in ps]
         if want("walk" + sfx + lsfx):
             m = model(None)
@@ -400,8 +415,11 @@ def main() -> int:
             if not (want(label) or (args.free and want(flabel))) or reach is None:
                 continue
             m = model(st, floor, route_min)
-            a = A.allocate(m, f)
-            free = A.allocate(model(st), f)                      # 같은 근사, 하한 없이(하한이 걸렸는지 보려고)
+            a = A.allocate(m, f, extra_starts(m, (lsfx, "eq"), f, st))
+            mf = model(st)
+            free = A.allocate(mf, f, extra_starts(mf, (lsfx, "free"), f, st))   # 같은 근사, 하한 없이
+            solved.setdefault((lsfx, "eq"), {})[(f, st)] = dict(a["n"])
+            solved.setdefault((lsfx, "free"), {})[(f, st)] = dict(free["n"])
             fe = m.equity_of(free["n"]) if floor is not None else None
             ids = [k for k, _ in sorted(a["n"].items())]
             fids = [k for k, _ in sorted(free["n"].items())]

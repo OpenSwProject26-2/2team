@@ -67,6 +67,7 @@ class Params:
     loop: str | None = None
     loop_closure_max_s: int = 300     # 고리 닫기 공차 상한(초). 지자체안 최대 약 4분
     loop_max_stops: int | None = 12   # 방향마다 정차 상한(역 지정 정류장 제외). 한 바퀴 최대 2배
+    loop_max_stops_total: int | None = None   # 한 바퀴 전체 정차 상한(역 지정 정류장 제외). None = 검사하지 않음
     # 돌아오는 길 우회율 상한(꺾는 정류장 → 첫 정류장, 고리 닫기 포함). None = 가는 길과 같은 값(max_detour·multi_max_detour)
     loop_ret_detour: float | None = None
 
@@ -641,11 +642,11 @@ def loop_limits(c: Candidate, p: Params):
     from .loop import LoopLimits
     if c.kind == "multi":
         det = p.multi_max_detour if p.loop_ret_detour is None else max(p.loop_ret_detour, p.multi_max_detour)
-        return LoopLimits(p.multi_l_max_min * 60, p.loop_max_stops, det, p.loop_closure_max_s)
+        return LoopLimits(p.multi_l_max_min * 60, p.loop_max_stops, det, p.loop_closure_max_s, p.loop_max_stops_total)
     Ls = [int(t.split("_L")[1]) for t in c.made_by if "_L" in t]
     L = min(Ls) if Ls else max(p.l_max_min)
     det = p.max_detour if p.loop_ret_detour is None else p.loop_ret_detour
-    return LoopLimits(L * 60, p.loop_max_stops, det, p.loop_closure_max_s)
+    return LoopLimits(L * 60, p.loop_max_stops, det, p.loop_closure_max_s, p.loop_max_stops_total)
 
 
 _LOOP_STATE: dict = {}
@@ -660,7 +661,9 @@ def _loop_one(c: Candidate) -> tuple[list[tuple[str, str, tuple[str, ...]]], dic
     out = []
     if len(S) < 2:
         return out, {}
-    if lim.max_stops is not None and sum(1 for s in S if s not in lb.st_stops) > lim.max_stops:
+    n_out = sum(1 for s in S if s not in lb.st_stops)
+    if (lim.max_stops is not None and n_out > lim.max_stops) or \
+            (lim.max_stops_total is not None and n_out >= lim.max_stops_total):
         for m in modes:
             lb._count(m, c.kind, "outbound_max_stops")
         return out, lb.reasons

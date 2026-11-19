@@ -138,6 +138,14 @@ class PerDirectionStopsTest(unittest.TestCase):
         self.assertNotIn("max_stops", leg_violations(g, leg, "A1", dz, LoopLimits(1800, 4, 9.0, 300)))
         self.assertIn("max_stops", leg_violations(g, leg, "A1", dz, LoopLimits(1800, 3, 9.0, 300)))
 
+    def test_whole_loop_cap(self):
+        """한 바퀴 전체 상한(선택): 가는 길 A1·A2·A3(3곳) + 돌아오는 길 B3·B2·B1·C(4곳) = 7곳."""
+        net = loop_network()
+        lb = LoopBuilder(builder(net, OD)[0], 3000.0)
+        S, ret = ("A1", "A2", "A3", "H"), ("H", "E", "B3", "B2", "B1", "C")
+        self.assertNotIn("max_stops_total", lb.full_ok(S, ret, LoopLimits(1800, None, 9.0, 300, 7)))
+        self.assertIn("max_stops_total", lb.full_ok(S, ret, LoopLimits(1800, None, 9.0, 300, 6)))
+
     def test_outbound_cap_applies_to_loop(self):
         net = loop_network()
         b, _ = builder(net, OD)

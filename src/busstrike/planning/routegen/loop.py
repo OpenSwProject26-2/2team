@@ -17,6 +17,7 @@
 한 바퀴 제약(`LoopLimits`)
 - 방향마다(가는 길·돌아오는 길 각각) 편도 한도 `l_max_s`(그 편도 후보를 만든 L_max, 여러 역 경유는 multi_l_max_min)·
   정차 상한 `max_stops`(역 지정 정류장 제외, 기본 12)·우회율 `max_detour`(돌아오는 길은 꺾는 정류장 → 첫 정류장, 고리 닫기 포함).
+  한 바퀴 전체 정차 상한 `max_stops_total`(선택, 기본 끔): 방향별 상한 대신 또는 함께 쓴다.
 - 고리 닫기 공차 ≤ `closure_max_s`(기본 300초). 시간 = 공차 경로 구간의 06~09시 최댓값 합(정차 없음).
   최종 판정은 변환기가 실제로 고르는 공차 경로(`cycle.route_cycle`의 return_stops)로 한다.
 - U턴 금지는 고리를 닫는 이음(마지막 → 공차 → 첫 정류장 → 둘째 정류장)을 포함한 모든 이음에 건다(`Graph.is_uturn`).
@@ -39,9 +40,10 @@ LOOP_MODES = ("demand", "deadhead")
 @dataclass(frozen=True)
 class LoopLimits:
     l_max_s: int
-    max_stops: int | None = 12
+    max_stops: int | None = 12           # 방향마다(역 지정 정류장 제외)
     max_detour: float = 1.6
     closure_max_s: int = 300
+    max_stops_total: int | None = None   # 한 바퀴 전체(역 지정 정류장 제외). None = 검사하지 않음
 
 
 def designated_stops(net) -> frozenset[str]:
@@ -178,6 +180,9 @@ class LoopBuilder:
 
     def full_ok(self, S: tuple[str, ...], ret: tuple[str, ...], lim: LoopLimits) -> list[str]:
         bad = leg_violations(self.g, ret, S[0], self.st_stops, lim)
+        if lim.max_stops_total is not None and (sum(1 for s in S if s not in self.st_stops)
+                                                + sum(1 for s in ret[1:] if s not in self.st_stops)) > lim.max_stops_total:
+            bad.append("max_stops_total")
         if self.g.has_uturn(S + ret[1:] + (S[0],) + ((S[1],) if len(S) > 1 else ())):
             bad.append("uturn")
         return bad
