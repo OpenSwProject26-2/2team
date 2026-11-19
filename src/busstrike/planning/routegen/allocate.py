@@ -27,6 +27,8 @@
 형평 하한(설계 2.2·6.2, 3단계, `Model(equity=EquityFloor)`)
 - 탈 수 있는 수요 비율(전체, 역 800m 밖) = 열린 노선들이 덮는 OD 키(평가 규칙)의 구 동네 정류장 수요 ÷ 분모. 두 값이 모두
   하한(기본: 같은 규칙에서 잰 지자체안 값) 이상이어야 한다.
+- 여러 조합 하한(선택, `EquityFloor.extra`): 다른 평가 조합에서 그 조합의 덮는 키로 잰 두 값도 각 조합의 하한 이상.
+  부족 인원을 모두 위반량에 더한다. 기본은 끔(기본 조합 하나).
 - 노선 대당 하한 `route_min_per_vehicle`: 열린 노선마다 근사 승객 ÷ 대수 ≥ 하한.
 - 방식: 사전식 목적 (위반량 최소, 그다음 근사 최대). 위반량 = 형평 부족 인원(전체 + 역 800m 밖) + 노선별 대당 하한 부족 인원.
   모든 탐색(탐욕 뒤 국소 탐색, 초기해 비교)이 이 순서로 비교한다. 그래서 하한을 만족하는 해가 하나라도 찾아지면 그 뒤로는
@@ -79,18 +81,24 @@ class AllocParams:
 
 @dataclass(frozen=True)
 class EquityFloor:
-    """형평 하한: 키별 무게(그 구 동네 정류장 수요, 역 800m 밖 수요)와 분모·하한(비율)."""
+    """형평 하한: 키별 무게(그 구 동네 정류장 수요, 역 800m 밖 수요)와 분모·하한(비율).
+
+    extra: 다른 평가 조합에서도 하한을 걸 때 (이름, {route_id: 그 조합에서 탈 수 있는 키들}, 하한 전체, 하한 역 밖)들.
+    비면(기본) 배분 모델이 쓰는 조합(routes의 덮는 키) 하나에만 건다.
+    """
     w_total: dict
     w_far: dict
     den_total: float
     den_far: float
     floor_total: float
     floor_far: float
+    extra: tuple = ()
 
     @classmethod
-    def from_index(cls, eq, floor_total: float, floor_far: float) -> "EquityFloor":
-        """equity.EquityIndex와 하한 두 값으로 만든다."""
-        return cls(dict(eq.w_total), dict(eq.w_far), eq.den_total, eq.den_far, float(floor_total), float(floor_far))
+    def from_index(cls, eq, floor_total: float, floor_far: float, extra=()) -> "EquityFloor":
+        """equity.EquityIndex와 하한 두 값(과 다른 조합 하한 extra)으로 만든다."""
+        return cls(dict(eq.w_total), dict(eq.w_far), eq.den_total, eq.den_far, float(floor_total), float(floor_far),
+                   tuple(extra))
 
 
 class Model:
@@ -138,6 +146,8 @@ class Model:
             self.eq_f = [equity.w_far.get(k, 0.0) for k in keys]
             self.eq_need_t = equity.floor_total * equity.den_total
             self.eq_need_f = equity.floor_far * equity.den_far
+            self.eq_extra = [(lab, {r: frozenset(ks) for r, ks in cov.items()}, ft * equity.den_total,
+                              ff * equity.den_far) for lab, cov, ft, ff in equity.extra]
         self._cache: dict[tuple, tuple] = {}
         self._rcache: dict[tuple, tuple] = {}
 
@@ -219,8 +229,20 @@ class Model:
         rt = sum(self.eq_t[ki] for ki in keys)
         rf = sum(self.eq_f[ki] for ki in keys)
         e = self.equity
-        return {"total": rt / e.den_total if e.den_total else 0.0, "far": rf / e.den_far if e.den_far else 0.0,
-                "short_total": max(0.0, self.eq_need_t - rt), "short_far": max(0.0, self.eq_need_f - rf)}
+        out = {"total": rt / e.den_total if e.den_total else 0.0, "far": rf / e.den_far if e.den_far else 0.0,
+               "short_total": max(0.0, self.eq_need_t - rt), "short_far": max(0.0, self.eq_need_f - rf)}
+        out["short"] = out["short_total"] + out["short_far"]
+        if self.eq_extra:
+            out["extra"] = {}
+            for lab, cov, nt, nf in self.eq_extra:
+                ks = set().union(*(cov.get(r, ()) for r, k in n.items() if k > 0))
+                xt = sum(e.w_total.get(k, 0.0) for k in ks)
+                xf = sum(e.w_far.get(k, 0.0) for k in ks)
+                d = {"total": xt / e.den_total if e.den_total else 0.0, "far": xf / e.den_far if e.den_far else 0.0,
+                     "short_total": max(0.0, nt - xt), "short_far": max(0.0, nf - xf)}
+                out["extra"][lab] = d
+                out["short"] += d["short_total"] + d["short_far"]
+        return out
 
     def route_shortfall(self, n: dict[str, int], by_route: dict | None = None) -> dict[str, float]:
         """노선 대당 하한을 못 넘는 열린 노선 → 부족 인원(하한 × 대수 − 근사 승객)."""
@@ -253,7 +275,7 @@ class Model:
             viol = 0.0
             eq = self.equity_of(dict(key))
             if eq is not None:
-                viol += eq["short_total"] + eq["short_far"]
+                viol += eq["short"]
             viol += sum(self.route_shortfall(dict(key), det["by_route"]).values())
             got = self._cache[key] = (viol, det["total"])
         return got
@@ -402,7 +424,7 @@ def equity_seed(model: Model, budget: int, start: dict[str, int] | None = None) 
     lo = model.p.route_min_per_vehicle
     while True:
         eq = model.equity_of(n)
-        short = eq["short_total"] + eq["short_far"]
+        short = eq["short"]
         if short <= VIOL_EPS:
             break
         base = model.value(n)
@@ -413,7 +435,7 @@ def equity_seed(model: Model, budget: int, start: dict[str, int] | None = None) 
                 continue
             m = _with(n, r, k)
             e2 = model.equity_of(m)
-            red = short - e2["short_total"] - e2["short_far"]
+            red = short - e2["short"]
             if red <= VIOL_EPS:
                 continue
             if lo > 0 and sum(model.detail(m)["by_route"][r]) < lo * k - 1e-6:
@@ -554,6 +576,10 @@ def allocate(model: Model, budget: int, starts: dict[str, dict[str, int]] | None
         e = model.equity
         warnings.append(f"형평 하한 미달: 전체 {eq['total']:.4f} (하한 {e.floor_total:.4f}, 부족 {eq['short_total']:.1f}명), "
                         f"역 800m 밖 {eq['far']:.4f} (하한 {e.floor_far:.4f}, 부족 {eq['short_far']:.1f}명)")
+    for lab, d in (eq or {}).get("extra", {}).items():
+        if d["short_total"] + d["short_far"] > VIOL_EPS:
+            warnings.append(f"형평 하한 미달({lab}): 전체 {d['total']:.4f} 부족 {d['short_total']:.1f}명, "
+                            f"역 800m 밖 {d['far']:.4f} 부족 {d['short_far']:.1f}명")
     if rs:
         warnings.append("노선 대당 하한 미달: " + ", ".join(
             f"{r}({n[r]}대, 근사 {sum(det['by_route'][r]):.1f}명, 부족 {g:.1f}명)" for r, g in sorted(rs.items())))
@@ -567,7 +593,9 @@ def allocate(model: Model, budget: int, starts: dict[str, dict[str, int]] | None
             "equity": None if eq is None else {
                 "total": round(eq["total"], 4), "far": round(eq["far"], 4),
                 "floor_total": round(model.equity.floor_total, 4), "floor_far": round(model.equity.floor_far, 4),
-                "short_total": round(eq["short_total"], 1), "short_far": round(eq["short_far"], 1)},
+                "short_total": round(eq["short_total"], 1), "short_far": round(eq["short_far"], 1),
+                **({"extra": {lab: {k: round(v, 4 if k in ("total", "far") else 1) for k, v in d.items()}
+                              for lab, d in eq["extra"].items()}} if eq.get("extra") else {})},
             "route_min_per_vehicle": model.p.route_min_per_vehicle,
             "per_vehicle": {r: round(sum(det["by_route"][r]) / n[r], 1) for r in sorted(n)},
             "route_shortfall": {r: round(g, 1) for r, g in sorted(rs.items())},

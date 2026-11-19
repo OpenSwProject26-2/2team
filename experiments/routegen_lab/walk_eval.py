@@ -156,6 +156,8 @@ def main() -> int:
     ap.add_argument("--legacy-rule", action="store_true", help="2단계 전 규칙(역 고정, 역 쪽 지정 정류장 걷기)으로 설계·평가")
     ap.add_argument("--service-start", default=None, help="안 만들기 운행 시작 시각(쉼표로 여러 개, 비우면 설정 파일 walk.service_starts)")
     ap.add_argument("--equity-floor", default=None, help='형평 하한: muni / none / "전체,역800m밖"(비율). 비우면 설정 파일 equity.floor')
+    ap.add_argument("--floor-combos", default="base", choices=("base", "all"),
+                    help="형평 하한을 걸 평가 조합: base = 기본 조합 하나(기본), all = 9개 조합 모두(안 이름 eqa…)")
     ap.add_argument("--route-min", type=float, default=None, help="노선 근사 대당 탑승 하한(비우면 설정 파일 equity.route_min_per_vehicle)")
     ap.add_argument("--cap-mode", default="segment", choices=list(A.CAP_MODES), help="근사 정원 항")
     ap.add_argument("--no-run", action="store_true", help="안만 만들고 시뮬레이션은 하지 않는다(평가는 eval_rules.py)")
@@ -306,16 +308,30 @@ def main() -> int:
             mv = (eq_ix.of_plan(reach, [r["stops"] for r in mp["routes"]]) if reach is not None else
                   eq_ix.ratios(set().union(*(set(WK.walk_cover_keys(list(r["stops"]), keys, nb)) for r in mp["routes"]))))
             floor = {"total": mv["total"], "far": mv["far"], "source": "muni"}
+            if args.floor_combos == "all" and reach is not None:     # 나머지 조합: 그 조합 규칙으로 잰 지자체안 값
+                floor["extra"] = []
+                for c in cfg.eval_combos():
+                    if c.label() == reach.rule.label():
+                        continue
+                    rc = Reach(ix, c, nb, keys)
+                    mv_c = eq_ix.of_plan(rc, [r["stops"] for r in mp["routes"]])
+                    cov_c = {cand.route_id: frozenset(rc.cover_keys(cand.stops)) for cand in pool}
+                    floor["extra"].append((c.label(), cov_c, mv_c["total"], mv_c["far"]))
         else:
             ft = floor_cfg if isinstance(floor_cfg, dict) else dict(zip(("total", "far"), map(float, floor_cfg.split(","))))
             floor = {"total": float(ft["total"]), "far": float(ft["far"]), "source": "fixed"}
-    log["equity_floor"] = None if floor is None else {k: (round(v, 4) if isinstance(v, float) else v) for k, v in floor.items()}
+    log["equity_floor"] = None if floor is None else {
+        **{k: (round(v, 4) if isinstance(v, float) else v) for k, v in floor.items() if k != "extra"},
+        **({"extra": {lab: {"total": round(ft, 4), "far": round(ff, 4)} for lab, _, ft, ff in floor["extra"]}}
+           if floor.get("extra") else {})}
+    log["floor_combos"] = args.floor_combos
     log["alloc"] = {"cap_mode": args.cap_mode, "route_min_per_vehicle": route_min, "service_starts": starts}
 
     def model(start: str | None, eq_floor=None, rmin: float = 0.0) -> A.Model:
         ap_ = A.AllocParams(cap_mode=args.cap_mode, route_min_per_vehicle=rmin,
                             service_start_s=None if start in (None, "06:00") else _hhmm(start))
-        ef = None if eq_floor is None else A.EquityFloor.from_index(eq_ix, eq_floor["total"], eq_floor["far"])
+        ef = None if eq_floor is None else A.EquityFloor.from_index(eq_ix, eq_floor["total"], eq_floor["far"],
+                                                                    eq_floor.get("extra", ()))
         return A.Model([(rid, cyc, wkeys[rid], sp_of[rid]) for rid, _, cyc in cands], demand.od, ap_, groups, equity=ef)
 
     def alloc_record(a: dict) -> dict:
@@ -329,7 +345,7 @@ def main() -> int:
             record("walk" + sfx, f, [(list(by[k].stops), v) for k, v in sorted(a["n"].items())],
                    {"approx": round(a["value"], 1), "alloc": alloc_record(a)})
         for st in starts:
-            label = "eq" + sfx + st.split(":")[0]
+            label = ("eqa" if args.floor_combos == "all" else "eq") + sfx + st.split(":")[0]
             if not want(label) or reach is None:
                 continue
             m = model(st, floor, route_min)

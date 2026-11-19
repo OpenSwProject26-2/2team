@@ -150,6 +150,23 @@ class EquityFloorTest(unittest.TestCase):
         self.assertAlmostEqual(a["equity"]["short_far"], 50.0, places=1)
         self.assertIn("형평 하한 미달", a["warnings"][0])
 
+    def test_extra_combo_floor(self):
+        """다른 조합 하한(extra): 기본 조합 하한은 넉넉해도 다른 조합에서 역 밖이 모자라면 그 조합을 맞추는 해를 고른다."""
+        e = self.floor(0.0, 0.0)
+        cov = {"rbig": {("near", "H")}, "rfar": {("far", "H")}}
+        ex = A.EquityFloor(e.w_total, e.w_far, e.den_total, e.den_far, 0.0, 0.0, (("c2", cov, 0.0, 0.5),))
+        self.assertEqual(A.allocate(model(self.routes, self.od, e), 1)["n"], {"rbig": 1})
+        a = A.allocate(model(self.routes, self.od, ex), 1)
+        self.assertEqual(a["n"], {"rfar": 1})
+        self.assertTrue(a["feasible"])
+        self.assertAlmostEqual(a["equity"]["extra"]["c2"]["far"], 1.0)
+        bad = A.EquityFloor(e.w_total, e.w_far, e.den_total, e.den_far, 0.0, 0.0, (("c2", {}, 0.0, 0.5),))
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            a = A.allocate(model(self.routes, self.od, bad), 1)
+        self.assertFalse(a["feasible"])
+        self.assertTrue(any("c2" in w for w in a["warnings"]))
+
     def test_local_search_keeps_floor(self):
         """여러 노선 중: 하한을 만족하는 해 가운데 근사 최대. 국소 탐색이 하한을 깨는 이동을 받지 않는다."""
         od = {("near", "H"): [125.0] * 4, ("near2", "H"): [100.0] * 4, ("far", "H"): [10.0] * 4,
