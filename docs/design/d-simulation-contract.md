@@ -8,6 +8,8 @@
 
 ## 로컬 API
 
+운영자 화면은 합성 DEMO·A GTFS·시뮬레이션 결과가 같은 노선 실험실 레이아웃을 공유한다. 시뮬레이션 결과 표시는 현재 DEMO/A GTFS 교통망을 교체하지 않고 저장된 `/api/d/simulation/*` 조회·비교·검증·선택 API를 지도에 덧붙인다. 개인 개발 저장소의 `/api/lab/generate`와 `/api/lab/simulate`는 공식 D API에서 호출하지 않는다. 결과에 검증된 노선 geometry가 없으면 프런트엔드는 순서가 있는 정류장 좌표를 실선 개략선으로 표시할 수 있으며, 이는 도로 경로가 아니다. 노선 생성과 M05/M07 재실행을 공식화하려면 C/B팀과 별도 입력·출력·실행·검증 계약이 필요하다.
+
 `GET /api/d/simulation/result`는 조건 `region`, `fleet`, `variant`, `plan`, `period`, `date`를 받는다. `date=mean`은 보고서의 5일 평균이다. 개별 날짜는 연결된 B 원본만 사용한다. 선택한 결과의 `outcome.status`는 다음 중 하나다.
 
 | 상태 | 의미 |

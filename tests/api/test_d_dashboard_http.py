@@ -98,6 +98,7 @@ class DashboardHttpTests(unittest.TestCase):
             "/vendor/maplibre-gl-worker.mjs": "text/javascript",
             "/vendor/maplibre-gl.css": "text/css",
             "/vendor/openfreemap-liberty.json": "application/json",
+            "/data/districts_all.geojson": "application/geo+json",
         }
         for path, content_type in expected.items():
             with self.subTest(path=path), urlopen(self.base + path, timeout=3) as response:
@@ -109,6 +110,9 @@ class DashboardHttpTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in districts["districts"]],
                          ["guro", "dongjak", "gangseo", "gangdong"])
         self.assertIn("OpenStreetMap", districts["source"])
+        with urlopen(self.base + "/data/districts_all.geojson", timeout=3) as response:
+            boundary_geojson = json.load(response)
+        self.assertEqual(len(boundary_geojson["features"]), 25)
 
     def test_simulation_report_api_and_missing_artifacts(self) -> None:
         options = self.get_json("/api/d/simulation/options")

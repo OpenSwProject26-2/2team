@@ -219,11 +219,16 @@ def make_handler(store: Store, simulation: SimulationStore | None = None):
                 "/vendor/maplibre-gl-worker.mjs": "text/javascript; charset=utf-8",
                 "/vendor/maplibre-gl.css": "text/css; charset=utf-8",
                 "/vendor/openfreemap-liberty.json": "application/json; charset=utf-8",
+                "/data/districts_all.geojson": "application/geo+json; charset=utf-8",
             }
             if parts.path in vendor_assets:
+                asset = (
+                    WEB / "data" / "districts_all.geojson"
+                    if parts.path.startswith("/data/")
+                    else WEB / "vendor" / parts.path.rsplit("/", 1)[-1]
+                )
                 return self._asset(
-                    WEB / "vendor" / parts.path.rsplit("/", 1)[-1],
-                    vendor_assets[parts.path],
+                    asset, vendor_assets[parts.path]
                 )
             if parts.path == "/favicon.ico":
                 self.send_response(HTTPStatus.NO_CONTENT)

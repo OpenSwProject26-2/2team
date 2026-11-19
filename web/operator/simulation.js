@@ -1,10 +1,10 @@
-/* D 운영자 기존 MapLibre 지도에 C/B 결과를 얹는 로컬 서비스 모드. */
+/* 합성 DEMO·A GTFS·저장된 C/B 결과가 공유하는 D 노선 실험실 화면. */
 const byId = id => document.getElementById(id);
 const safe = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const num = value => value == null ? '미연결' : Number(value).toLocaleString('ko-KR',{maximumFractionDigits:1});
 const pct = value => value == null ? '미연결' : `${Number(value).toFixed(2)}%`;
-const sim = {active:false, busy:false, previousMode:null, options:null, map:null, maplibregl:null, result:null, beforeResult:null, renderedHour:null, residual:null, table:null, comparison:null, summary:null, runs:null, selectedRoute:null, markers:[], request:0, hidden:new Map(), demandFrame:0, displayedDemand:[]};
-let restoreD,enableA,getBaseMode,setDistrict,isVisible;
+const sim = {active:false, busy:false, options:null, districts:null, districtGeojson:null, map:null, maplibregl:null, result:null, beforeResult:null, renderedHour:null, residual:null, table:null, comparison:null, summary:null, runs:null, selectedRoute:null, markers:[], stopMarkers:[], request:0, hidden:new Map(), demandFrame:0, displayedDemand:[]};
+let getBaseMode,setDistrict,isVisible;
 const query = () => new URLSearchParams(Object.fromEntries(['region','fleet','hour','variant','plan','period','date'].map(k=>[k,byId(`sim-${k}`).value])));
 async function read(path) {const response=await fetch(path);const data=await response.json();if(!response.ok)throw Error(data.message||response.statusText);return data;}
 function options(id, values, keep) {const node=byId(id);node.replaceChildren(...values.map(([value,label])=>{const el=document.createElement('option');el.value=value;el.textContent=label;return el;}));if(keep&&[...node.options].some(x=>x.value===keep))node.value=keep;}
@@ -25,21 +25,39 @@ function mapLayers(active) {
   const map=sim.map;if(!map?.getSource('d-routes'))return;
   if(map.getLayer('demand-circles'))map.setLayoutProperty('demand-circles','visibility',active?'none':isVisible('observedDemand')?'visible':'none');
   if(map.getLayer('demand-unmet'))map.setLayoutProperty('demand-unmet','visibility',active?'none':isVisible('unmetDemand')?'visible':'none');
-  if(map.getLayer('sim-stops'))map.setLayoutProperty('sim-stops','visibility',active&&isVisible('shuttle')?'visible':'none');
+  if(map.getLayer('sim-stops'))map.setLayoutProperty('sim-stops','visibility','none');
+  if(map.getLayer('sim-stop-labels'))map.setLayoutProperty('sim-stop-labels','visibility','none');
+  if(map.getLayer('sim-route-lines'))map.setLayoutProperty('sim-route-lines','visibility',active&&isVisible('shuttle')?'visible':'none');
   if(map.getLayer('sim-demand'))map.setLayoutProperty('sim-demand','visibility',active&&isVisible('unmetDemand')?'visible':'none');
+  if(map.getLayer('sim-walk400-demand'))map.setLayoutProperty('sim-walk400-demand','visibility',active&&isVisible('walk400Demand')?'visible':'none');
+  if(map.getLayer('sim-district-boundary'))map.setLayoutProperty('sim-district-boundary','visibility',active&&getBaseMode()!=='real'&&isVisible('districtBoundary')?'visible':'none');
+  sim.stopMarkers.forEach(marker=>{const el=marker.getElement();el.style.display=active&&isVisible('shuttle')&&isVisible('shuttleStops')?'':'none';});
 }
 function ensureMapSource() {
   const map=sim.map;if(!map?.getSource('d-routes')){byId('map').dataset.simSource='waiting';return;}
   if(!map.getSource('sim-stops')){
     map.addSource('sim-stops',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-    map.addLayer({id:'sim-stops',type:'circle',source:'sim-stops',paint:{'circle-color':['case',['get','selected'],'#ed3d51','#0eaaad'],'circle-radius':['case',['get','selected'],9,6],'circle-stroke-color':'#fff','circle-stroke-width':2}});
+    map.addLayer({id:'sim-stops',type:'circle',source:'sim-stops',paint:{'circle-color':['case',['get','selected'],'#ed3d51','#0eaaad'],'circle-radius':['case',['get','selected'],9,5],'circle-stroke-color':'#fff','circle-stroke-width':2}});
+    map.addLayer({id:'sim-stop-labels',type:'symbol',source:'sim-stops',filter:['==',['get','selected'],true],layout:{'text-field':['to-string',['get','order']],'text-size':11,'text-font':['Noto Sans Bold'],'text-offset':[0,0.8],'text-allow-overlap':true},paint:{'text-color':'#172238','text-halo-color':'#fff','text-halo-width':1.5}});
     map.on('click','sim-stops',event=>{const f=event.features?.[0];if(!f)return;selectRoute(f.properties.route_id);new sim.maplibregl.Popup().setLngLat(f.geometry.coordinates).setText(`${f.properties.order}. ${f.properties.name} (${f.properties.stop_id}) · ${f.properties.vehicles}대`).addTo(map);});
+  }
+  if(!map.getSource('sim-route-lines')){
+    map.addSource('sim-route-lines',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+    map.addLayer({id:'sim-route-lines',type:'line',source:'sim-route-lines',paint:{'line-color':['case',['get','selected'],'#0eaaad','#315ea8'],'line-width':['case',['get','selected'],6,3],'line-opacity':['case',['get','selected'],.95,.55]},layout:{'line-cap':'round','line-join':'round'}},'bus-stops');
+    map.on('click','sim-route-lines',event=>{const routeId=event.features?.[0]?.properties?.route_id;if(routeId)selectRoute(routeId);});
+    map.on('mouseenter','sim-route-lines',()=>{map.getCanvas().style.cursor='pointer';});
+    map.on('mouseleave','sim-route-lines',()=>{map.getCanvas().style.cursor='';});
+  }
+  if(!map.getSource('sim-district-boundary')){
+    map.addSource('sim-district-boundary',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+    map.addLayer({id:'sim-district-boundary',type:'line',source:'sim-district-boundary',paint:{'line-color':'#334155','line-width':2.2,'line-opacity':.8}},'bus-stops');
   }
   if(!map.getSource('sim-demand')){
     map.addSource('sim-demand',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-    map.addLayer({id:'sim-demand',type:'circle',source:'sim-demand',paint:{'circle-color':['case',['<',['coalesce',['get','delta_unserved'],0],0],'#0eaaad','#d43161'],'circle-radius':['interpolate',['linear'],['get','render_count'],0,0,5,5,20,9,50,15,100,21,250,30],'circle-opacity':.62,'circle-stroke-color':'#a21b4c','circle-stroke-width':['case',['!=',['coalesce',['get','delta_unserved'],0],0],3,1]}} ,'sim-stops');
-    map.on('click','sim-demand',event=>{const p=event.features?.[0]?.properties;if(!p)return;const comparison=p.other_unserved==null?'':` · ${p.comparison_label||'상대안'} ${num(p.other_unserved)}명 → 선택안 ${num(p.passenger_count)}명 (${Number(p.delta_unserved)>0?'+':''}${num(p.delta_unserved)}명)`;const details=p.demand_kind==='M05_unserved'?` · 평가 수요 ${num(p.evaluated_total)}명 · 미충족률 ${num(p.unserved_rate)}% · M05 출발 정류장 집계`:' · C/B 입력의 셔틀 투입 전 잔여 수요 · 셔틀 운행 후 미충족 인원 아님';new sim.maplibregl.Popup().setLngLat(event.lngLat).setText(`${p.name} (${p.stop_id}) · ${p.demand_label} ${num(p.passenger_count)}명${comparison}${details}`).addTo(map);});
+    map.addLayer({id:'sim-demand',type:'circle',source:'sim-demand',paint:{'circle-color':['case',['<',['coalesce',['get','delta_unserved'],0],0],'#0eaaad','#d43161'],'circle-radius':['interpolate',['linear'],['get','render_count'],0,0,5,5,20,9,50,15,100,21,250,30],'circle-opacity':.62,'circle-stroke-color':'#a21b4c','circle-stroke-width':['case',['!=',['coalesce',['get','delta_unserved'],0],0],3,1]}} ,'bus-stops');
+    map.on('click','sim-demand',event=>{if(map.queryRenderedFeatures(event.point,{layers:['bus-stops','metro-stops','metro-stop-labels','selected-route-stops']}).length)return;const p=event.features?.[0]?.properties;if(!p)return;const comparison=p.other_unserved==null?'':` · ${p.comparison_label||'상대안'} ${num(p.other_unserved)}명 → 선택안 ${num(p.passenger_count)}명 (${Number(p.delta_unserved)>0?'+':''}${num(p.delta_unserved)}명)`;const details=p.demand_kind==='M05_unserved'?` · 평가 수요 ${num(p.evaluated_total)}명 · 미충족률 ${num(p.unserved_rate)}% · M05 출발 정류장 집계`:' · C/B 입력의 셔틀 투입 전 잔여 수요 · 셔틀 운행 후 미충족 인원 아님';new sim.maplibregl.Popup().setLngLat(event.lngLat).setText(`${p.name} (${p.stop_id}) · ${p.demand_label} ${num(p.passenger_count)}명${comparison}${details}`).addTo(map);});
   }
+  if(!map.getLayer('sim-walk400-demand'))map.addLayer({id:'sim-walk400-demand',type:'circle',source:'sim-demand',filter:['>', ['to-number',['get','walk_distance_m'],0],400],paint:{'circle-color':'#d43161','circle-radius':['interpolate',['linear'],['get','render_count'],0,0,5,7,20,12,50,19,100,26],'circle-opacity':.72,'circle-stroke-color':'#8f1742','circle-stroke-width':2}},'bus-stops');
   byId('map').dataset.simSource='ready';mapLayers(sim.active);drawStops();drawDemand();
 }
 function animateDemand(source, features) {
@@ -95,9 +113,31 @@ function drawDemand() {
 }
 function drawStops() {
   if(!sim.map?.getSource('sim-stops')||!sim.result)return;
+  sim.stopMarkers.forEach(marker=>marker.remove());sim.stopMarkers=[];
   const features=sim.result.geojson.features.map(f=>({...f,properties:{...f.properties,selected:f.properties.route_id===sim.selectedRoute}}));
   sim.map.getSource('sim-stops').setData({type:'FeatureCollection',features});
+  const grouped=new Map();
+  for(const feature of features){const id=feature.properties.route_id;if(!grouped.has(id))grouped.set(id,[]);grouped.get(id).push(feature);}
+  const lines=[];
+  for(const route of sim.result.routes){const ordered=(grouped.get(route.route_id)||[]).sort((a,b)=>Number(a.properties.order)-Number(b.properties.order));if(ordered.length<2)continue;lines.push({type:'Feature',properties:{route_id:route.route_id,vehicles:route.vehicles,selected:route.route_id===sim.selectedRoute,geometry_status:'stop_points_only_unverified'},geometry:{type:'LineString',coordinates:ordered.map(f=>f.geometry.coordinates)}});}
+  sim.map.getSource('sim-route-lines')?.setData({type:'FeatureCollection',features:lines});
+  for(const feature of features){
+    const p=feature.properties;const pin=document.createElement('button');pin.type='button';pin.className='sim-shuttle-stop-pin';pin.title=`${p.order}. ${p.name} (${p.stop_id}) · ${p.vehicles}대`;
+    pin.setAttribute('aria-label',pin.title);pin.style.cssText=`position:relative;width:30px;height:30px;border:2px solid ${p.selected?'#e13c59':'#2875a8'};border-radius:50%;background:#fff;box-shadow:0 2px 7px #24364c66;display:grid;place-items:center;cursor:pointer;padding:0;font-size:16px;z-index:${p.selected?3:1}`;
+    const icon=document.createElement('span');icon.textContent='🚌';icon.setAttribute('aria-hidden','true');pin.append(icon);
+    const order=document.createElement('small');order.textContent=String(p.order);order.style.cssText='position:absolute;right:-6px;top:-7px;min-width:15px;height:15px;padding:0 2px;border-radius:8px;background:#1e4e80;color:#fff;font:700 9px/15px sans-serif;text-align:center;border:1px solid white';pin.append(order);
+    pin.onclick=event=>{event.stopPropagation();selectRoute(p.route_id);new sim.maplibregl.Popup().setLngLat(feature.geometry.coordinates).setText(`${p.order}. ${p.name} (${p.stop_id}) · ${p.vehicles}대`).addTo(sim.map);};
+    sim.stopMarkers.push(new sim.maplibregl.Marker({element:pin,anchor:'center'}).setLngLat(feature.geometry.coordinates).addTo(sim.map));
+  }
   if(sim.selectedRoute){const selected=features.filter(f=>f.properties.selected);if(selected.length){const bounds=new sim.maplibregl.LngLatBounds();selected.forEach(f=>bounds.extend(f.geometry.coordinates));sim.map.fitBounds(bounds,{padding:80,maxZoom:14});}}
+}
+function updateLabBoundary() {
+  if(!sim.districtGeojson||!sim.districts||!sim.map?.getSource('sim-district-boundary'))return;
+  const region=sim.options.regions.find(r=>r.id===byId('sim-region').value);
+  const district=sim.districts.districts.find(d=>d.id===region?.id);
+  const feature=sim.districtGeojson.features.find(f=>String(f.properties?.sgg)===String(district?.code));
+  sim.map.getSource('sim-district-boundary').setData({type:'FeatureCollection',features:feature?[feature]:[]});
+  mapLayers(sim.active);
 }
 function drawRegionMarkers(rows) {
   sim.markers.forEach(m=>m.remove());sim.markers=[];
@@ -143,9 +183,10 @@ function drawMetrics() {
   byId('sim-result-status').textContent=m?.source==='report_v4_5day_mean'?'PR #41 보고서의 구 단위 5일 평균입니다. 지도 빨간 원은 C/B 입력 번들의 셔틀 투입 전 잔여 수요입니다. C팀 노선·차량 배분, 날짜별 M05 원본, M07 개별 검증, 셔틀 투입 후 정류장별 미충족 결과는 미연결입니다.':m?.source==='M05_metrics_day'?(result.execution.provenance==='local_recomputed'?'제공된 입력과 C/B/M07 코드로 로컬에서 다시 계산한 결과입니다. PR #41의 원본 실행 파일은 아닙니다. 선택한 날짜·차량·운행안의 정류장별 미충족 원이 표시됩니다.':'선택한 날짜의 M05 실행 파일 결과입니다. 노선·공간 수요와 M07 상태는 아래에서 각각 확인하세요.'):`선택한 ${result.selection.date==='mean'?'기간·시나리오':'날짜·시간대'} 조건의 M05 결과 파일이 없습니다. 지도 잔여 수요는 C/B 입력 번들에서 조회합니다.`;
   const runSource=result.execution.provenance==='local_recomputed'?'로컬 재계산 M05':'제공된 M05 실행 파일';
   byId('sim-source').textContent=`${hour==='all'?'전체 시간':'선택 시간 '+hour+'시'} · ${hour==='all'?(m?.source==='M05_metrics_day'?runSource:m?.source==='report_v4_5day_mean'?'PR #41 보고서 5일 평균':'원본 미연결'):(result.hourly?runSource+' 시간대':'시간대 원본 미연결')} · ${result.selection.date} · ${result.plan_id||'plan_id 미연결'} / revision ${result.revision??'미연결'} · ${result.map_status} · A GTFS 정상 교통망과 관측 수요는 B 평가와 별개입니다.`;
-  byId('mapStatus').textContent=`${sim.options.regions.find(r=>r.id===result.selection.region).name} · 정류장 수요 원은 아래 출처 표시 참조`;
-  document.querySelector('.map-head-title').textContent='시뮬레이션 결과 지도 · 선택 자치구';
-  document.querySelector('.map-head p').textContent=`${getBaseMode()==='real'?'A GTFS 정류장·도시철도 정차 관계를 배경으로 표시 · ':''}빨간 원: 셔틀 투입 전 파업 잔여 수요 또는 M05 원본 미충족 수요`;
+  const regionName=sim.options.regions.find(r=>r.id===result.selection.region)?.name||result.selection.region;
+  byId('mapStatus').textContent=`${regionName} · 노선 실험실의 저장된 시뮬레이션 결과 · 정류장 수요 원은 아래 출처 표시 참조`;
+  document.querySelector('.map-head-title').textContent='교통망 노선 실험실 · 시뮬레이션 결과';
+  document.querySelector('.map-head p').textContent=`${getBaseMode()==='real'?'A GTFS 정상 교통망을 배경으로 표시 · ':''}실선=정류장 순서 연결 개략선(도로 경로 아님) · 수요 원은 실제 결과 출처를 표시`;
   document.querySelector('.map-source').textContent='C/B 입력 번들 잔여 수요 또는 M05 정류장별 미충족 · 출처 별도 표시';
 }
 function selectRoute(id) {sim.selectedRoute=id;drawRoutes();drawStops();}
@@ -156,7 +197,7 @@ function drawRoutes() {
   byId('sim-routes').innerHTML=routes.length?routes.map(r=>`<button class="sim-route ${r.route_id===sim.selectedRoute?'active':''}" data-id="${safe(r.route_id)}">${safe(r.route_id)} · 후보 ${safe(r.candidate_id||'미연결')} · ${num(r.vehicles)}대 · ${r.stop_ids.length} 정차점 · ${!other?.routes.length?'상대안 미연결':otherStops.has(r.stop_ids.join('|'))?'상대안에도 같은 정차 순서':'선택 안 고유 정차 순서'}</button>`).join(''):'<div class="sim-empty">C팀 원본 노선·차량 배분 미연결. 보고서의 총 노선 수로 개별 노선을 만들지 않습니다.</div>';
   byId('sim-routes').querySelectorAll('button').forEach(b=>b.onclick=()=>selectRoute(b.dataset.id));
   const route=routes.find(r=>r.route_id===sim.selectedRoute);
-  byId('sim-route-detail').innerHTML=route?`<b>${safe(route.route_id)}</b> · ${num(route.vehicles)}대 · ${safe(route.origin||'출처 미제공')}<ol>${route.stops.map(s=>`<li>${safe(s.name||'이름 미연결')} (${safe(s.id)})</li>`).join('')}</ol>도로 경로 선형 미검증`:'노선을 선택하면 출발·경유·도착 정류장 순서가 표시됩니다.';
+  byId('sim-route-detail').innerHTML=route?`<b>${safe(route.route_id)}</b> · ${num(route.vehicles)}대 · ${safe(route.origin||'출처 미제공')}<ol>${route.stops.map(s=>`<li>${safe(s.name||'이름 미연결')} (${safe(s.id)})</li>`).join('')}</ol>실선은 정류장 순서 연결 개략선입니다. 검증된 도로 geometry가 없어 실제 운행 도로 경로를 뜻하지 않습니다.`:'노선을 선택하면 정류장 순서와 지도상 위치를 강조합니다.';
 }
 function drawTable() {
   const table=sim.table;
@@ -210,16 +251,32 @@ async function refresh() {
     drawMetrics();drawRoutes();drawTable();drawSummary();drawCharts();drawExecution();drawRegionMarkers([]);drawStops();drawDemand();mapLayers(true);
   }catch(error){if(seq===sim.request)byId('mapStatus').textContent=`시뮬레이션 결과 조회 실패: ${error.message}`;}
 }
-async function changeRegion(){syncFleet();const region=byId('sim-region').value;if([...byId('districtSelect').options].some(o=>o.value===region))await setDistrict(region);mapLayers(true);await preferAvailableRunDate();await refresh();}
+function mountExplorerLayout() {
+  const app=document.querySelector('.app');app.classList.add('lab-active');
+  const controls=byId('simulationControls');
+  const routeList=document.querySelector('.main-grid > .side'),details=document.querySelector('.main-grid > .right'),layers=byId('layerPanel');
+  byId('labControlsSlot').append(controls);
+  byId('labRoutesSlot').append(routeList);
+  byId('labLayerSlot').append(layers);
+  byId('labExtrasSlot').append(details);
+  byId('labPanelToggle').onclick=()=>{const closed=app.classList.toggle('lab-panel-closed');byId('labPanelToggle').textContent=closed?'▶ 설정 열기':'◀ 설정 접기';byId('labPanelToggle').setAttribute('aria-expanded',String(!closed));setTimeout(()=>sim.map?.resize(),260);};
+  sim.map?.resize();
+}
+async function changeRegion(){
+  syncFleet();const region=byId('sim-region').value;
+  if(getBaseMode()==='real'&&[...byId('districtSelect').options].some(o=>o.value===region))await setDistrict(region);
+  else {const selected=sim.options.regions.find(r=>r.id===region);if(selected)sim.map?.flyTo({center:selected.center,zoom:11.7,duration:450});}
+  updateLabBoundary();mapLayers(true);await preferAvailableRunDate();await refresh();
+}
 async function activate() {
-  if(sim.active||sim.busy)return;
-  sim.busy=true;sim.previousMode=getBaseMode();
-  try {await enableA();} catch(error) {byId('mapStatus').textContent=`A GTFS 전환 실패: ${error.message}`;}
+  if(sim.busy)return;
+  if(sim.active)return;
+  sim.busy=true;
   sim.active=true;document.querySelector('.app').classList.add('sim-active');
-  await setDistrict(byId('sim-region').value);
-  byId('simModeButton').textContent='기존 DEMO / A GTFS';
-  byId('dataSourceChip').textContent=`● C/B 시뮬레이션 · ${getBaseMode()==='real'?'A GTFS 지도':'지도 배경만'}`;
-  sim.map?.resize();ensureMapSource();await preferAvailableRunDate();refresh();
+  if(getBaseMode()==='real')await setDistrict(byId('sim-region').value);
+  else {const selected=sim.options.regions.find(r=>r.id===byId('sim-region').value);if(selected)sim.map?.flyTo({center:selected.center,zoom:11.7,duration:450});}
+  byId('simModeButton').textContent='시뮬레이션 결과 숨기기';byId('simModeButton').setAttribute('aria-pressed','true');
+  ensureMapSource();updateLabBoundary();await preferAvailableRunDate();await refresh();
   sim.busy=false;
 }
 async function deactivate() {
@@ -228,22 +285,31 @@ async function deactivate() {
   sim.active=false;sim.request++;document.querySelector('.app').classList.remove('sim-active');
   if(sim.demandFrame)cancelAnimationFrame(sim.demandFrame);sim.demandFrame=0;sim.displayedDemand=[];
   sim.map?.getSource('sim-demand')?.setData({type:'FeatureCollection',features:[]});
-  sim.markers.forEach(m=>m.remove());sim.markers=[];mapLayers(false);await restoreD(sim.previousMode);sim.map?.resize();
-  byId('simModeButton').textContent='시뮬레이션 결과';
+  sim.map?.getSource('sim-stops')?.setData({type:'FeatureCollection',features:[]});
+  sim.map?.getSource('sim-route-lines')?.setData({type:'FeatureCollection',features:[]});
+  sim.map?.getSource('sim-district-boundary')?.setData({type:'FeatureCollection',features:[]});
+  sim.markers.forEach(m=>m.remove());sim.markers=[];mapLayers(false);sim.map?.resize();
+  sim.stopMarkers.forEach(m=>m.remove());sim.stopMarkers=[];
+  byId('simModeButton').textContent='시뮬레이션 결과 표시';byId('simModeButton').setAttribute('aria-pressed','false');
+  document.querySelector('.map-head-title').textContent=`교통망 노선 실험실 · ${getBaseMode()==='real'?'A GTFS':'합성 DEMO'}`;
+  byId('mapStatus').textContent=`${getBaseMode()==='real'?'A GTFS 교통망':'합성 DEMO 교통망'} · 지도와 설정은 노선 실험실에서 계속 사용 가능`;
   sim.busy=false;
 }
-export async function initSimulationMode({map,maplibregl,restore,enableA:connectA,getBaseMode:mode,setDistrict:chooseDistrict,isVisible:layerVisible}) {
-  sim.map=map;sim.maplibregl=maplibregl;restoreD=restore;enableA=connectA;getBaseMode=mode;setDistrict=chooseDistrict;isVisible=layerVisible;
+export async function initSimulationMode({map,maplibregl,getBaseMode:mode,setDistrict:chooseDistrict,isVisible:layerVisible}) {
+  sim.map=map;sim.maplibregl=maplibregl;getBaseMode=mode;setDistrict=chooseDistrict;isVisible=layerVisible;
+  mountExplorerLayout();
   document.addEventListener('d-layer-visibility',()=>mapLayers(sim.active));
   document.addEventListener('d-map-ready',()=>{if(sim.active)ensureMapSource();});
   if(map){map.on('idle',()=>{if(sim.active&&!map.getSource('sim-demand'))ensureMapSource();});}
   sim.options=await read('/api/d/simulation/options');
+  [sim.districts,sim.districtGeojson]=await Promise.all([read('/api/d/districts').catch(()=>null),read('/data/districts_all.geojson').catch(()=>null)]);
   options('sim-region',sim.options.regions.map(r=>[r.id,r.name]));
   options('sim-hour',[['all','전체 (06:00~10:00)'],...[6,7,8,9].map(h=>[String(h).padStart(2,'0'),`${String(h).padStart(2,'0')}:00~${String(h+1).padStart(2,'0')}:00`])]);
   syncFleet();syncDates();
   byId('simModeButton').onclick=()=>sim.active?deactivate():activate();
   byId('sim-all-regions').onclick=fitRegions;
   byId('sim-region').onchange=changeRegion;
+  document.addEventListener('d-district-selected',async event=>{const region=event.detail?.district;if(!sim.active||!sim.options?.regions.some(item=>item.id===region))return;byId('sim-region').value=region;syncFleet();updateLabBoundary();mapLayers(true);await preferAvailableRunDate();await refresh();});
   byId('sim-period').onchange=async()=>{syncDates();await preferAvailableRunDate();refresh();};
   for(const key of ['fleet','variant','plan'])byId(`sim-${key}`).onchange=async()=>{await preferAvailableRunDate();refresh();};
   for(const key of ['hour','date'])byId(`sim-${key}`).onchange=refresh;
