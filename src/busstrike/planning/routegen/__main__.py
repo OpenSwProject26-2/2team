@@ -71,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-detour", type=float, default=d.max_detour)
     ap.add_argument("--sp-top", type=int, default=d.sp_top)
     ap.add_argument("--jaccard", type=float, default=d.jaccard)
+    ap.add_argument("--loop", default="demand", choices=("demand", "deadhead", "none"),
+                    help="순환 후보 방식(설계 6.1b). none = 예전 편도 + 공차 복귀(옛 결과 재현용)")
     ap.add_argument("--revision", type=int, default=1)
     ap.add_argument("--condition", default="base", help="실행 조건 이름(manifest에 적는다)")
     args = ap.parse_args(argv)
@@ -99,7 +101,8 @@ def main(argv: list[str] | None = None) -> int:
 
     params = G.Params(c0_s=args.c0_min * 60, radius_m=args.radius_m, tau=args.tau, tau_step=args.tau_step,
                       sectors=args.sectors, l_max_min=args.l_max, max_stops=args.max_stops,
-                      max_detour=args.max_detour, sp_top=args.sp_top, jaccard=args.jaccard, home_gu=home_gu)
+                      max_detour=args.max_detour, sp_top=args.sp_top, jaccard=args.jaccard, home_gu=home_gu,
+                      loop=None if args.loop == "none" else args.loop)
     ap_ = A.AllocParams()
     manifest = {"condition": args.condition, "fleets": list(args.fleets), "root_check": root_check, "root": str(root), "readme_title": (root / "README.md").read_text(encoding="utf-8").splitlines()[0],
                 "network_snapshot_id": net.tt.network_snapshot_id,

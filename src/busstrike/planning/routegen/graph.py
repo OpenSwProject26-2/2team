@@ -155,11 +155,13 @@ class Graph:
             return e2[0] == e1[3] and e2[1] == e1[2]
         return e1[1] != e2[0] or not e1[2].isdisjoint(e2[3])
 
-    def path_continue(self, prev: str | None, a: str, b: str, avoid: set[str] | frozenset[str] = frozenset()
-                      ) -> tuple[str, ...] | None:
+    def path_continue(self, prev: str | None, a: str, b: str, avoid: set[str] | frozenset[str] = frozenset(),
+                      then: str | None = None) -> tuple[str, ...] | None:
         """a에서 b까지 최단경로. 직전 정류장 prev에서 a로 들어온 뒤 a·경로 중간 어디서도 U턴하지 않고, avoid 정류장을 지나지 않는다.
 
         상태 = (직전 정류장, 현재 정류장). 비용 상한 cutoff_s. 여러 역을 차례로 잇는 노선의 구간 연결에 쓴다.
+        then(선택): b 다음에 갈 정류장. 주면 b에서도 U턴하지 않는(직전 → b → then이 U턴이 아닌) 경로만 받는다
+        (순환 노선이 첫 정류장으로 돌아와 고리를 닫을 때).
         """
         start = (prev, a)
         best = {start: 0}
@@ -170,12 +172,14 @@ class Graph:
             st = (pv or None, u)
             if c > best.get(st, 1 << 62):
                 continue
-            if u == b:
+            if u == b and (then is None or st[0] is None or not self.is_uturn(st[0], b, then)):
                 out = []
                 while st is not None:
                     out.append(st[1])
                     st = back[st]
                 return tuple(reversed(out))
+            if u == b:
+                continue                         # b에서 then으로 U턴하는 도착: b를 지나 다시 오는 경로는 b가 두 번이라 보지 않는다
             for v in self.tt.successors(u):
                 if v in avoid or v == st[0]:
                     continue

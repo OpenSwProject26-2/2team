@@ -10,8 +10,12 @@
 5b. (multi=True일 때) 여러 역 경유 피더: 수요가 여러 역으로 흩어진 정류장(가장 많이 가는 역 몫 < multi_spread)에서 출발해
    그 정류장 승객이 많이 가는 역(허브가 아니어도 됨) 2~multi_max_hubs곳의 access 지정 정류장을 차례로 들른다.
    경로는 망 최단경로, 편도 ≤ multi_l_max_min분, 우회율 ≤ multi_max_detour, U턴·중복 정차 금지. kind = "multi".
-6. 패턴: 회송 피더(access: 정류장들 → 역 access 정류장, egress: 역 egress 정류장 → 정류장들),
-   편도 연결(역 i egress 정류장 → 정류장들 → 역 j access 정류장). 순환·양방향 영업은 만들지 않는다.
+6. 패턴(가는 길): access(정류장들 → 역 access 정류장), egress(역 egress 정류장 → 정류장들),
+   connect(역 i egress 정류장 → 정류장들 → 역 j access 정류장), multi(5b).
+6b. 순환(`loop`, 3b단계 원칙: 셔틀은 무조건 순환 운행): 가는 길마다 돌아오는 길을 붙여 한 바퀴 정차열을 만든다
+   (`loop.LoopBuilder`, 방식 demand = 수요에 맞춘 삽입, deadhead = 공차 복귀 경로를 영업으로). 고리 닫기 공차 ≤
+   loop_closure_max_s, 방향마다 정차 ≤ loop_max_stops·편도 한도·우회율, 고리 닫는 이음 포함 U턴 금지.
+   loop=None은 예전 결과 재현용(편도 + 공차 복귀)이다. 기본 경로(gu_params)는 demand.
 7. 후보 처리: 덮개(노선 위 o가 d보다 앞인 OD), 주기(`cycle.route_cycle`), 중복 제거(Jaccard).
 """
 
@@ -59,6 +63,16 @@ class Params:
     # hub_floor = 그래도 이보다 작은 역은 허브로 두지 않는다(하루 명)
     hub_share: float | None = None
     hub_floor: float = 30.0
+    # 순환(6b). None = 편도 + 공차 복귀(예전 결과 재현용), "demand"(기본 경로) | "deadhead"(비교 기준) | "both"
+    loop: str | None = None
+    loop_closure_max_s: int = 300     # 고리 닫기 공차 상한(초). 지자체안 최대 약 4분
+    loop_max_stops: int | None = 12   # 방향마다 정차 상한(역 지정 정류장 제외). 한 바퀴 최대 2배
+    # 돌아오는 길 우회율 상한(꺾는 정류장 → 첫 정류장, 고리 닫기 포함). None = 가는 길과 같은 값(max_detour·multi_max_detour)
+    loop_ret_detour: float | None = None
+
+    def __post_init__(self):
+        if self.loop not in (None, "demand", "deadhead", "both"):
+            raise ValueError(f"loop은 None, demand, deadhead, both 중 하나: {self.loop}")
 
     @property
     def f_min(self) -> float:
@@ -85,6 +99,15 @@ class Candidate:
     cover: float = 0.0                # 덮는 수요(4시간 합, 5일 평균)
     cover_keys: tuple[tuple[str, str], ...] = ()
     cross_gu: bool = False
+    # 순환(6b). loop = ""(편도, 예전) | "demand" | "deadhead". return_stops = 변환기 공차 경로(순환이면 고리 닫기)
+    loop: str = ""
+    loop_variant: str = ""            # multi 돌아오는 길: rev(경유 역 반대 순서) | direct
+    turn: int = 0                     # 꺾는 정류장 순번(가는 길 끝 = 돌아오는 길 처음)
+    closure_s: int = 0                # 고리 닫기 공차(초, 구간 06~09시 최댓값 합)
+    out_oneway_s: int = 0
+    ret_oneway_s: int = 0
+    out_n_stops: int = 0              # 방향별 정차 수(역 지정 정류장 제외, 꺾는 정류장은 가는 길)
+    ret_n_stops: int = 0
 
     def record(self) -> dict:
         d = asdict(self)
@@ -430,7 +453,7 @@ class Result:
     reason_sets: dict[str, int] = field(default_factory=dict)   # "단계/kind/사유1+사유2" → 횟수
 
 
-def _finish(c: Candidate, b: Builder, scenario: Scenario, p: Params) -> bool:
+def _finish(c: Candidate, b: Builder, scenario: Scenario, p: Params, dropped: dict | None = None) -> bool:
     g, net = b.g, b.net
     st_stops = frozenset(x for x in (
         [net.stations[h].access_stop for h in c.hubs] + [net.stations[h].egress_stop for h in c.hubs]) if x)
@@ -439,6 +462,33 @@ def _finish(c: Candidate, b: Builder, scenario: Scenario, p: Params) -> bool:
     if cyc is None:
         return False
     c.cycle_s, c.return_stops = cyc.period_s, cyc.return_stops
+    if c.loop:
+        # 최종 판정은 변환기가 실제로 고르는 고리 닫기 공차 경로로 한다
+        from .loop import closure_s, cyclic_seq, designated_stops
+        c.closure_s = closure_s(g, cyc.return_stops)
+        why = None
+        if c.closure_s > p.loop_closure_max_s:
+            why = "loop_closure"
+        elif g.has_uturn(cyclic_seq(c.stops, cyc.return_stops)):
+            why = "loop_uturn"
+        if why:
+            if dropped is not None:
+                dropped[why] = dropped.get(why, 0) + 1
+            return False
+        dz = designated_stops(net)
+        out, ret = c.stops[:c.turn + 1], c.stops[c.turn:]
+        c.out_oneway_s = g.oneway_s(out)
+        c.ret_oneway_s = g.oneway_s(ret) if len(ret) > 1 else 0
+        c.out_n_stops = sum(1 for s in out if s not in dz)
+        c.ret_n_stops = sum(1 for s in ret[1:] if s not in dz)
+        c.oneway_s = g.oneway_s(c.stops)
+        c.length_m = g.length_m(c.stops)
+        c.detour = g.detour(out)
+        c.n_stops = sum(1 for s in c.stops if s not in dz)
+        c.cover_keys = b.cover_keys_of(c.stops)
+        c.cover = sum(b.od_total[k] for k in c.cover_keys)
+        c.cross_gu = any(net.stops[s].gu != p.home_gu for s in c.stops)
+        return True
     c.oneway_s = g.oneway_s(c.stops)
     c.length_m = g.length_m(c.stops)
     c.detour = g.detour(c.stops)
@@ -453,7 +503,11 @@ def direction_key(c: Candidate) -> tuple:
     """같은 방향 = 같은 kind + 같은 고정 역 정류장(access 끝, egress 시작, connect 둘 다).
 
     역 ID가 아니라 정류장으로 본다(온수 1821·2752처럼 역 둘이 지정 정류장 하나를 같이 쓰면 같은 노선이다).
+    순환 후보는 양방향 수요를 함께 태우므로 모두 한 방향으로 본다(정류장이 80% 이상 겹치면 같은 노선). 반대로 도는 순환은
+    길 건너편 정류장(다른 ID)을 써서 겹치지 않는다.
     """
+    if c.loop:
+        return ("loop",)
     if c.kind == "access":
         return ("access", c.stops[-1])
     if c.kind == "egress":
@@ -486,8 +540,10 @@ def dedupe(cands: list[Candidate], threshold: float) -> tuple[list[Candidate], i
     return kept, len(cands) - len(kept)
 
 
-def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Params(), reach=None) -> Result:
-    """reach(`reach.Reach`, 선택): 덮는 수요를 평가 규칙으로 센다(설계와 평가가 같은 규칙, 설계 6.2·7절)."""
+def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Params(), reach=None,
+             jobs: int = 1) -> Result:
+    """reach(`reach.Reach`, 선택): 덮는 수요를 평가 규칙으로 센다(설계와 평가가 같은 규칙, 설계 6.2·7절).
+    jobs: 순환(6b) 돌아오는 길 만들기를 나눠 돌릴 프로세스 수(결과는 같다)."""
     t0 = time.time()
     hubs = hubs_of(demand, net, p)
     graph = Graph(net, scenario.policy.dwell_base_s, cutoff_s=max(p.l_max_min) * 60, distance_basis=p.distance_basis)
@@ -552,13 +608,19 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
         _multi_feeders(net, graph, demand, p, add)
     t_multi = time.time()
 
+    # 6b. 순환
+    loop_reasons: dict[str, int] = {}
+    if p.loop:
+        raw, loop_reasons = _loops(b, raw, p, scenario, dropped, jobs)
+    t_loop = time.time()
+
     # 7. 덮개·주기
     cands = []
-    for key in sorted(raw, key=lambda k: (k[0], k[1], k[2], k[3])):
+    for key in sorted(raw):
         c = raw[key]
-        if _finish(c, b, scenario, p):
+        if _finish(c, b, scenario, p, dropped):
             cands.append(c)
-        else:
+        elif not c.loop:
             dropped["conversion_failed"] += 1
     cands = [c for c in cands if c.cover > 0]
     for i, c in enumerate(cands, start=1):
@@ -568,9 +630,86 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
                   clusters, cands, dropped,
                   {"setup": round(t_setup - t0, 2), "insertion": round(t_gen - t_setup, 2),
                    "shortest_path_feeders": round(t_sp - t_gen, 2), "multi_station_feeders": round(t_multi - t_sp, 2),
-                   "cover_cycle": round(t_fin - t_multi, 2)},
-                  {"/".join(k): v for k, v in sorted(b.reasons.items())},
+                   "loops": round(t_loop - t_multi, 2), "cover_cycle": round(t_fin - t_loop, 2)},
+                  {**{"/".join(k): v for k, v in sorted(b.reasons.items())}, **loop_reasons},
                   {"/".join(k): v for k, v in sorted(b.reason_sets.items())})
+
+
+def loop_limits(c: Candidate, p: Params):
+    """방향마다 한도: 그 편도 후보를 만든 L_max(여러 개면 가장 짧은 것, 최단경로 피더는 L_max 최댓값),
+    여러 역 경유는 multi_l_max_min·multi_max_detour."""
+    from .loop import LoopLimits
+    if c.kind == "multi":
+        det = p.multi_max_detour if p.loop_ret_detour is None else max(p.loop_ret_detour, p.multi_max_detour)
+        return LoopLimits(p.multi_l_max_min * 60, p.loop_max_stops, det, p.loop_closure_max_s)
+    Ls = [int(t.split("_L")[1]) for t in c.made_by if "_L" in t]
+    L = min(Ls) if Ls else max(p.l_max_min)
+    det = p.max_detour if p.loop_ret_detour is None else p.loop_ret_detour
+    return LoopLimits(L * 60, p.loop_max_stops, det, p.loop_closure_max_s)
+
+
+_LOOP_STATE: dict = {}
+
+
+def _loop_one(c: Candidate) -> tuple[list[tuple[str, str, tuple[str, ...]]], dict]:
+    """편도 후보 하나 → [(방식, 변형, 한 바퀴 정차열)], 사유 집계."""
+    lb, p, scenario, modes = (_LOOP_STATE[k] for k in ("lb", "p", "scenario", "modes"))
+    lb.reasons = {}
+    S = c.stops
+    lim = loop_limits(c, p)
+    out = []
+    if len(S) < 2:
+        return out, {}
+    if lim.max_stops is not None and sum(1 for s in S if s not in lb.st_stops) > lim.max_stops:
+        for m in modes:
+            lb._count(m, c.kind, "outbound_max_stops")
+        return out, lb.reasons
+    if "demand" in modes:
+        for var in (("rev", "direct") if c.kind == "multi" else ("",)):
+            ret = lb.demand_return(c.kind, c.hubs, S, lim, var)
+            if ret is not None:
+                out.append(("demand", var, S + ret[1:]))
+    if "deadhead" in modes:
+        cyc = route_cycle(S, lb.net.tt, scenario)
+        if cyc is None:
+            lb._count("deadhead", c.kind, "no_return")
+        else:
+            ret = lb.deadhead_return(c.kind, S, tuple(cyc.return_stops), lim)
+            if ret is not None:
+                out.append(("deadhead", "", S + ret[1:]))
+    return out, lb.reasons
+
+
+def _loops(b: Builder, raw: dict, p: Params, scenario: Scenario, dropped: dict, jobs: int = 1
+           ) -> tuple[dict, dict[str, int]]:
+    """6b. 편도 후보(가는 길)마다 한 바퀴 후보를 만든다. 반환: (새 raw, "loop/방식/kind/사유" → 횟수)."""
+    from .loop import LoopBuilder
+    modes = ("demand", "deadhead") if p.loop == "both" else (p.loop,)
+    _LOOP_STATE.update(lb=LoopBuilder(b, p.radius_m), p=p, scenario=scenario, modes=modes)
+    one = [raw[k] for k in sorted(raw)]
+    if jobs > 1:
+        import multiprocessing as mp
+        with mp.get_context("fork").Pool(jobs) as pool:
+            res = pool.map(_loop_one, one, chunksize=max(1, len(one) // (jobs * 8)))
+    else:
+        res = [_loop_one(c) for c in one]
+    reasons: dict[str, int] = {}
+    new: dict[tuple, Candidate] = {}
+    for c, (loops, rs) in zip(one, res):
+        for (m, k, r), v in rs.items():
+            key = f"loop/{m}/{k}/{r}"
+            reasons[key] = reasons.get(key, 0) + v
+        if not loops:
+            dropped["loop_failed"] = dropped.get("loop_failed", 0) + 1
+        for mode, var, stops in loops:
+            key = (c.origin, c.kind, c.hubs, stops, mode, var)
+            if key in new:
+                new[key].made_by = tuple(sorted(set(new[key].made_by) | set(c.made_by)))
+                continue
+            new[key] = Candidate("", c.kind, stops, c.origin, c.hubs, c.cluster, c.made_by,
+                                 loop=mode, loop_variant=var, turn=len(c.stops) - 1)
+    _LOOP_STATE.clear()
+    return new, dict(sorted(reasons.items()))
 
 
 def _multi_feeders(net: Network, graph: Graph, demand: Demand, p: Params, add) -> None:
