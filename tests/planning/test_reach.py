@@ -252,3 +252,23 @@ class ConfigTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GeneratorUsesRuleTest(unittest.TestCase):
+    def test_builder_cover(self):
+        from busstrike.planning.routegen import generate as G
+        from busstrike.planning.routegen.data import Demand
+        from busstrike.planning.routegen.graph import Graph
+        from tests.planning.test_routegen import line_network
+        net = line_network(6)
+        od = {("S5", "H"): [1.0, 1.0, 1.0, 1.0]}
+        d = Demand("affected", ("20261026",), {}, od)
+        ix = StationIndex({("K", "access"): "H", ("K", "egress"): "H"}, {"K": {"H", "S6"}}, {})
+        ix.add_flows([Flow("access", "S5", "K", "H", "4")])
+        reach = Reach(ix, EvalRule(station_mode="fixed", walk_radius_m=400), {"S5": {"S5": 0.0, "S4": 353.0}}, list(od))
+        old = G.Builder(net, Graph(net, 10, 3600), d, G.Params())
+        new = G.Builder(net, Graph(net, 10, 3600), d, G.Params(), reach)
+        self.assertEqual(old.cover_of(("S4", "H")), 0.0)
+        self.assertEqual(new.cover_of(("S4", "H")), 4.0)          # 걸어서 S4, 역에 도착
+        self.assertEqual(new.cover_keys_of(("S4", "S6")), (("S5", "H"),))   # 역 주변 정류장 S6에 내려도 도착
+        self.assertEqual(old.cover_keys_of(("S4", "S6")), ())
