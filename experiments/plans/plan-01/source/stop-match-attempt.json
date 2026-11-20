@@ -1,0 +1,2074 @@
+{
+  "_what": "지도 정류장 이름을 공개 정류장 마스터(VW_KSCC_DH)와 대조한 결과. 확정이 아니라 후보 목록이다.",
+  "_why_not_resolved": "지도는 ARS 번호(5자리), 마스터는 BSST_ID(9자리)를 쓴다. 두 체계는 뒷자리가 대응하지 않는다(112건 전수 시험, 일치 0건). 자치구 접두 대응표로는 구만 가릴 수 있고 구 안의 승강장은 가리지 못한다. 서울 정류장마스터 OA-21231이 필요하다.",
+  "matched_against": "VW_KSCC_DH_CARD.csv (STDR_DE 2026-10-28), 고유 정류장 12,564개 중 구로구(116*) 480개",
+  "district_code": {
+    "source": "자치구정류장코드분류.xlsx",
+    "구로구": {
+      "ars_prefix": "17",
+      "id_prefix": "116"
+    }
+  },
+  "coordinates": {
+    "_caution": "원본의 BSST_LAT 열에 경도, BSST_LON 열에 위도가 들어 있고 형식은 10진 도가 아니라 도·분(DMM)이다. 교환+DMM 해석만 서울 범위 96%를 만족하고 다른 세 해석은 0%다. 아래 lat/lon은 교정한 값이다.",
+    "format": "WGS84 decimal degrees (원본 DMM에서 변환)"
+  },
+  "attempted_at": "2026-11-16",
+  "summary": {
+    "ambiguous": 54,
+    "none": 32,
+    "unique": 28,
+    "unreadable": 1
+  },
+  "ambiguity_nature": {
+    "_what": "모호한 후보들이 서로 얼마나 떨어져 있나",
+    "within_100m": 41,
+    "m_100_300": 12,
+    "m_300_1000": 1,
+    "over_1km": 0,
+    "max_spread_m": 498,
+    "_reading": "대부분 마주보는 승강장이다. 위치는 거의 맞고 방향이 안 정해진다."
+  },
+  "stops": [
+    {
+      "route": "R1",
+      "seq": 1,
+      "name": "신도림역",
+      "ars_on_map": "17102",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000001",
+          "dong": "신도림동",
+          "lat": 37.509678,
+          "lon": 126.889223
+        },
+        {
+          "bsst_id": "116000002",
+          "dong": "신도림동",
+          "lat": 37.509157,
+          "lon": 126.888475
+        },
+        {
+          "bsst_id": "116000015",
+          "dong": "구로제5동",
+          "lat": 37.506548,
+          "lon": 126.892103
+        },
+        {
+          "bsst_id": "116000016",
+          "dong": "구로제5동",
+          "lat": 37.507093,
+          "lon": 126.891637
+        },
+        {
+          "bsst_id": "116000361",
+          "dong": "신도림동",
+          "lat": 37.510557,
+          "lon": 126.889775
+        },
+        {
+          "bsst_id": "116900130",
+          "dong": "신도림동",
+          "lat": 37.510723,
+          "lon": 126.890042
+        }
+      ],
+      "candidate_spread_m": 498
+    },
+    {
+      "route": "R1",
+      "seq": 2,
+      "name": "서울미래초등학교",
+      "ars_on_map": "17104",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000017",
+          "dong": "구로제5동",
+          "lat": 37.505102,
+          "lon": 126.889452
+        },
+        {
+          "bsst_id": "116000018",
+          "dong": "구로제5동",
+          "lat": 37.505305,
+          "lon": 126.889448
+        }
+      ],
+      "candidate_spread_m": 23
+    },
+    {
+      "route": "R1",
+      "seq": 3,
+      "name": "거리공원.구로신협본점",
+      "ars_on_map": "17106",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R1",
+      "seq": 4,
+      "name": "구로도서관.대성스카이렉스",
+      "ars_on_map": "17108",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000022",
+          "dong": "구로제5동",
+          "lat": 37.499565,
+          "lon": 126.891075
+        }
+      ]
+    },
+    {
+      "route": "R1",
+      "seq": 5,
+      "name": "영림중학교",
+      "ars_on_map": "17110",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000024",
+          "dong": "구로제5동",
+          "lat": 37.496915,
+          "lon": 126.891622
+        },
+        {
+          "bsst_id": "116900007",
+          "dong": "구로제5동",
+          "lat": 37.497675,
+          "lon": 126.891503
+        },
+        {
+          "bsst_id": "116900137",
+          "dong": "구로제5동",
+          "lat": 37.497648,
+          "lon": 126.891633
+        }
+      ],
+      "candidate_spread_m": 85
+    },
+    {
+      "route": "R1",
+      "seq": 6,
+      "name": "구로구청",
+      "ars_on_map": "17708",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000025",
+          "dong": "구로제2동",
+          "lat": 37.494627,
+          "lon": 126.887893
+        },
+        {
+          "bsst_id": "116000026",
+          "dong": "구로제2동",
+          "lat": 37.494802,
+          "lon": 126.887617
+        },
+        {
+          "bsst_id": "116000198",
+          "dong": "구로제5동",
+          "lat": 37.495883,
+          "lon": 126.888503
+        },
+        {
+          "bsst_id": "116900139",
+          "dong": "구로제2동",
+          "lat": 37.494773,
+          "lon": 126.889425
+        },
+        {
+          "bsst_id": "116900210",
+          "dong": "구로제2동",
+          "lat": 37.494692,
+          "lon": 126.889183
+        }
+      ],
+      "candidate_spread_m": 159
+    },
+    {
+      "route": "R1",
+      "seq": 7,
+      "name": "구로중학교",
+      "ars_on_map": "17717",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000201",
+          "dong": "구로제4동",
+          "lat": 37.493108,
+          "lon": 126.890768
+        },
+        {
+          "bsst_id": "116900222",
+          "dong": "구로제2동",
+          "lat": 37.49327,
+          "lon": 126.890198
+        }
+      ],
+      "candidate_spread_m": 53
+    },
+    {
+      "route": "R1",
+      "seq": 8,
+      "name": "영서중학교",
+      "ars_on_map": "17117",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000030",
+          "dong": "구로제3동",
+          "lat": 37.489832,
+          "lon": 126.892203
+        },
+        {
+          "bsst_id": "116000031",
+          "dong": "구로제4동",
+          "lat": 37.490202,
+          "lon": 126.89234
+        }
+      ],
+      "candidate_spread_m": 43
+    },
+    {
+      "route": "R1",
+      "seq": 9,
+      "name": "구로두산아파트",
+      "ars_on_map": "17118",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000032",
+          "dong": "구로제4동",
+          "lat": 37.488807,
+          "lon": 126.890072
+        }
+      ]
+    },
+    {
+      "route": "R1",
+      "seq": 10,
+      "name": "남구로역6번출구",
+      "ars_on_map": "17252",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000158",
+          "dong": "구로제4동",
+          "lat": 37.487735,
+          "lon": 126.888568
+        }
+      ]
+    },
+    {
+      "route": "R1",
+      "seq": 11,
+      "name": "남구로역",
+      "ars_on_map": "17121",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000048",
+          "dong": "구로제4동",
+          "lat": 37.486092,
+          "lon": 126.885682
+        }
+      ]
+    },
+    {
+      "route": "R1",
+      "seq": 12,
+      "name": "구로4동자치회관",
+      "ars_on_map": "17134",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R1",
+      "seq": 13,
+      "name": "구로시장",
+      "ars_on_map": "17121",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000049",
+          "dong": "구로제2동",
+          "lat": 37.487987,
+          "lon": 126.88486
+        },
+        {
+          "bsst_id": "116000050",
+          "dong": "구로제2동",
+          "lat": 37.48798,
+          "lon": 126.88461
+        }
+      ],
+      "candidate_spread_m": 22
+    },
+    {
+      "route": "R1",
+      "seq": 14,
+      "name": "구로4동우체국",
+      "ars_on_map": "17137",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R1",
+      "seq": 15,
+      "name": "구로고대병원후문",
+      "ars_on_map": "17113",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116900160",
+          "dong": "구로제2동",
+          "lat": 37.493545,
+          "lon": 126.885645
+        }
+      ]
+    },
+    {
+      "route": "R1",
+      "seq": 16,
+      "name": "구로구청",
+      "ars_on_map": "17111",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000025",
+          "dong": "구로제2동",
+          "lat": 37.494627,
+          "lon": 126.887893
+        },
+        {
+          "bsst_id": "116000026",
+          "dong": "구로제2동",
+          "lat": 37.494802,
+          "lon": 126.887617
+        },
+        {
+          "bsst_id": "116000198",
+          "dong": "구로제5동",
+          "lat": 37.495883,
+          "lon": 126.888503
+        },
+        {
+          "bsst_id": "116900139",
+          "dong": "구로제2동",
+          "lat": 37.494773,
+          "lon": 126.889425
+        },
+        {
+          "bsst_id": "116900210",
+          "dong": "구로제2동",
+          "lat": 37.494692,
+          "lon": 126.889183
+        }
+      ],
+      "candidate_spread_m": 159
+    },
+    {
+      "route": "R1",
+      "seq": 17,
+      "name": "구로고등학교",
+      "ars_on_map": "17109",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000023",
+          "dong": "구로제5동",
+          "lat": 37.496567,
+          "lon": 126.891578
+        }
+      ]
+    },
+    {
+      "route": "R1",
+      "seq": 18,
+      "name": "거리공원",
+      "ars_on_map": "17107",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000021",
+          "dong": "구로제5동",
+          "lat": 37.499973,
+          "lon": 126.891835
+        }
+      ]
+    },
+    {
+      "route": "R1",
+      "seq": 19,
+      "name": "한국SGI",
+      "ars_on_map": "17105",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000019",
+          "dong": "구로제5동",
+          "lat": 37.502477,
+          "lon": 126.889783
+        }
+      ]
+    },
+    {
+      "route": "R1",
+      "seq": 20,
+      "name": "서울미래초등학교",
+      "ars_on_map": "17103",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000017",
+          "dong": "구로제5동",
+          "lat": 37.505102,
+          "lon": 126.889452
+        },
+        {
+          "bsst_id": "116000018",
+          "dong": "구로제5동",
+          "lat": 37.505305,
+          "lon": 126.889448
+        }
+      ],
+      "candidate_spread_m": 23
+    },
+    {
+      "route": "R2",
+      "seq": 1,
+      "name": "디지털단지오거리",
+      "ars_on_map": "17389",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000042",
+          "dong": "가리봉동",
+          "lat": 37.479935,
+          "lon": 126.890728
+        },
+        {
+          "bsst_id": "116000043",
+          "dong": "가리봉동",
+          "lat": 37.479933,
+          "lon": 126.890398
+        },
+        {
+          "bsst_id": "116000635",
+          "dong": "가리봉동",
+          "lat": 37.480037,
+          "lon": 126.888722
+        }
+      ],
+      "candidate_spread_m": 177
+    },
+    {
+      "route": "R2",
+      "seq": 2,
+      "name": "가리봉시장",
+      "ars_on_map": "17131",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000045",
+          "dong": "가리봉동",
+          "lat": 37.48301,
+          "lon": 126.887123
+        },
+        {
+          "bsst_id": "116000046",
+          "dong": "가리봉동",
+          "lat": 37.482415,
+          "lon": 126.886968
+        }
+      ],
+      "candidate_spread_m": 67
+    },
+    {
+      "route": "R2",
+      "seq": 3,
+      "name": "남구로역",
+      "ars_on_map": "17134",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000048",
+          "dong": "구로제4동",
+          "lat": 37.486092,
+          "lon": 126.885682
+        }
+      ]
+    },
+    {
+      "route": "R2",
+      "seq": 4,
+      "name": "구로시장",
+      "ars_on_map": "17135",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000049",
+          "dong": "구로제2동",
+          "lat": 37.487987,
+          "lon": 126.88486
+        },
+        {
+          "bsst_id": "116000050",
+          "dong": "구로제2동",
+          "lat": 37.48798,
+          "lon": 126.88461
+        }
+      ],
+      "candidate_spread_m": 22
+    },
+    {
+      "route": "R2",
+      "seq": 5,
+      "name": "구로4동우체국.고대구로병원정문",
+      "ars_on_map": "17137",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000051",
+          "dong": "구로제4동",
+          "lat": 37.490372,
+          "lon": 126.884217
+        },
+        {
+          "bsst_id": "116000052",
+          "dong": "구로제2동",
+          "lat": 37.48986,
+          "lon": 126.884095
+        }
+      ],
+      "candidate_spread_m": 58
+    },
+    {
+      "route": "R2",
+      "seq": 6,
+      "name": "구로119안전센터",
+      "ars_on_map": "17139",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000053",
+          "dong": "구로제2동",
+          "lat": 37.493835,
+          "lon": 126.883243
+        },
+        {
+          "bsst_id": "116000054",
+          "dong": "구로제2동",
+          "lat": 37.493855,
+          "lon": 126.882982
+        }
+      ],
+      "candidate_spread_m": 23
+    },
+    {
+      "route": "R2",
+      "seq": 7,
+      "name": "우리유엔미아파트",
+      "ars_on_map": "17221",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000622",
+          "dong": "구로제2동",
+          "lat": 37.497217,
+          "lon": 126.882628
+        }
+      ]
+    },
+    {
+      "route": "R2",
+      "seq": 8,
+      "name": "구로역.NC신구로점",
+      "ars_on_map": "17144",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000058",
+          "dong": "구로제2동",
+          "lat": 37.500088,
+          "lon": 126.882862
+        },
+        {
+          "bsst_id": "116000059",
+          "dong": "구로제5동",
+          "lat": 37.500848,
+          "lon": 126.88258
+        }
+      ],
+      "candidate_spread_m": 88
+    },
+    {
+      "route": "R2",
+      "seq": 9,
+      "name": "구로구청",
+      "ars_on_map": "17112",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000025",
+          "dong": "구로제2동",
+          "lat": 37.494627,
+          "lon": 126.887893
+        },
+        {
+          "bsst_id": "116000026",
+          "dong": "구로제2동",
+          "lat": 37.494802,
+          "lon": 126.887617
+        },
+        {
+          "bsst_id": "116000198",
+          "dong": "구로제5동",
+          "lat": 37.495883,
+          "lon": 126.888503
+        },
+        {
+          "bsst_id": "116900139",
+          "dong": "구로제2동",
+          "lat": 37.494773,
+          "lon": 126.889425
+        },
+        {
+          "bsst_id": "116900210",
+          "dong": "구로제2동",
+          "lat": 37.494692,
+          "lon": 126.889183
+        }
+      ],
+      "candidate_spread_m": 159
+    },
+    {
+      "route": "R2",
+      "seq": 10,
+      "name": "구로4동우체국.고대구로병원정문",
+      "ars_on_map": "17137",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000051",
+          "dong": "구로제4동",
+          "lat": 37.490372,
+          "lon": 126.884217
+        },
+        {
+          "bsst_id": "116000052",
+          "dong": "구로제2동",
+          "lat": 37.48986,
+          "lon": 126.884095
+        }
+      ],
+      "candidate_spread_m": 58
+    },
+    {
+      "route": "R2",
+      "seq": 11,
+      "name": "구로시장",
+      "ars_on_map": "17136",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000049",
+          "dong": "구로제2동",
+          "lat": 37.487987,
+          "lon": 126.88486
+        },
+        {
+          "bsst_id": "116000050",
+          "dong": "구로제2동",
+          "lat": 37.48798,
+          "lon": 126.88461
+        }
+      ],
+      "candidate_spread_m": 22
+    },
+    {
+      "route": "R2",
+      "seq": 12,
+      "name": "남구로역(은혜공인중개사)",
+      "ars_on_map": null,
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R2",
+      "seq": 13,
+      "name": "삼화인쇄",
+      "ars_on_map": null,
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R2",
+      "seq": 14,
+      "name": "지하이시티.보건지소.치매센터",
+      "ars_on_map": "17127",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000041",
+          "dong": "구로제3동",
+          "lat": 37.481758,
+          "lon": 126.89262
+        }
+      ]
+    },
+    {
+      "route": "R3",
+      "seq": 1,
+      "name": "덕의초등학교",
+      "ars_on_map": "17211",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000121",
+          "dong": "고척제2동",
+          "lat": 37.506387,
+          "lon": 126.859455
+        },
+        {
+          "bsst_id": "116000122",
+          "dong": "고척제2동",
+          "lat": 37.506192,
+          "lon": 126.858407
+        }
+      ],
+      "candidate_spread_m": 95
+    },
+    {
+      "route": "R3",
+      "seq": 2,
+      "name": "고척시장",
+      "ars_on_map": "17226",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000134",
+          "dong": "고척제1동",
+          "lat": 37.503852,
+          "lon": 126.861938
+        },
+        {
+          "bsst_id": "116000135",
+          "dong": "고척제1동",
+          "lat": 37.503137,
+          "lon": 126.86199
+        },
+        {
+          "bsst_id": "116900050",
+          "dong": "고척제1동",
+          "lat": 37.503143,
+          "lon": 126.862373
+        }
+      ],
+      "candidate_spread_m": 87
+    },
+    {
+      "route": "R3",
+      "seq": 3,
+      "name": "고척중학교",
+      "ars_on_map": "17228",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000136",
+          "dong": "고척제1동",
+          "lat": 37.500468,
+          "lon": 126.863863
+        },
+        {
+          "bsst_id": "116000137",
+          "dong": "고척제1동",
+          "lat": 37.500962,
+          "lon": 126.863243
+        }
+      ],
+      "candidate_spread_m": 77
+    },
+    {
+      "route": "R3",
+      "seq": 4,
+      "name": "개봉역.영화@",
+      "ars_on_map": "17009",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R3",
+      "seq": 5,
+      "name": "경인중.개봉사거리",
+      "ars_on_map": "17011",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R3",
+      "seq": 6,
+      "name": "오류1주민센터",
+      "ars_on_map": "17170",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R3",
+      "seq": 7,
+      "name": "오류동역",
+      "ars_on_map": "17172",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000085",
+          "dong": "오류제1동",
+          "lat": 37.495698,
+          "lon": 126.843352
+        },
+        {
+          "bsst_id": "116000086",
+          "dong": "오류제1동",
+          "lat": 37.495607,
+          "lon": 126.842528
+        }
+      ],
+      "candidate_spread_m": 73
+    },
+    {
+      "route": "R3",
+      "seq": 8,
+      "name": "오류동삼거리",
+      "ars_on_map": "17307",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000447",
+          "dong": "오류제1동",
+          "lat": 37.495268,
+          "lon": 126.840777
+        },
+        {
+          "bsst_id": "116000448",
+          "dong": "오류제1동",
+          "lat": 37.495395,
+          "lon": 126.840882
+        },
+        {
+          "bsst_id": "116900311",
+          "dong": "오류제1동",
+          "lat": 37.495667,
+          "lon": 126.840462
+        }
+      ],
+      "candidate_spread_m": 52
+    },
+    {
+      "route": "R3",
+      "seq": 9,
+      "name": "동부골든.한신",
+      "ars_on_map": "17309",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R3",
+      "seq": 10,
+      "name": "동부골든후문",
+      "ars_on_map": "17309",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R3",
+      "seq": 11,
+      "name": "거성푸르뫼@",
+      "ars_on_map": "17305",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R3",
+      "seq": 12,
+      "name": "개봉1동사거리",
+      "ars_on_map": "17312",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000613",
+          "dong": "개봉제1동",
+          "lat": 37.501138,
+          "lon": 126.845543
+        },
+        {
+          "bsst_id": "116000614",
+          "dong": "개봉제1동",
+          "lat": 37.501253,
+          "lon": 126.845392
+        },
+        {
+          "bsst_id": "116900284",
+          "dong": "개봉제1동",
+          "lat": 37.501417,
+          "lon": 126.845543
+        }
+      ],
+      "candidate_spread_m": 31
+    },
+    {
+      "route": "R3",
+      "seq": 13,
+      "name": "개봉푸르지오@",
+      "ars_on_map": "17218",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R3",
+      "seq": 14,
+      "name": "세곡초등학교",
+      "ars_on_map": "17215",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000125",
+          "dong": "고척제2동",
+          "lat": 37.502738,
+          "lon": 126.84985
+        },
+        {
+          "bsst_id": "116000126",
+          "dong": "고척제2동",
+          "lat": 37.503232,
+          "lon": 126.850623
+        },
+        {
+          "bsst_id": "116900081",
+          "dong": "고척제2동",
+          "lat": 37.502742,
+          "lon": 126.84939
+        }
+      ],
+      "candidate_spread_m": 121
+    },
+    {
+      "route": "R3",
+      "seq": 15,
+      "name": "고척근린공원",
+      "ars_on_map": "17213",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000123",
+          "dong": "고척제2동",
+          "lat": 37.504768,
+          "lon": 126.855313
+        }
+      ]
+    },
+    {
+      "route": "R4",
+      "seq": 1,
+      "name": "항동제일풍경",
+      "ars_on_map": "17715",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R4",
+      "seq": 2,
+      "name": "항동우남퍼스트빌",
+      "ars_on_map": "17151",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000627",
+          "dong": "",
+          "lat": 37.476683,
+          "lon": 126.818752
+        },
+        {
+          "bsst_id": "116900306",
+          "dong": "",
+          "lat": 37.476618,
+          "lon": 126.819012
+        }
+      ],
+      "candidate_spread_m": 24
+    },
+    {
+      "route": "R4",
+      "seq": 3,
+      "name": "항동행정복합센터",
+      "ars_on_map": "17364",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R4",
+      "seq": 4,
+      "name": "푸른수목원",
+      "ars_on_map": "17363",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000628",
+          "dong": "",
+          "lat": 37.481497,
+          "lon": 126.824438
+        },
+        {
+          "bsst_id": "116000630",
+          "dong": "",
+          "lat": 37.481292,
+          "lon": 126.824603
+        }
+      ],
+      "candidate_spread_m": 27
+    },
+    {
+      "route": "R4",
+      "seq": 5,
+      "name": "별장쉐르빌앞",
+      "ars_on_map": "17804",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000640",
+          "dong": "오류제2동",
+          "lat": 37.487055,
+          "lon": 126.832938
+        }
+      ]
+    },
+    {
+      "route": "R4",
+      "seq": 6,
+      "name": "천왕역2번",
+      "ars_on_map": "17982",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R4",
+      "seq": 7,
+      "name": "오남중학교",
+      "ars_on_map": "17197",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000606",
+          "dong": "오류제2동",
+          "lat": 37.488103,
+          "lon": 126.837162
+        }
+      ]
+    },
+    {
+      "route": "R4",
+      "seq": 8,
+      "name": "천왕이펜3단지",
+      "ars_on_map": "17848",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R4",
+      "seq": 9,
+      "name": "천왕이펜4단지",
+      "ars_on_map": "17984",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R4",
+      "seq": 10,
+      "name": "천왕이펜6단지",
+      "ars_on_map": "17985",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R4",
+      "seq": 11,
+      "name": "구로우체국",
+      "ars_on_map": "17201",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R4",
+      "seq": 12,
+      "name": "연지2단지",
+      "ars_on_map": "17399",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R4",
+      "seq": 13,
+      "name": "천왕역4번출구",
+      "ars_on_map": "17202",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116900276",
+          "dong": "오류제2동",
+          "lat": 37.485878,
+          "lon": 126.839357
+        }
+      ]
+    },
+    {
+      "route": "R4",
+      "seq": 14,
+      "name": "오류2주민센터",
+      "ars_on_map": "17203",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R4",
+      "seq": 15,
+      "name": "오류2새마을",
+      "ars_on_map": "17205",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R4",
+      "seq": 16,
+      "name": "영풍마드레빌",
+      "ars_on_map": "17178",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R4",
+      "seq": 17,
+      "name": "덕일전자공고",
+      "ars_on_map": "17806",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R4",
+      "seq": 18,
+      "name": "퀸즈빌",
+      "ars_on_map": "17130",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000044",
+          "dong": "오류제2동",
+          "lat": 37.487517,
+          "lon": 126.833312
+        }
+      ]
+    },
+    {
+      "route": "R4",
+      "seq": 19,
+      "name": "푸른수목원",
+      "ars_on_map": "17361",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000628",
+          "dong": "",
+          "lat": 37.481497,
+          "lon": 126.824438
+        },
+        {
+          "bsst_id": "116000630",
+          "dong": "",
+          "lat": 37.481292,
+          "lon": 126.824603
+        }
+      ],
+      "candidate_spread_m": 27
+    },
+    {
+      "route": "R4",
+      "seq": 20,
+      "name": null,
+      "ars_on_map": null,
+      "match": "unreadable",
+      "candidates": []
+    },
+    {
+      "route": "R4",
+      "seq": 21,
+      "name": "항동행정복합센터",
+      "ars_on_map": "17362",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R5",
+      "seq": 1,
+      "name": "디지털단지오거리",
+      "ars_on_map": "17128",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000042",
+          "dong": "가리봉동",
+          "lat": 37.479935,
+          "lon": 126.890728
+        },
+        {
+          "bsst_id": "116000043",
+          "dong": "가리봉동",
+          "lat": 37.479933,
+          "lon": 126.890398
+        },
+        {
+          "bsst_id": "116000635",
+          "dong": "가리봉동",
+          "lat": 37.480037,
+          "lon": 126.888722
+        }
+      ],
+      "candidate_spread_m": 177
+    },
+    {
+      "route": "R5",
+      "seq": 2,
+      "name": "하이엔드1차.보건지소.치매센터",
+      "ars_on_map": "17126",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000040",
+          "dong": "구로제3동",
+          "lat": 37.481748,
+          "lon": 126.89293
+        }
+      ]
+    },
+    {
+      "route": "R5",
+      "seq": 3,
+      "name": "디지털산업1단지",
+      "ars_on_map": "17124",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000038",
+          "dong": "구로제3동",
+          "lat": 37.483847,
+          "lon": 126.895035
+        },
+        {
+          "bsst_id": "116000039",
+          "dong": "구로제3동",
+          "lat": 37.483965,
+          "lon": 126.894763
+        }
+      ],
+      "candidate_spread_m": 27
+    },
+    {
+      "route": "R5",
+      "seq": 4,
+      "name": "보람아파트",
+      "ars_on_map": "17503",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116900084",
+          "dong": "구로제3동",
+          "lat": 37.486322,
+          "lon": 126.896907
+        }
+      ]
+    },
+    {
+      "route": "R5",
+      "seq": 5,
+      "name": "구로디지털단지역",
+      "ars_on_map": "17472",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000013",
+          "dong": "구로제3동",
+          "lat": 37.483152,
+          "lon": 126.901558
+        },
+        {
+          "bsst_id": "116000138",
+          "dong": "구로제3동",
+          "lat": 37.483542,
+          "lon": 126.901657
+        },
+        {
+          "bsst_id": "116900093",
+          "dong": "구로제3동",
+          "lat": 37.484528,
+          "lon": 126.901488
+        },
+        {
+          "bsst_id": "116900118",
+          "dong": "구로제3동",
+          "lat": 37.484058,
+          "lon": 126.901827
+        }
+      ],
+      "candidate_spread_m": 153
+    },
+    {
+      "route": "R5",
+      "seq": 6,
+      "name": "구로디지털단지역",
+      "ars_on_map": "17229",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000013",
+          "dong": "구로제3동",
+          "lat": 37.483152,
+          "lon": 126.901558
+        },
+        {
+          "bsst_id": "116000138",
+          "dong": "구로제3동",
+          "lat": 37.483542,
+          "lon": 126.901657
+        },
+        {
+          "bsst_id": "116900093",
+          "dong": "구로제3동",
+          "lat": 37.484528,
+          "lon": 126.901488
+        },
+        {
+          "bsst_id": "116900118",
+          "dong": "구로제3동",
+          "lat": 37.484058,
+          "lon": 126.901827
+        }
+      ],
+      "candidate_spread_m": 153
+    },
+    {
+      "route": "R5",
+      "seq": 7,
+      "name": "문성골",
+      "ars_on_map": "17923",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116900272",
+          "dong": "구로제3동",
+          "lat": 37.48146,
+          "lon": 126.900033
+        }
+      ]
+    },
+    {
+      "route": "R5",
+      "seq": 8,
+      "name": "삼부르네상스.효성아파트",
+      "ars_on_map": "17230",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000139",
+          "dong": "가리봉동",
+          "lat": 37.478747,
+          "lon": 126.894635
+        }
+      ]
+    },
+    {
+      "route": "R5",
+      "seq": 9,
+      "name": "가리봉파출소",
+      "ars_on_map": "17249",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000648",
+          "dong": "가리봉동",
+          "lat": 37.479247,
+          "lon": 126.891738
+        }
+      ]
+    },
+    {
+      "route": "R6",
+      "seq": 1,
+      "name": "원각사입구",
+      "ars_on_map": "17400",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000624",
+          "dong": "수궁동",
+          "lat": 37.500502,
+          "lon": 126.829463
+        }
+      ]
+    },
+    {
+      "route": "R6",
+      "seq": 2,
+      "name": "예림디자인고.오류고.서울공연예술고",
+      "ars_on_map": "17193",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000106",
+          "dong": "수궁동",
+          "lat": 37.498605,
+          "lon": 126.829242
+        },
+        {
+          "bsst_id": "116000107",
+          "dong": "수궁동",
+          "lat": 37.4984,
+          "lon": 126.82904
+        }
+      ],
+      "candidate_spread_m": 29
+    },
+    {
+      "route": "R6",
+      "seq": 3,
+      "name": "수궁119안전센터",
+      "ars_on_map": "17191",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000104",
+          "dong": "수궁동",
+          "lat": 37.496815,
+          "lon": 126.829597
+        },
+        {
+          "bsst_id": "116000105",
+          "dong": "수궁동",
+          "lat": 37.496798,
+          "lon": 126.829423
+        }
+      ],
+      "candidate_spread_m": 15
+    },
+    {
+      "route": "R6",
+      "seq": 4,
+      "name": "수궁동주민센터",
+      "ars_on_map": "17189",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000102",
+          "dong": "수궁동",
+          "lat": 37.494652,
+          "lon": 126.830867
+        },
+        {
+          "bsst_id": "116000103",
+          "dong": "수궁동",
+          "lat": 37.494358,
+          "lon": 126.830852
+        }
+      ],
+      "candidate_spread_m": 33
+    },
+    {
+      "route": "R6",
+      "seq": 5,
+      "name": "우신고등학교",
+      "ars_on_map": "17182",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R6",
+      "seq": "6/11",
+      "name": "우신중고후문",
+      "ars_on_map": "17298",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R6",
+      "seq": "7/12",
+      "name": "정진학교.온수힐스테이트아파트",
+      "ars_on_map": "17187",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000101",
+          "dong": "수궁동",
+          "lat": 37.497048,
+          "lon": 126.822182
+        }
+      ]
+    },
+    {
+      "route": "R6",
+      "seq": "8/13",
+      "name": "새마을금고",
+      "ars_on_map": "17186",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R6",
+      "seq": "9/14",
+      "name": "두암빌라",
+      "ars_on_map": "17150",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000619",
+          "dong": "수궁동",
+          "lat": 37.495087,
+          "lon": 126.825715
+        }
+      ]
+    },
+    {
+      "route": "R6",
+      "seq": 10,
+      "name": "온수역",
+      "ars_on_map": "17184",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000098",
+          "dong": "수궁동",
+          "lat": 37.492802,
+          "lon": 126.82376
+        },
+        {
+          "bsst_id": "116000099",
+          "dong": "수궁동",
+          "lat": 37.492737,
+          "lon": 126.824358
+        },
+        {
+          "bsst_id": "116900020",
+          "dong": "수궁동",
+          "lat": 37.492032,
+          "lon": 126.823813
+        },
+        {
+          "bsst_id": "116900047",
+          "dong": "수궁동",
+          "lat": 37.492952,
+          "lon": 126.825133
+        }
+      ],
+      "candidate_spread_m": 155
+    },
+    {
+      "route": "R6",
+      "seq": 11,
+      "name": "온수역",
+      "ars_on_map": "17185",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000098",
+          "dong": "수궁동",
+          "lat": 37.492802,
+          "lon": 126.82376
+        },
+        {
+          "bsst_id": "116000099",
+          "dong": "수궁동",
+          "lat": 37.492737,
+          "lon": 126.824358
+        },
+        {
+          "bsst_id": "116900020",
+          "dong": "수궁동",
+          "lat": 37.492032,
+          "lon": 126.823813
+        },
+        {
+          "bsst_id": "116900047",
+          "dong": "수궁동",
+          "lat": 37.492952,
+          "lon": 126.825133
+        }
+      ],
+      "candidate_spread_m": 155
+    },
+    {
+      "route": "R6",
+      "seq": 15,
+      "name": "우신고등학교",
+      "ars_on_map": "17182",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R6",
+      "seq": 16,
+      "name": "수궁동주민센터",
+      "ars_on_map": "17188",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000102",
+          "dong": "수궁동",
+          "lat": 37.494652,
+          "lon": 126.830867
+        },
+        {
+          "bsst_id": "116000103",
+          "dong": "수궁동",
+          "lat": 37.494358,
+          "lon": 126.830852
+        }
+      ],
+      "candidate_spread_m": 33
+    },
+    {
+      "route": "R6",
+      "seq": 17,
+      "name": "수궁119안전센터",
+      "ars_on_map": "17190",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000104",
+          "dong": "수궁동",
+          "lat": 37.496815,
+          "lon": 126.829597
+        },
+        {
+          "bsst_id": "116000105",
+          "dong": "수궁동",
+          "lat": 37.496798,
+          "lon": 126.829423
+        }
+      ],
+      "candidate_spread_m": 15
+    },
+    {
+      "route": "R6",
+      "seq": 18,
+      "name": "예림디자인고.오류고.서울공연예술고",
+      "ars_on_map": "17192",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000106",
+          "dong": "수궁동",
+          "lat": 37.498605,
+          "lon": 126.829242
+        },
+        {
+          "bsst_id": "116000107",
+          "dong": "수궁동",
+          "lat": 37.4984,
+          "lon": 126.82904
+        }
+      ],
+      "candidate_spread_m": 29
+    },
+    {
+      "route": "R7",
+      "seq": 1,
+      "name": "푸른수목원",
+      "ars_on_map": "17363",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000628",
+          "dong": "",
+          "lat": 37.481497,
+          "lon": 126.824438
+        },
+        {
+          "bsst_id": "116000630",
+          "dong": "",
+          "lat": 37.481292,
+          "lon": 126.824603
+        }
+      ],
+      "candidate_spread_m": 27
+    },
+    {
+      "route": "R7",
+      "seq": 2,
+      "name": "항동하버라인3단지아파트",
+      "ars_on_map": "17809",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000644",
+          "dong": "",
+          "lat": 37.479718,
+          "lon": 126.825543
+        }
+      ]
+    },
+    {
+      "route": "R7",
+      "seq": 3,
+      "name": "항동하버라인3단지",
+      "ars_on_map": "17360",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000633",
+          "dong": "",
+          "lat": 37.478747,
+          "lon": 126.822943
+        },
+        {
+          "bsst_id": "116000634",
+          "dong": "",
+          "lat": 37.479138,
+          "lon": 126.82311
+        }
+      ],
+      "candidate_spread_m": 46
+    },
+    {
+      "route": "R7",
+      "seq": 4,
+      "name": "항동하버라인2단지",
+      "ars_on_map": "17371",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000637",
+          "dong": "",
+          "lat": 37.481273,
+          "lon": 126.821658
+        }
+      ]
+    },
+    {
+      "route": "R7",
+      "seq": 5,
+      "name": "푸른수목원후문.저수지앞",
+      "ars_on_map": "17369",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000296",
+          "dong": "",
+          "lat": 37.484238,
+          "lon": 126.822298
+        },
+        {
+          "bsst_id": "116000297",
+          "dong": "",
+          "lat": 37.483782,
+          "lon": 126.822295
+        }
+      ],
+      "candidate_spread_m": 51
+    },
+    {
+      "route": "R7",
+      "seq": 6,
+      "name": "그린빌라정문",
+      "ars_on_map": "17468",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116900208",
+          "dong": "",
+          "lat": 37.486043,
+          "lon": 126.823435
+        },
+        {
+          "bsst_id": "116900246",
+          "dong": "",
+          "lat": 37.4859,
+          "lon": 126.823472
+        }
+      ],
+      "candidate_spread_m": 16
+    },
+    {
+      "route": "R7",
+      "seq": 7,
+      "name": "동삼빌라",
+      "ars_on_map": "17846",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000592",
+          "dong": "",
+          "lat": 37.487372,
+          "lon": 126.823972
+        },
+        {
+          "bsst_id": "116900174",
+          "dong": "",
+          "lat": 37.487293,
+          "lon": 126.824018
+        }
+      ],
+      "candidate_spread_m": 10
+    },
+    {
+      "route": "R7",
+      "seq": 8,
+      "name": "성공회대.유한공고앞",
+      "ars_on_map": "17177",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R7",
+      "seq": 9,
+      "name": "서울가든빌라앞",
+      "ars_on_map": "17175",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000089",
+          "dong": "오류제2동",
+          "lat": 37.491203,
+          "lon": 126.831217
+        },
+        {
+          "bsst_id": "116000090",
+          "dong": "오류제2동",
+          "lat": 37.49155,
+          "lon": 126.831705
+        }
+      ],
+      "candidate_spread_m": 58
+    },
+    {
+      "route": "R7",
+      "seq": 10,
+      "name": "씨티월드",
+      "ars_on_map": "17173",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000087",
+          "dong": "오류제1동",
+          "lat": 37.494463,
+          "lon": 126.840682
+        }
+      ]
+    },
+    {
+      "route": "R7",
+      "seq": 11,
+      "name": "오류동역",
+      "ars_on_map": "17171",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000085",
+          "dong": "오류제1동",
+          "lat": 37.495698,
+          "lon": 126.843352
+        },
+        {
+          "bsst_id": "116000086",
+          "dong": "오류제1동",
+          "lat": 37.495607,
+          "lon": 126.842528
+        }
+      ],
+      "candidate_spread_m": 73
+    },
+    {
+      "route": "R7",
+      "seq": "12a",
+      "name": "항동중흥S클래스",
+      "ars_on_map": "17370",
+      "match": "unique",
+      "candidates": [
+        {
+          "bsst_id": "116000638",
+          "dong": "",
+          "lat": 37.481018,
+          "lon": 126.821662
+        }
+      ]
+    },
+    {
+      "route": "R7",
+      "seq": "12b",
+      "name": "오류1동주민센터.오류문화센터",
+      "ars_on_map": "17175",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000083",
+          "dong": "오류제1동",
+          "lat": 37.496918,
+          "lon": 126.846195
+        },
+        {
+          "bsst_id": "116000084",
+          "dong": "오류제1동",
+          "lat": 37.496482,
+          "lon": 126.844572
+        }
+      ],
+      "candidate_spread_m": 151
+    },
+    {
+      "route": "R7",
+      "seq": 13,
+      "name": "오류1동주민센터.오류문화센터",
+      "ars_on_map": "17170",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000083",
+          "dong": "오류제1동",
+          "lat": 37.496918,
+          "lon": 126.846195
+        },
+        {
+          "bsst_id": "116000084",
+          "dong": "오류제1동",
+          "lat": 37.496482,
+          "lon": 126.844572
+        }
+      ],
+      "candidate_spread_m": 151
+    },
+    {
+      "route": "R7",
+      "seq": 14,
+      "name": "오류동역",
+      "ars_on_map": "17172",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000085",
+          "dong": "오류제1동",
+          "lat": 37.495698,
+          "lon": 126.843352
+        },
+        {
+          "bsst_id": "116000086",
+          "dong": "오류제1동",
+          "lat": 37.495607,
+          "lon": 126.842528
+        }
+      ],
+      "candidate_spread_m": 73
+    },
+    {
+      "route": "R7",
+      "seq": 15,
+      "name": "오류지구대.신오류주유소",
+      "ars_on_map": "17174",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R7",
+      "seq": 16,
+      "name": "서울가든빌라앞",
+      "ars_on_map": "17176",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000089",
+          "dong": "오류제2동",
+          "lat": 37.491203,
+          "lon": 126.831217
+        },
+        {
+          "bsst_id": "116000090",
+          "dong": "오류제2동",
+          "lat": 37.49155,
+          "lon": 126.831705
+        }
+      ],
+      "candidate_spread_m": 58
+    },
+    {
+      "route": "R7",
+      "seq": 17,
+      "name": "유한공고.성공회대학교",
+      "ars_on_map": "17999",
+      "match": "none",
+      "candidates": []
+    },
+    {
+      "route": "R7",
+      "seq": 18,
+      "name": "동삼빌라",
+      "ars_on_map": "17697",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000592",
+          "dong": "",
+          "lat": 37.487372,
+          "lon": 126.823972
+        },
+        {
+          "bsst_id": "116900174",
+          "dong": "",
+          "lat": 37.487293,
+          "lon": 126.824018
+        }
+      ],
+      "candidate_spread_m": 10
+    },
+    {
+      "route": "R7",
+      "seq": 19,
+      "name": "그린빌라정문",
+      "ars_on_map": "17367",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116900208",
+          "dong": "",
+          "lat": 37.486043,
+          "lon": 126.823435
+        },
+        {
+          "bsst_id": "116900246",
+          "dong": "",
+          "lat": 37.4859,
+          "lon": 126.823472
+        }
+      ],
+      "candidate_spread_m": 16
+    },
+    {
+      "route": "R7",
+      "seq": 20,
+      "name": "푸른수목원후문.저수지앞",
+      "ars_on_map": "17365",
+      "match": "ambiguous",
+      "candidates": [
+        {
+          "bsst_id": "116000296",
+          "dong": "",
+          "lat": 37.484238,
+          "lon": 126.822298
+        },
+        {
+          "bsst_id": "116000297",
+          "dong": "",
+          "lat": 37.483782,
+          "lon": 126.822295
+        }
+      ],
+      "candidate_spread_m": 51
+    }
+  ]
+}
