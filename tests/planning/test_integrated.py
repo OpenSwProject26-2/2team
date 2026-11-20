@@ -175,6 +175,37 @@ class MustAllocTest(unittest.TestCase):
         self.assertIn("rB", res["n"])
         self.assertTrue(any("필수 정류장 못 덮음" in w for w in res["warnings"]))
 
+    def test_cover_order_beats_gain_order_when_budget_tight(self):
+        """강동 스모크 사례: 이득 순서(rA·rB, 각 2대)는 4대를 다 써 m3가 남는다. 덮는 순서(rC 1대 + rD 2대)는 모두 덮는다."""
+        cyc = {"rA": 2400, "rB": 2400, "rC": 1200, "rD": 2400}
+        keys = {r: ((r.lower(), "x"),) for r in cyc}
+        od = {("ra", "x"): [300] * 4, ("rb", "x"): [300] * 4, ("rc", "x"): [5] * 4, ("rd", "x"): [5] * 4}
+        m = A.Model([(r, cyc[r], keys[r]) for r in sorted(cyc)], od, A.AllocParams(),
+                    must={"m1": ("rA", "rD"), "m2": ("rB", "rD"), "m3": ("rC",)})
+        n, unc = A.must_seed(m, 4)
+        self.assertEqual(unc, {})
+        self.assertEqual(set(n), {"rC", "rD"})
+        res = A.allocate(m, 4)
+        self.assertEqual(res["must"]["must_stop_uncovered"], [])
+        self.assertTrue(all(v["covered"] for v in res["must"]["stops"].values()))
+
+    def test_exact_search(self):
+        """정확 탐색(`_must_exact`): 예산 안에서 모두 덮는 조합을 찾고(근사 큰 것), 불가능하면 None."""
+        cyc = {"rA": 1200, "rB": 2400, "rC": 2400, "rD": 1200, "rE": 2400}
+        keys = {r: ((r.lower(), "x"),) for r in cyc}
+        od = {(r.lower(), "x"): [100 if r == "rA" else 5] * 4 for r in cyc}
+        must = {"m1": ("rA", "rB"), "m2": ("rB", "rE"), "m3": ("rC", "rE"), "m4": ("rC", "rD")}
+        m = A.Model([(r, cyc[r], keys[r]) for r in sorted(cyc)], od, A.AllocParams(), must=must)
+        self.assertEqual(A._must_seed(m, 4, "gain")[1], {"m2": "budget"})         # 이득 순서는 m2를 남긴다
+        n, unc = A._must_exact(m, 4)
+        self.assertEqual(unc, {})
+        self.assertLessEqual(sum(n.values()), 4)
+        self.assertTrue(set(must) <= m.must_covered(n))
+        self.assertIn("rA", n)                                                    # 같은 대수면 근사가 큰 조합
+        self.assertIsNone(A._must_exact(m, 2))                                    # 2대로는 못 덮음
+        n2, unc2 = A.must_seed(m, 4)
+        self.assertEqual(unc2, {})
+
     def test_must_before_equity_priority(self):
         """필수 정류장(valid, 하드)이 위반 인원(형평 등)보다 먼저: 덮음을 깨서 근사를 키우는 해는 고르지 않는다."""
         held = A.allocate(must_model({"m1": ("rA",)}), 4)

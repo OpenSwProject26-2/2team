@@ -48,6 +48,7 @@ def sweep_dir(gu: str, root: Path, out: Path) -> Path:
     base = json.loads(sorted(src.glob("scenario_f*.json"))[0].read_text(encoding="utf-8"))
     sio.write_bytes(b / f"scenario_f{FLEET}.json", sio.json_bytes(fleet_scenario(base, FLEET, START_S)))
     (sw / "hub_sweep.json").write_text(json.dumps({"gu": gu, "fleets": [FLEET], "absorbed": None, "affected_total": None,
+                                                   "absorbed_test": None, "affected_total_test": None,
                                                    "plans": [], "_설명": "smoke_integrated 입력 폴더"},
                                                   ensure_ascii=False), encoding="utf-8")
     return sw

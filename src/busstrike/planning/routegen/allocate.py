@@ -413,12 +413,65 @@ def cover_seed(model: Model, budget: int) -> tuple[dict[str, int], set[str]]:
 
 
 def must_seed(model: Model, budget: int) -> tuple[dict[str, int], dict[str, str]]:
-    """필수 정류장 덮기 시작해(설계 6.2b). 돌려주는 값: (배분, 못 덮은 정류장 → 이유).
+    """필수 정류장 덮기 시작해(설계 6.1c). 돌려주는 값: (배분, 못 덮은 정류장 → 이유).
 
-    아직 덮지 못한 필수 정류장을 덮는 후보 중 n0대로 열 때 근사 이득이 가장 큰 것부터 연다(동률: 새로 덮는 수, 노선 ID).
+    두 순서로 탐욕을 돌려 **더 많이 덮는 쪽**을 고른다(같으면 근사가 큰 쪽, 그다음 이득 순서). 필수 정류장은 하드 제약이라
+    덮는 수가 먼저다(통합 2026-11-21, 강동 스모크: 이득 순서는 필수 정류장 하나씩 덮는 노선 4개로 11대를 다 써 1곳이 남음).
+    - gain: 아직 덮지 못한 필수 정류장을 덮는 후보 중 n0대로 열 때 근사 이득이 가장 큰 것부터(동률: 새로 덮는 수, 노선 ID).
+    - cover: 대수당 새로 덮는 필수 정류장 수가 가장 큰 것부터(동률: 적은 대수, 근사 이득, 노선 ID).
+    - 둘 다 못 덮은 정류장이 남으면 정확 탐색(`_must_exact`, 노드 수 상한)으로 예산 안에서 모두 덮는 조합을 찾아 본다.
     must_min_tph > 0이면 그 운행에 필요한 대수까지 넣는다. 지나는 후보가 없으면 no_candidate, 남은 대수로 열 수 있는
     후보가 없으면 budget.
     """
+    runs = [_must_seed(model, budget, mode) for mode in ("gain", "cover")]
+    if all(any(v == "budget" for v in u.values()) for _, u in runs):
+        ex = _must_exact(model, budget)
+        if ex is not None:
+            runs.append(ex)
+    return max(runs, key=lambda x: (-len(x[1]), model.value(x[0]), x is runs[0]))
+
+
+def _must_k(model: Model, r: str) -> int:
+    return max(model.n0[r], math.ceil(model.must_min_tph * model.cycle[r] / 3600 - EPS))
+
+
+def _must_exact(model: Model, budget: int, max_nodes: int = 200_000, keep: int = 64
+                ) -> tuple[dict[str, int], dict[str, str]] | None:
+    """후보가 있는 필수 정류장을 모두 덮는 노선 조합(대수 합 ≤ budget)을 깊이 우선으로 찾는다. 덮는 후보가 가장 적은
+    정류장부터 가지를 치고, 찾은 조합(최대 keep개) 중 근사가 가장 큰 것. 노드 상한 안에서 못 찾으면 None. 결정론."""
+    need = sorted((s for s, rs in model.must.items() if rs), key=lambda s: (len(model.must[s]), s))
+    if not need:
+        return None
+    cover_of = {r: {s for s in need if r in model.must[s]} for s in need for r in model.must[s]}
+    found: list[dict[str, int]] = []
+    nodes = 0
+
+    def dfs(chosen: dict[str, int], covered: set, used: int) -> None:
+        nonlocal nodes
+        nodes += 1
+        if nodes > max_nodes or len(found) >= keep:
+            return
+        todo = [s for s in need if s not in covered]
+        if not todo:
+            found.append(dict(chosen))
+            return
+        s = min(todo, key=lambda x: (len(model.must[x]), x))
+        for r in sorted(model.must[s], key=lambda x: (_must_k(model, x), -len(cover_of[x]), model.rank[x])):
+            k = _must_k(model, r)
+            if used + k > budget:
+                continue
+            chosen[r] = k
+            dfs(chosen, covered | cover_of[r], used + k)
+            del chosen[r]
+
+    dfs({}, set(), 0)
+    if not found:
+        return None
+    best = max(found, key=lambda n: (model.value(n), -sum(n.values())))
+    return best, {s: "no_candidate" for s, rs in model.must.items() if not rs}
+
+
+def _must_seed(model: Model, budget: int, mode: str) -> tuple[dict[str, int], dict[str, str]]:
     n: dict[str, int] = {}
     uncovered = {s: "no_candidate" for s, rs in model.must.items() if not rs}
     while True:
@@ -437,7 +490,9 @@ def must_seed(model: Model, budget: int) -> tuple[dict[str, int], dict[str, str]
             newly = len(model.must_covered(m) - done)
             if newly <= 0 and r not in n:
                 continue
-            key = (model.value(m) - base, newly, -model.rank[r])
+            gain = model.value(m) - base
+            key = ((gain, newly, -model.rank[r]) if mode == "gain" else
+                   (newly / k, -k, gain, -model.rank[r]))
             if best is None or key > best[0]:
                 best = (key, m)
         if best is None:
