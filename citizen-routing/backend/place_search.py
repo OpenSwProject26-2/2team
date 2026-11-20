@@ -12,6 +12,79 @@ def compact(value: str) -> str:
 
 
 
+VISIBLE_KINDS = {
+    "major": {
+        "amenity:hospital": ("hospital", 1),
+        "amenity:university": ("college", 2),
+        "amenity:townhall": ("town_hall", 3),
+        "tourism:museum": ("museum", 4),
+        "tourism:attraction": ("attraction", 5),
+        "historic:castle": ("castle", 6),
+    },
+    "civic": {
+        "amenity:school": ("school", 1),
+        "building:school": ("school", 2),
+        "amenity:library": ("library", 3),
+        "amenity:clinic": ("hospital", 4),
+        "shop:supermarket": ("grocery", 5),
+    },
+    "worship": {
+        "amenity:place_of_worship": ("place_of_worship", 1),
+        "building:church": ("place_of_worship", 2),
+        "building:cathedral": ("place_of_worship", 2),
+        "building:temple": ("place_of_worship", 2),
+    },
+}
+VISIBLE_LOOKUP = {
+    kind: (category, icon, priority)
+    for category, kinds in VISIBLE_KINDS.items()
+    for kind, (icon, priority) in kinds.items()
+}
+
+
+def visible(index: Path, west: float, south: float, east: float, north: float,
+            zoom: float, limit: int = 540) -> list[dict]:
+    """Supply low-zoom OSM POIs missing from OpenFreeMap tiles below z14."""
+    if zoom < 11 or zoom >= 15.5 or not index.is_file():
+        return []
+    kinds = tuple(VISIBLE_LOOKUP)
+    markers = ",".join("?" for _ in kinds)
+    with closing(sqlite3.connect(f"file:{index.as_posix()}?mode=ro", uri=True, timeout=3)) as db:
+        db.row_factory = sqlite3.Row
+        rows = db.execute(
+            f"SELECT id,name,address,lat,lon,kind FROM places "
+            f"WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? "
+            f"AND kind IN ({markers}) AND name <> address",
+            (south, north, west, east, *kinds),
+        ).fetchall()
+    cell = 0.016 * 2 ** (12 - min(zoom, 14))
+    picked = {}
+    for row in rows:
+        place = dict(row)
+        category, icon, priority = VISIBLE_LOOKUP[place["kind"]]
+        y, x = int(place["lat"] / cell), int(place["lon"] / cell)
+        key = (y, x, category)
+        offset = (place["lat"] / cell - y - 0.5) ** 2 + (place["lon"] / cell - x - 0.5) ** 2
+        candidate = (priority, offset, place["name"])
+        current = picked.get(key)
+        if current is None or candidate < current[0]:
+            place.update(category=category, icon=icon, priority=priority)
+            picked[key] = (candidate, place)
+    mid_lat, mid_lon = (south + north) / 2, (west + east) / 2
+    by_category = {category: [] for category in VISIBLE_KINDS}
+    for _, place in picked.values():
+        by_category[place["category"]].append(place)
+    quota = max(1, min(limit // len(VISIBLE_KINDS), 200))
+    result = []
+    for category, places in by_category.items():
+        places.sort(key=lambda place: (place["priority"],
+                                      (place["lat"] - mid_lat) ** 2
+                                      + ((place["lon"] - mid_lon)
+                                         * cos(radians(mid_lat))) ** 2,
+                                      place["name"]))
+        result.extend(places[:quota])
+    return result[:max(1, min(limit, 600))]
+
 def nearby(index: Path, lat: float, lon: float, radius_m: float = 80, limit: int = 6) -> list[dict]:
     if not index.is_file():
         return []

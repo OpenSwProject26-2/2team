@@ -1,18 +1,63 @@
 import * as maplibregl from "/vendor/maplibre-gl.mjs";
 const $ = id => document.getElementById(id);
 const state = {origin:null,destination:null,active:"origin",routes:[],selected:0,sortMode:"optimal",markers:[],routeMarkers:[],routeEndpoints:null};
-const colors = {walk:"#8d9998",bus:"#3b7fdb",shuttle:"#24a46c",subway:"#8d5ad9"};
-const map = new maplibregl.Map({container:"map",style:"/vendor/openfreemap-liberty.json",center:[126.97,37.54],zoom:11});
+const colors = {walk:"#a6b2b6",bus:"#2461ea",shuttle:"#182740",subway:"#8645dc"};
+const busColors = {city:"#2461ea",gyeonggi:"#ff9d1e",village:"#0aa86c",unclassified:"#718198"};
+const legColor=leg=>leg.kind==="bus"?(busColors[leg.bus_category]||busColors.unclassified):(colors[leg.kind]||"#546d68");
+const map = new maplibregl.Map({container:"map",style:"/citizen-map-style.json",center:[126.97,37.54],zoom:11});
 map.addControl(new maplibregl.NavigationControl(),"top-right");
 map.on("error",()=>{$("map-error").hidden=false});
 let mapPickPopup=null;
 map.on("click",showMapPick);
 $("departure").value=new Date(Date.now()+9*3600000).toISOString().slice(0,16);
 function text(tag,content,cls){const node=document.createElement(tag);node.textContent=content;if(cls)node.className=cls;return node}
-const mapPickLayers=["poi_r20","poi_r7","poi_r1","poi_transit","building","building-3d"];
+const visiblePlaceSource="citizen-osm-poi";
+const emptyVisiblePlaces={type:"FeatureCollection",features:[]};
+let visiblePlaceRequest=null;
+function mapPickLayers(){
+  const layers=map.getStyle()?.layers||[];
+  return [...layers.filter(layer=>layer.type==="symbol" &&
+    (layer.source===visiblePlaceSource||layer["source-layer"]==="poi")).map(layer=>layer.id),
+    "building","building-3d"].filter(id=>map.getLayer(id));
+}
+function loadVisiblePlaces(){
+  const source=map.getSource(visiblePlaceSource);
+  if(!source)return;
+  visiblePlaceRequest?.abort();
+  const zoom=map.getZoom();
+  if(zoom<11||zoom>=15.5){source.setData(emptyVisiblePlaces);return}
+  const bounds=map.getBounds();
+  const params=new URLSearchParams({
+    west:bounds.getWest(),south:bounds.getSouth(),east:bounds.getEast(),north:bounds.getNorth(),zoom
+  });
+  const controller=new AbortController();
+  visiblePlaceRequest=controller;
+  fetch("/api/citizen-routing/map-places?"+params,{signal:controller.signal})
+    .then(response=>response.ok?response.json():Promise.reject(new Error("map places")))
+    .then(data=>{
+      if(visiblePlaceRequest!==controller||!map.getSource(visiblePlaceSource))return;
+      source.setData({type:"FeatureCollection",features:(data.places||[]).map(place=>({
+        type:"Feature",id:place.id,
+        properties:{name:place.name,kind:place.kind,category:place.category,
+          icon:place.icon,priority:place.priority,address:place.address},
+        geometry:{type:"Point",coordinates:[place.lon,place.lat]}
+      }))});
+    }).catch(error=>{
+      if(error.name!=="AbortError"&&visiblePlaceRequest===controller)source.setData(emptyVisiblePlaces);
+    });
+}
+map.on("load",()=>{
+  for(const layer of map.getStyle().layers.filter(layer=>layer.id.startsWith("citizen-poi-")||
+      layer.id.startsWith("citizen-osm-"))){
+    map.on("mouseenter",layer.id,()=>{map.getCanvas().style.cursor="pointer"});
+    map.on("mouseleave",layer.id,()=>{map.getCanvas().style.cursor=""});
+  }
+  loadVisiblePlaces();
+});
+map.on("moveend",loadVisiblePlaces);
 function showMapPick(event){
   const pointPlace={name:"지도 선택 위치",lat:event.lngLat.lat,lon:event.lngLat.lng,source:"coordinate"};
-  const layers=mapPickLayers.filter(id=>map.getLayer(id));
+  const layers=mapPickLayers();
   const hits=layers.length?map.queryRenderedFeatures(event.point,{layers}):[];
   const options=[];
   const names=new Set();
@@ -22,7 +67,7 @@ function showMapPick(event){
     if(typeof name!=="string"||!name.trim()||names.has(name.trim()))continue;
     names.add(name.trim());
     const coordinates=hit.geometry?.type==="Point"?hit.geometry.coordinates:null;
-    options.push({name:name.trim(),lat:coordinates?.[1]??pointPlace.lat,lon:coordinates?.[0]??pointPlace.lon,kind:props.class||"building",source:"map"});
+    options.push({name:name.trim(),lat:coordinates?.[1]??pointPlace.lat,lon:coordinates?.[0]??pointPlace.lon,kind:props.kind||props.class||"building",category:props.category,source:"map"});
     if(options.length>=4)break;
   }
   mapPickPopup?.remove();
@@ -32,7 +77,10 @@ function showMapPick(event){
   const addOption=(place,coordinate=false)=>{
     const row=document.createElement("div");row.className="map-place-option";
     row.append(text("span",coordinate?"\uc774 \uc9c0\uc810\uc758 \uc88c\ud45c":place.name));
-    if(!coordinate)row.append(text("small",place.address||place.kind||"\uc7a5\uc18c"));
+    if(!coordinate){
+      const label={school:"학교",worship:"교회·종교시설",public:"공공시설",shop:"상점"}[place.category];
+      row.append(text("small",place.address||label||place.kind||"장소"));
+    }
     const actions=document.createElement("div");actions.className="map-place-actions";
     for(const [which,label] of [["origin","\ucd9c\ubc1c\uc9c0\ub85c"],["destination","\ubaa9\uc801\uc9c0\ub85c"]]){
       const button=document.createElement("button");button.type="button";button.textContent=label;
@@ -132,14 +180,14 @@ const sortKeys={
   transfers:route=>[route.transfers,route.duration_seconds,route.walk_seconds],
   walking:route=>[route.walk_seconds,route.duration_seconds,route.transfers]
 };
+function compareRoutes(a,b,mode){
+  const left=sortKeys[mode](a),right=sortKeys[mode](b);
+  for(let index=0;index<left.length;index++)if(left[index]!==right[index])return left[index]-right[index];
+  return (a.start||"").localeCompare(b.start||"")||String(a.id||"").localeCompare(String(b.id||""));
+}
 function sortRoutes(keepSelected){
   const selectedId=keepSelected?state.routes[state.selected]?.id:null;
-  const keys=sortKeys[state.sortMode];
-  state.routes.sort((a,b)=>{
-    const left=keys(a),right=keys(b);
-    for(let index=0;index<left.length;index++)if(left[index]!==right[index])return left[index]-right[index];
-    return (a.start||"").localeCompare(b.start||"");
-  });
+  state.routes.sort((a,b)=>compareRoutes(a,b,state.sortMode));
   state.selected=selectedId?state.routes.findIndex(route=>route.id===selectedId):0;
   if(state.selected<0)state.selected=0;
 }
@@ -183,24 +231,85 @@ sortDropdown.addEventListener("keydown",event=>{
     sortOptions[current<0?(step>0?0:sortOptions.length-1):(current+step+sortOptions.length)%sortOptions.length].focus();
   }
 });
+const modeInfo={
+  walk:{label:"\ub3c4\ubcf4",icon:"\ud83d\udeb6"},
+  bus:{label:"\ubc84\uc2a4",icon:"\ud83d\ude8c"},
+  subway:{label:"\uc9c0\ud558\ucca0",icon:"\ud83d\ude87"},
+  shuttle:{label:"\ub300\uccb4 \uc154\ud2c0",icon:"\ud83d\ude8c"}
+};
+const busCategoryLabels={village:"\ub9c8\uc744\ubc84\uc2a4",city:"\uc2dc\ub0b4\ubc84\uc2a4",gyeonggi:"\uacbd\uae30\ubc84\uc2a4",unclassified:"\ubbf8\ubd84\ub958"};
+const legLabel=leg=>leg.kind==="bus"?(busCategoryLabels[leg.bus_category]||busCategoryLabels.unclassified):(modeInfo[leg.kind]?.label||leg.kind);
+const timeLabel=value=>new Date(value).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"});
+const routePlaceLabel=place=>place?.source==="coordinate"?place.lat.toFixed(5)+", "+place.lon.toFixed(5):place?.name||"\uc704\uce58 \ubbf8\uc9c0\uc815";
 function renderResults(){
   const box=$("results");box.replaceChildren();
-  $("result-count").textContent=state.routes.length+"개";
+  $("result-count").textContent=state.routes.length+"\uac1c";
+  const categories={optimal:"\ucd5c\uc801 \uacbd\ub85c",fastest:"\ucd5c\uc18c \uc2dc\uac04",transfers:"\ucd5c\uc18c \ud658\uc2b9",walking:"\ucd5c\uc18c \ub3c4\ubcf4"};
+  const routeCategories=new Map();
+  for(const [mode,label] of Object.entries(categories)){
+    const best=state.routes.reduce((winner,route)=>!winner||compareRoutes(route,winner,mode)<0?route:winner,null);
+    if(best)routeCategories.set(best,[...(routeCategories.get(best)||[]),label]);
+  }
   state.routes.forEach((route,index)=>{
-    const card=document.createElement("button");card.type="button";card.className="result"+(index===state.selected?" active":"");card.setAttribute("aria-pressed",index===state.selected?"true":"false");
-    const head=text("div","","result-top");
-    head.append(text("strong",mins(route.duration_seconds)),text("span",new Date(route.start).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"})+" → "+new Date(route.end).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"})));
-    card.append(head);
-    const endpoints=state.routeEndpoints;
-    const placeLabel=place=>place?.source==="coordinate"?place.lat.toFixed(5)+", "+place.lon.toFixed(5):place?.name||"\uc704\uce58 \ubbf8\uc9c0\uc815";
-    card.append(text("div","\ucd9c\ubc1c\uc9c0 "+placeLabel(endpoints?.origin),"result-endpoint origin"));
-    card.append(text("div",route.legs.filter(leg=>leg.kind!=="walk").map(leg=>leg.route_name||leg.kind).join(" → ")||"도보","result-route"));
+    const card=document.createElement("button");
+    card.type="button";
+    card.className="result"+(index===state.selected?" active":"");
+    card.setAttribute("aria-pressed",index===state.selected?"true":"false");
+    const routeNames=route.legs.filter(leg=>leg.kind!=="walk").map(leg=>legLabel(leg)+(leg.route_name?" "+leg.route_name:"")).join(" \u00b7 ")||"\ub3c4\ubcf4 \uacbd\ub85c";
+    const header=text("div","","result-top");
+    const rank=text("span","","result-rank");
+    for(const label of routeCategories.get(route)||[])rank.append(text("span",label,"result-category"));
+    header.append(rank,text("span",timeLabel(route.start)+" \ucd9c\ubc1c \u2192 "+timeLabel(route.end)+" \ub3c4\ucc29","result-times"));
+    const duration=text("div","","result-duration");
+    duration.append(text("strong",String(Math.round(route.duration_seconds/60))),text("span","\ubd84"),text("small",routeNames,"result-line-names"));
+    card.append(header,duration);
+    const progress=text("div","","result-progress");
+    progress.setAttribute("role","img");
+    progress.setAttribute("aria-label",route.legs.map(leg=>legLabel(leg)+" "+mins(leg.duration_seconds)).join(", "));
+    const legCount=route.legs.length;
+    const totalLegSeconds=route.legs.reduce((total,leg)=>total+Math.max(leg.duration_seconds,1),0);
+    const minShare=Math.min(.15,.88/legCount);
+    for(const leg of route.legs){
+      const info=modeInfo[leg.kind]||{label:leg.kind,icon:"\u25cf"};
+      const segment=text("div","","result-segment "+leg.kind+(leg.kind==="bus"?" "+(leg.bus_category||"unclassified"):""));
+      const share=minShare+(1-minShare*legCount)*Math.max(leg.duration_seconds,1)/totalLegSeconds;
+      segment.style.flexBasis=(share*100)+"%";
+      segment.title=legLabel(leg)+" "+(leg.route_name||"")+" "+mins(leg.duration_seconds);
+      segment.append(text("span",info.icon,"segment-icon"),text("span",mins(leg.duration_seconds),"segment-time"));
+      progress.append(segment);
+    }
+    card.append(progress);
+    const journey=text("div","","result-journey");
+    const placeRow=(which,place)=>{
+      const row=text("div","","result-place "+which);
+      row.append(text("span",which==="origin"?"\ucd9c":"\ub3c4","place-dot"));
+      const content=text("div","","place-copy");
+      content.append(text("small",which==="origin"?"\ucd9c\ubc1c\uc9c0":"\ub3c4\ucc29\uc9c0"),text("strong",routePlaceLabel(place)));
+      row.append(content);
+      return row;
+    };
+    journey.append(placeRow("origin",state.routeEndpoints?.origin));
+    journey.append(text("div",routeNames,"result-route-summary"));
     const steps=text("div","","result-steps");
-    route.legs.forEach(leg=>{
-      const label=leg.kind==="walk"?"도보":leg.kind==="shuttle"?"대체 셔틀":leg.kind==="subway"?"지하철":"버스";
-      steps.append(text("div",label+" "+(leg.route_name||"")+" · "+leg.from.name+" → "+leg.to.name+" · "+mins(leg.duration_seconds),"step "+leg.kind));
-    });
-    card.append(steps,text("div","\ub3c4\ucc29\uc9c0 "+placeLabel(endpoints?.destination),"result-endpoint destination"),text("div","도보 "+mins(route.walk_seconds)+" · 대기 "+mins(route.wait_seconds)+" · 환승 "+route.transfers+"회","result-meta"));
+    for(const [legIndex,leg] of route.legs.entries()){
+      const info=modeInfo[leg.kind]||{label:leg.kind,icon:"\u25cf"};
+      const fromName=legIndex===0&&leg.from.name==="Origin"?routePlaceLabel(state.routeEndpoints?.origin):leg.from.name;
+      const toName=legIndex===route.legs.length-1&&leg.to.name==="Destination"?routePlaceLabel(state.routeEndpoints?.destination):leg.to.name;
+      const row=text("div","","result-step "+leg.kind+(leg.kind==="bus"?" "+(leg.bus_category||"unclassified"):""));
+      row.append(text("span",info.icon,"step-icon"));
+      const copy=text("div","","step-copy");
+      copy.append(text("strong",legLabel(leg)+(leg.route_name?" "+leg.route_name:"")+" \u00b7 "+mins(leg.duration_seconds)),
+                  text("small",fromName+" \u2192 "+toName));
+      row.append(copy);
+      steps.append(row);
+    }
+    journey.append(steps,placeRow("destination",state.routeEndpoints?.destination));
+    card.append(journey);
+    const meta=text("div","","result-meta");
+    meta.append(text("span","\ub3c4\ubcf4 "+mins(route.walk_seconds)),
+                text("span","\ub300\uae30 "+mins(route.wait_seconds)),
+                text("span","\ud658\uc2b9 "+route.transfers+"\ud68c"));
+    card.append(meta);
     card.addEventListener("click",()=>{state.selected=index;renderResults();drawRoute()});
     box.append(card);
   });
@@ -230,7 +339,7 @@ function drawRoute(){
   for(const [index,route] of state.routes.entries()){
     for(const leg of route.legs){
       if(!leg.geometry||leg.geometry.length<2)continue;
-      features.push({type:"Feature",properties:{color:colors[leg.kind]||"#546d68",selected:index===state.selected,schematic:leg.geometry_status==="stop_schematic"},geometry:{type:"LineString",coordinates:leg.geometry}});
+      features.push({type:"Feature",properties:{color:legColor(leg),selected:index===state.selected,schematic:leg.geometry_status==="stop_schematic"},geometry:{type:"LineString",coordinates:leg.geometry}});
     }
   }
   if(features.length){
@@ -246,6 +355,7 @@ function drawRoute(){
     const coords=features.filter(feature=>feature.properties.selected).flatMap(feature=>feature.geometry.coordinates);
     if(coords.length)map.fitBounds(coords.reduce((bounds,point)=>bounds.extend(point),new maplibregl.LngLatBounds(coords[0],coords[0])),{padding:75,maxZoom:15,duration:reducedMotion.matches?0:850});
   }
+  for(const id of ["citizen-osm-worship","citizen-osm-civic","citizen-osm-major"])if(map.getLayer(id))map.moveLayer(id)
   activeSlot=next;
   if(previous!==null){
     setSlotOpacity(previous,0);
@@ -258,9 +368,9 @@ function drawRoute(){
     for(const [place,action,time] of [[leg.from,"탑승",leg.start],[leg.to,"하차",leg.end]]){
       if(!Number.isFinite(place.lon)||!Number.isFinite(place.lat))continue;
       const dot=document.createElement("div");
-      dot.style.cssText="width:13px;height:13px;border:2px solid white;border-radius:50%;background:"+(colors[leg.kind]||"#546d68")+";box-shadow:0 1px 5px #0008;opacity:0;transition:opacity 350ms ease";
+      dot.style.cssText="width:13px;height:13px;border:2px solid white;border-radius:50%;background:"+legColor(leg)+";box-shadow:0 1px 5px #0008;opacity:0;transition:opacity 350ms ease";
       requestAnimationFrame(()=>{dot.style.opacity="1"});
-      const label=place.name+" · "+(leg.route_name||leg.kind)+" "+action+" · "+(time||"시간 정보 없음");
+      const label=place.name+" · "+(legLabel(leg)+(leg.route_name?" "+leg.route_name:""))+" "+action+" · "+(time||"시간 정보 없음");
       state.routeMarkers.push(new maplibregl.Marker({element:dot}).setLngLat([place.lon,place.lat]).setPopup(new maplibregl.Popup().setText(label)).addTo(map));
     }
   }

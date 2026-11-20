@@ -9,6 +9,7 @@ REPO = ROOT.parent
 sys.path.insert(0, str(ROOT))
 
 from backend.gtfs_adapter import read_feed, validate, remove_struck_routes, namespace_shuttle, rows
+from backend.bus_categories import classify_bus
 from backend.route_service import plan, InputError, decode_polyline
 
 
@@ -33,6 +34,19 @@ class FeedTests(unittest.TestCase):
         self.assertTrue(all(s["stop_id"].startswith("CR_S_") for s in rows(converted, "stops.txt")[1]))
         self.assertEqual(validate(converted)["trips"], validate(self.shuttle)["trips"])
 
+
+class BusCategoryTests(unittest.TestCase):
+    def test_gtfs_description_classifies_only_supported_bus_types(self):
+        examples = [
+            ({"route_desc": "\uc11c\uc6b8\ub9c8\uc744\ubc84\uc2a4"}, "village"),
+            ({"route_desc": "\uc11c\uc6b8\uac04\uc120\ubc84\uc2a4"}, "city"),
+            ({"route_desc": "\uacbd\uae30\uc2dc\ub0b4\ubc84\uc2a4"}, "gyeonggi"),
+            ({"agency_id": "GYEONGGI_BUS"}, "gyeonggi"),
+            ({"route_desc": "\ubbf8\ud655\uc778", "agency_id": "SEOUL_BUS"}, "unclassified"),
+        ]
+        for route, expected in examples:
+            with self.subTest(route=route):
+                self.assertEqual(classify_bus(route), expected)
 
 class RoutingTests(unittest.TestCase):
     def setUp(self):
@@ -85,10 +99,11 @@ class RoutingTests(unittest.TestCase):
         }
         manifest = {**self.manifest, "existing_stats": {"shapes": False}}
         with patch("backend.route_service.query", return_value={"edges": [{"node": node}]}):
-            result = plan(self.params, manifest, "http://otp")
+            result = plan(self.params, manifest, "http://otp", {"A:BUS1": "city"})
         self.assertFalse(result["routes"][0]["has_full_geometry"])
         leg = result["routes"][0]["legs"][0]
         self.assertEqual(leg["geometry_status"], "stop_schematic")
+        self.assertEqual(leg["bus_category"], "city")
         self.assertEqual(leg["geometry"], [[126.99, 37.55], [127.0, 37.545], [127.01, 37.54]])
 
     def test_routes_are_ordered_by_departure_time(self):

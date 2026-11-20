@@ -110,6 +110,7 @@ def build(osm_path: Path, output: Path) -> int:
         indexer.flush()
         db.execute("CREATE INDEX places_name ON places(name_key)")
         db.execute("CREATE INDEX places_coords ON places(lat,lon)")
+        db.execute("CREATE INDEX places_kind_coords ON places(kind,lat,lon)")
         db.commit()
         return indexer.count
 

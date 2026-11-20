@@ -58,7 +58,7 @@ def _place(place: dict) -> dict:
             "lon": place.get("lon"), "stop_id": stop.get("gtfsId")}
 
 
-def _itinerary(raw: dict, index: int, manifest: dict) -> dict:
+def _itinerary(raw: dict, index: int, manifest: dict, bus_categories: dict[str, str]) -> dict:
     legs = []
     for leg in raw.get("legs") or []:
         route = leg.get("route") or {}
@@ -86,6 +86,7 @@ def _itinerary(raw: dict, index: int, manifest: dict) -> dict:
         legs.append({
             "kind": kind, "mode": mode, "route_id": gtfs_id or None,
             "route_name": route.get("shortName") or route.get("longName"),
+            "bus_category": bus_categories.get(gtfs_id, "unclassified") if kind == "bus" else None,
             "from": _place(leg.get("from") or {}),
             "to": _place(leg.get("to") or {}),
             "start": (leg.get("start") or {}).get("scheduledTime"),
@@ -111,7 +112,8 @@ def _itinerary(raw: dict, index: int, manifest: dict) -> dict:
     }
 
 
-def plan(params: dict[str, str], manifest: dict, endpoint: str) -> dict:
+def plan(params: dict[str, str], manifest: dict, endpoint: str,
+         bus_categories: dict[str, str] | None = None) -> dict:
     lat_min, lon_min, lat_max, lon_max = SEOUL_BOUNDS
     a_lat = coordinate(params.get("origin_lat"), lat_min, lat_max, "출발지 위도")
     a_lon = coordinate(params.get("origin_lon"), lon_min, lon_max, "출발지 경도")
@@ -141,7 +143,7 @@ def plan(params: dict[str, str], manifest: dict, endpoint: str) -> dict:
             "exclude": [{"routes": [f"SHUTTLE:{rid}" for rid in manifest["shuttle_route_ids"]]}]
         }]}}
     raw = query(endpoint, variables)
-    itineraries = [_itinerary(edge["node"], i, manifest) for i, edge in enumerate(raw.get("edges") or [])
+    itineraries = [_itinerary(edge["node"], i, manifest, bus_categories or {}) for i, edge in enumerate(raw.get("edges") or [])
                    if edge and edge.get("node")]
     itineraries.sort(key=lambda x: (x["start"] or "", x["duration_seconds"], x["transfers"]))
     return {"version": manifest["version"], "source_kind": manifest.get("source_kind"),

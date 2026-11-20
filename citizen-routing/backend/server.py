@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+from math import isfinite
 import sqlite3
 import sys
 import zipfile
@@ -12,8 +13,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .gtfs_adapter import rows
+from .bus_categories import load_categories
+from .citizen_map_style import citizen_style
 from .otp_client import OTPError, healthy
-from .place_search import compact, nearby as nearby_places, search as search_places
+from .place_search import compact, nearby as nearby_places, search as search_places, visible as visible_places
 from .route_service import InputError, plan
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +63,9 @@ def handler(otp_dir: Path, endpoint: str):
 
         def do_GET(self) -> None:
             parsed = urlsplit(self.path)
+            if parsed.path == "/citizen-map-style.json":
+                self._json(200, citizen_style())
+                return
             if parsed.path == "/api/citizen-routing/status":
                 path = otp_dir / "manifest.json"
                 if not path.exists():
@@ -102,6 +108,26 @@ def handler(otp_dir: Path, endpoint: str):
                     self._json(503, {"code": "PLACE_SEARCH_UNAVAILABLE",
                                      "message": "Place search data could not be read."})
                 return
+            if parsed.path == "/api/citizen-routing/map-places":
+                params = parse_qs(parsed.query)
+                try:
+                    west, south, east, north, zoom = (
+                        float(params.get(key, [""])[0])
+                        for key in ("west", "south", "east", "north", "zoom")
+                    )
+                    if (not all(isfinite(value) for value in (west, south, east, north, zoom))
+                            or west >= east or south >= north or east - west > 2
+                            or north - south > 1 or not 0 <= zoom <= 22):
+                        raise ValueError("Invalid map bounds")
+                    places = visible_places(otp_dir.parent / "places.sqlite",
+                                            west, south, east, north, zoom)
+                    self._json(200, {"places": places})
+                except (ValueError, OverflowError):
+                    self._json(400, {"code": "INPUT_INVALID", "message": "Invalid map bounds"})
+                except (OSError, sqlite3.DatabaseError):
+                    self._json(503, {"code": "PLACE_SEARCH_UNAVAILABLE",
+                                     "message": "Place search data could not be read."})
+                return
             if parsed.path == "/api/citizen-routing/nearby":
                 params = parse_qs(parsed.query)
                 try:
@@ -123,7 +149,7 @@ def handler(otp_dir: Path, endpoint: str):
                     if not stamp.is_file() or stamp.read_text(encoding="utf-8") != manifest["version"]:
                         raise OTPError("GRAPH_NOT_BUILT", "현재 입력 버전의 OTP 그래프를 먼저 구축하세요.")
                     params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
-                    self._json(200, plan(params, manifest, endpoint))
+                    self._json(200, plan(params, manifest, endpoint, load_categories(otp_dir)))
                 except FileNotFoundError:
                     self._json(503, {"code": "DATA_NOT_PREPARED", "message": "GTFS와 OSM을 먼저 준비하세요."})
                 except InputError as error:
