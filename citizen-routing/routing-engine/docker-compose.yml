@@ -1,0 +1,18 @@
+services:
+  otp-build:
+    image: docker.io/opentripplanner/opentripplanner:2.10.0
+    profiles: [build]
+    environment:
+      JAVA_TOOL_OPTIONS: -Xmx8g
+    volumes:
+      - ../runtime/otp:/var/opentripplanner
+    command: ["--build", "--save"]
+  otp:
+    image: docker.io/opentripplanner/opentripplanner:2.10.0
+    environment:
+      JAVA_TOOL_OPTIONS: -Xmx8g
+    volumes:
+      - ../runtime/otp:/var/opentripplanner
+    ports:
+      - "127.0.0.1:8080:8080"
+    command: ["--load", "--serve"]
