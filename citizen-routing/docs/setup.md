@@ -16,7 +16,16 @@ B/C 운행안은 **GTFS 내보내기 결과**(폴더 또는 ZIP)로만 받습니
 
 Python 3.10 이상과 Docker Desktop이 필요합니다. 셔틀을 포함한 실제 검색을 하려면 해당 날짜의 B/C GTFS, 서울 권역 OSM PBF가 필요합니다. OSM은 해당 지역의 OpenStreetMap 추출본을 저장소 밖에서 준비하세요. 원본은 읽기 전용이며 `runtime/` 안에만 사본이 생성됩니다. ZIP·PBF·그래프는 Git에 넣지 않습니다.
 
-PowerShell에서 `citizen-routing`으로 이동한 뒤:
+PR이 `main`에 병합되기 전에는 기능 브랜치를 받아야 합니다. 새 폴더에서 시험하려면 PowerShell에서:
+
+```powershell
+git clone --branch feat/citizen-routing --single-branch https://github.com/OpenSwProject26-2/2team.git 2team-citizen-routing
+Set-Location 2team-citizen-routing/citizen-routing
+```
+
+A 배포 ZIP과 서울 권역 OSM PBF는 저장소와 GitHub 릴리스에 포함되지 않습니다. 팀 내에서 별도로 전달받아 두 파일의 실제 경로를 확인하세요. 이 자료가 없어도 저장소의 테스트용 GTFS fixture로 단위 테스트는 실행할 수 있지만, OTP 그래프와 실제 경로 검색은 준비할 수 없습니다.
+
+이어서 `citizen-routing`에서 실제 파일 경로를 넣어 실행합니다:
 
 ```powershell
 py -3 -m backend.prepare --existing "C:\path\to\busstrike_data_release_20261111.zip" --osm "C:\path\to\seoul.osm.pbf"
