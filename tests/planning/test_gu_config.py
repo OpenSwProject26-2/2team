@@ -19,8 +19,20 @@ RAW = {
 
 
 class GuConfigTest(unittest.TestCase):
+    def test_rule_overrides_are_refused_by_default(self):
+        # 설계 15절: 구별 덮어쓰기는 입력 종류만. RAW의 guro는 규칙(configs)·정책 상수(absorb·walk.lambdas)를 덮어쓴다
+        with self.assertRaises(ValueError):
+            GuConfig(RAW, "guro")
+        ok = GuConfig({"default": {}, "gu": {"guro": {"walk": {"service_starts": ["07:00"]}}}}, "guro")
+        self.assertEqual(ok.walk["service_starts"], ["07:00"])
+        self.assertEqual(ok.gu_overrides, [{"path": "walk.service_starts", "kind": "input"}])
+
     def test_gu_overrides_default(self):
-        c = GuConfig(RAW, "guro")
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            c = GuConfig(RAW, "guro", allow_rule_override=True)          # 옛 결과 재현용: 경고만
+        self.assertTrue(any("구별 덮어쓰기" in str(x.message) for x in w))
         self.assertEqual(list(c.configs), ["base", "hub135", "auto"])
         self.assertEqual(c.params("hub135", home_gu="구로구").hub_min, 200)        # 구 값이 기본을 덮는다
         self.assertEqual(c.params("base").distance_basis, "network")               # 공통 generate는 모든 설정에

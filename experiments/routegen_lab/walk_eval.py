@@ -53,6 +53,10 @@ from busstrike.planning.routegen import data as D  # noqa: E402
 from busstrike.planning.routegen import generate as G  # noqa: E402
 from busstrike.planning.routegen import gu_config  # noqa: E402
 from busstrike.planning.routegen import walk as WK  # noqa: E402
+from busstrike.planning.routegen import must_stops as MS  # noqa: E402
+from busstrike.planning.routegen import rules as RU  # noqa: E402
+from busstrike.planning.routegen import strike as K  # noqa: E402
+from busstrike.planning.routegen.graph import Graph  # noqa: E402
 from busstrike.planning.routegen.absorb import Absorber, residual_rows  # noqa: E402
 from busstrike.planning.routegen.equity import EquityIndex  # noqa: E402
 from busstrike.planning.routegen.reach import Reach, StationIndex  # noqa: E402
@@ -181,9 +185,21 @@ def main() -> int:
     ap.add_argument("--gen-jobs", type=int, default=8, help="순환 돌아오는 길 만들기 프로세스 수(결과는 같다)")
     ap.add_argument("--free", action="store_true", help="하한 없는 비교 안 frHH도 안으로 쓴다(기록은 늘 남긴다)")
     ap.add_argument("--gen", default="", help='생성 설정 덮어쓰기 JSON(예: \'{"loop_max_stops": null, "loop_max_stops_total": 20}\')')
+    # 통합(2026-11-21): 파업 시나리오·필수 정류장·상대 기준 규칙·대수 입력
+    ap.add_argument("--fleets", default=None, help="대수(쉼표). 비우면 hub_sweep의 대수(입력)")
+    ap.add_argument("--strike-rate", type=float, default=None, help="파업 비율 0~1(strike.py). 비우면 묶음 그대로(전면 파업)")
+    ap.add_argument("--strike-draw", type=int, default=0)
+    ap.add_argument("--strike-seed", type=int, default=20261121)
+    ap.add_argument("--demand-mode", default="strike", choices=("strike", "all_bus_no_absorption"),
+                    help="all_bus_no_absorption = 걸어서 못 가는 모든 버스 승객, 흡수 없음(파업 없음 대조군이 아님)")
+    ap.add_argument("--facilities", type=Path, default=None, help="필수 시설 CSV(facilities_seoul.csv). 주면 필수 정류장 제약")
+    ap.add_argument("--must-min-tph", type=float, default=0.0, help="필수 정류장 시간당 최소 운행(기본 0 = 요구 안 함)")
+    ap.add_argument("--absolute-rules", action="store_true",
+                    help="규칙을 상대 기준(rules.py) 대신 설정 파일 절댓값으로(옛 결과 재현용)")
+    ap.add_argument("--allow-rule-override", action="store_true", help="구별 규칙·정책 상수 덮어쓰기를 경고만(재현용)")
     args = ap.parse_args()
     muni_dirs = {k: Path(v).resolve() for k, v in (x.split("=", 1) for x in args.muni)}
-    cfg = gu_config.load(args.params, args.gu)
+    cfg = gu_config.load(args.params, args.gu, args.allow_rule_override)
     wc = cfg.walk                                     # 명령줄 값이 있으면 그것, 없으면 구별 설정 파일
     args.radius = args.radius if args.radius is not None else float(wc.get("radius_m", 400))
     args.near_m = args.near_m if args.near_m is not None else float(wc.get("near_m", 800))
@@ -203,7 +219,7 @@ def main() -> int:
     root = args.region / f"{args.gu}_0610_v4"
     info = D.check_root(root, "exp")
     hs = json.loads((sw / "hub_sweep.json").read_text(encoding="utf-8"))
-    fleets = hs["fleets"]
+    fleets = [int(x) for x in args.fleets.split(",")] if args.fleets else hs["fleets"]
     base = D.load_network(root)
     st_stops = {x for s in base.stations.values() for x in (s.access_stop, s.egress_stop) if x}
 
@@ -223,9 +239,21 @@ def main() -> int:
     snap = doc["network_snapshot_id"]
 
     # 수요(정밀 흡수 뒤, 실험 주간) · 동네 정류장 무게(그 구 안)
-    rows = D.load_flows(root)
-    res, _ = Absorber(root, cfg.absorb_params()).absorb(rows, True, True)
-    demand = D.build_demand(residual_rows(rows, res), "affected")
+    strike = None
+    strike_log = None
+    if args.demand_mode == "all_bus_no_absorption":           # 파업 무관 모든 버스 승객, 흡수 없음
+        rows, kst = K.strike_rows(root, None, "all")
+        demand = D.build_demand(rows, "affected")
+        strike_log = {"mode": "all_bus_no_absorption", "stats": kst}
+    else:
+        if args.strike_rate is None:
+            rows = D.load_flows(root)                          # 묶음 그대로(전면 파업)
+        else:
+            strike = K.draw_strike(root, args.strike_rate, args.strike_draw, args.strike_seed)
+            rows, kst = K.strike_rows(root, strike, "strike")
+            strike_log = {"mode": "strike", **strike.record(), "stats": kst}
+        res, _ = Absorber(root, cfg.absorb_params()).absorb(rows, True, True)
+        demand = D.build_demand(residual_rows(rows, res), "affected")
     home = {s for s, x in base.stops.items() if x.gu == info["gu"]}
     weight = {s: w for s, w in WK.stop_weights(demand.od, st_stops).items() if s in home}
     # 역 근처(지정 정류장 도보 near_m 안): 지하철까지 걸어갈 수 있어 형평 우선순위를 낮출 수 있다
@@ -236,10 +264,24 @@ def main() -> int:
     dsfx = "d" if args.near_discount < 1.0 else ""
 
     # 후보(허브 135·정차 12) + 걷기 반영 덮는 OD
-    scen = D.read_scenario(next((sw / "exp" / "bundles").iterdir()), fleets[0])
+    scen = D.read_scenario(next((sw / "exp" / "bundles").iterdir()), hs["fleets"][0])   # 정책·운행 창만 쓴다
+    # 규칙(설계 15절): 그 구·그 시나리오 입력에서 계산(허브 기준·허브 최소 개수·권역 반경·노선 길이 상한)
+    rules_log = None
+    rule_kw: dict = {}
+    if not args.absolute_rules:
+        rr = RU.relative_rules(demand, net, Graph(net, scen.policy.dwell_base_s, 10 ** 9, "network"), fleets, cfg.rules)
+        rule_kw, rules_log = rr["params"], {**rr, "params": {k: (list(v) if isinstance(v, tuple) else v)
+                                                              for k, v in rr["params"].items()}}
+    # 필수 정류장(설계 6.1c): 그 파업에서 계속 운행하는 노선으로 판정
+    must_res = None
+    if args.facilities is not None:
+        override = (set(strike.routes) if strike is not None else
+                    (set() if args.demand_mode == "all_bus_no_absorption" else None))
+        must_res = MS.for_bundle(args.facilities, root, info["gu"], MS.MustConfig(), override)
+        rule_kw["must_stops"] = tuple(must_res["must_stops"])
     p = cfg.walk_params(home_gu=info["gu"], multi=args.multi,
                         **({} if args.loop is None else {"loop": None if args.loop == "none" else args.loop}),
-                        **(json.loads(args.gen) if args.gen else {}))
+                        **rule_kw, **(json.loads(args.gen) if args.gen else {}))
     sfx = "m" if args.multi else ""
     keys = sorted(demand.od)
     reach = None
@@ -284,6 +326,9 @@ def main() -> int:
            "pool_multi": sum(1 for c in pool if c.kind == "multi"),
            "pool_cover_direct": round(sum(demand.od_total(k) for k in {k for c in pool for k in c.cover_keys}) / demand.total(), 4),
            "pool_cover_walk": round(sum(demand.od_total(k) for k in {k for ks in wkeys.values() for k in ks}) / demand.total(), 4),
+           "strike": strike_log, "rules": rules_log,
+           "must": None if must_res is None else {k: must_res[k] for k in ("must_stops", "counts", "gu_code", "config")},
+           "must_candidates": gres.dropped.get("must"),
            "plans": {}, "walk_stats": {}, "absorbed": hs["absorbed"], "affected_total": hs["affected_total"],
            "absorbed_test": hs["absorbed_test"], "affected_total_test": hs["affected_total_test"]}
     if only and (out / "walk_eval.json").exists():
@@ -311,6 +356,22 @@ def main() -> int:
             return
         path = write_plan(out / "plans" / f"{label}-f{fleet}.json", f"plan-{label}-f{fleet}", snap, routes)
         plan_specs.setdefault(label, {})[fleet] = path
+        # plan_report.json(통합): 노선 형태·필수 정류장·제약 위반·시나리오·규칙·설정
+        al = extra.get("alloc") or {}
+        rep_ = {"plan_id": f"plan-{label}-f{fleet}", "label": label, "fleet": fleet,
+                "routes": extra.get("route_info") or [{"stops": r, "vehicles": v} for r, v in routes],
+                # 순환 확인(설계 6.1b): 돌아오는 길에도 정차가 있고, 빈 차는 고리를 닫는 마지막 한 구간(≤ 고리 닫기 상한)뿐
+                "loop_check": [{"returns_with_stops": ri.get("ret_n_stops", 0) > 0,
+                                "closure_single_leg": len(ri.get("closure_stops") or []) == 2,
+                                "closure_s": ri.get("closure_s"),
+                                "closure_ok": (ri.get("closure_s") or 0) <= p.loop_closure_max_s}
+                               for ri in (extra.get("route_info") or [])],
+                "must_effect_vs_no_must": extra.get("must_effect"),
+                "must": al.get("must"), "equity": al.get("equity"), "feasible": al.get("feasible"),
+                "warnings": al.get("warnings"), "strike": strike_log, "rules": rules_log,
+                "service_start": extra.get("service_start"), "code": log.get("code")}
+        (out / "plans" / f"{label}-f{fleet}.plan_report.json").write_text(
+            json.dumps(rep_, ensure_ascii=False, indent=1), encoding="utf-8")
         stops = {s for r, _ in routes for s in r}
         eqv = eq_ix.of_plan(reach, [r for r, _ in routes]) if reach is not None else \
             eq_ix.ratios(set().union(*(set(WK.walk_cover_keys(list(r), keys, nb)) for r, _ in routes)))
@@ -370,7 +431,7 @@ def main() -> int:
     log["floor_combos"] = args.floor_combos
     log["alloc"] = {"cap_mode": args.cap_mode, "route_min_per_vehicle": route_min, "service_starts": starts}
 
-    def model(start: str | None, eq_floor=None, rmin: float = 0.0) -> A.Model:
+    def model(start: str | None, eq_floor=None, rmin: float = 0.0, use_must: bool = True) -> A.Model:
         ap_ = A.AllocParams(cap_mode=args.cap_mode, route_min_per_vehicle=rmin,
                             service_start_s=None if start in (None, "06:00") else _hhmm(start))
         ef = None if eq_floor is None else A.EquityFloor.from_index(eq_ix, eq_floor["total"], eq_floor["far"],
@@ -380,11 +441,16 @@ def main() -> int:
             ef = A.EquityFloor(ef.w_total, ef.w_far, ef.den_total, ef.den_far, ef.floor_total, ef.floor_far,
                                tuple((lab, {r: k for r, k in cov.items() if r in ids}, ft, ff)
                                      for lab, cov, ft, ff in ef.extra))
-        return A.Model([(rid, cyc, wkeys[rid], sp_of[rid]) for rid, _, cyc in cands], demand.od, ap_, groups, equity=ef)
+        must_map = None
+        if p.must_stops and use_must:                         # 필수 정류장 → 첫·끝이 아닌 정차로 지나는 이 풀의 노선
+            ids = {rid for rid, _, _ in cands}
+            must_map = {s: tuple(c.route_id for c in pool if c.route_id in ids and s in c.must) for s in p.must_stops}
+        return A.Model([(rid, cyc, wkeys[rid], sp_of[rid]) for rid, _, cyc in cands], demand.od, ap_, groups, equity=ef,
+                       must=must_map, must_min_tph=args.must_min_tph)
 
     def alloc_record(a: dict) -> dict:
-        return {k: a[k] for k in ("value", "violation", "feasible", "equity", "per_vehicle", "route_shortfall",
-                                  "cap_mode", "service_start_s", "hour_weights", "warnings", "chosen")}
+        return {k: a.get(k) for k in ("value", "violation", "feasible", "equity", "per_vehicle", "route_shortfall",
+                                      "cap_mode", "service_start_s", "hour_weights", "warnings", "chosen", "must")}
 
     # 초기해 보강(3단계 보고 5절 4): 같은 풀에서 먼저 만든 해(같은 대수의 다른 운행 시작 시각, 더 적은 대수 + 탐욕 채움)를
     # 국소 탐색 초기해로 더한다. 순서: 대수 작은 것 → 큰 것, 시작 시각 이른 것 → 늦은 것. 결정론.
@@ -421,11 +487,26 @@ def main() -> int:
             solved.setdefault((lsfx, "eq"), {})[(f, st)] = dict(a["n"])
             solved.setdefault((lsfx, "free"), {})[(f, st)] = dict(free["n"])
             fe = m.equity_of(free["n"]) if floor is not None else None
+            must_effect = None
+            if p.must_stops:                                  # 필수 정류장을 끈 같은 배분(하한 같음)과 비교
+                mn = model(st, floor, route_min, use_must=False)
+                an = A.allocate(mn, f)
+                wn, fn = a["n"], an["n"]
+                must_effect = {
+                    "approx_with_must": round(a["value"], 1), "approx_without_must": round(an["value"], 1),
+                    "approx_diff": round(a["value"] - an["value"], 1),
+                    "routes_added": [{"candidate": c, "vehicles": wn[c], "must": list(by[c].must)}
+                                     for c in sorted(set(wn) - set(fn))],
+                    "routes_removed": [{"candidate": c, "vehicles": fn[c]} for c in sorted(set(fn) - set(wn))],
+                    "vehicles_changed": [{"candidate": c, "without": fn[c], "with": wn[c]}
+                                         for c in sorted(set(fn) & set(wn)) if fn[c] != wn[c]],
+                    "uncovered_without_must": sorted(s_ for s_ in p.must_stops
+                                                     if not any(s_ in by[c].must for c in fn))}
             ids = [k for k, _ in sorted(a["n"].items())]
             fids = [k for k, _ in sorted(free["n"].items())]
             record(label, f, [(list(by[k].stops), v) for k, v in sorted(a["n"].items())],
                    {"approx": round(a["value"], 1), "service_start": st, "alloc": alloc_record(a),
-                    "route_ids": ids, "route_info": route_info(ids),
+                    "route_ids": ids, "route_info": route_info(ids), "must_effect": must_effect,
                     "unconstrained": {"n": free["n"], "approx": round(free["value"], 1),
                                       "per_vehicle": free["per_vehicle"],
                                       "equity": None if fe is None else {"total": round(fe["total"], 4),

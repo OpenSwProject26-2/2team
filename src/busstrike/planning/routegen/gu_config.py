@@ -24,6 +24,11 @@
 }
 - 사전(dict)은 키별로 겹쳐 쓰고, 목록·숫자는 통째로 바꾼다. configs는 구 쪽에 이름이 있으면 그 설정을 통째로 바꾼다.
 - Params·AbsorbParams에 없는 키는 오류(오타를 조용히 넘기지 않는다).
+
+설정값 정책(설계 15절, 2026-11-21): 설정은 입력 / 규칙 / 정책 상수 세 종류다(`KIND`).
+- 구별 덮어쓰기(gu.<slug>)는 **입력 종류만** 허용한다(`GU_INPUT_PATHS`). 규칙·정책 상수를 구별로 덮어쓰면 거절한다
+  (`allow_rule_override=True`면 경고만 — 옛 결과 재현용). 덮어쓴 목록은 `record()["gu_overrides"]`에 남는다.
+- 규칙은 절댓값 대신 그 구 입력에서 계산한다(`rules.py`, 식의 상수 = default.rules, 구로에서 정해 고정).
 """
 
 from __future__ import annotations
@@ -37,6 +42,37 @@ from .generate import Params
 from .reach import EvalRule
 
 WALK_KEYS = {"radius_m", "near_m", "near_discount", "lambdas", "targets", "multi", "generate", "service_starts"}
+# 구별로 덮어쓸 수 있는 입력(설계 15절). 대수·필수 시설·수요·파업 노선은 묶음·명령줄 입력이라 여기에 없다.
+GU_INPUT_PATHS = {"walk.service_starts"}
+# 종류(보고용). 접두어 일치: 가장 긴 접두어의 종류.
+KIND = {
+    "walk.service_starts": "input",
+    "rules": "rule", "configs": "rule", "generate": "rule", "walk.generate": "rule", "walk.radius_m": "policy",
+    "walk.multi": "rule", "absorb": "policy", "equity": "policy", "eval": "policy",
+    "walk.near_m": "policy", "walk.near_discount": "policy", "walk.lambdas": "policy", "walk.targets": "policy",
+}
+
+
+def kind_of(path: str) -> str:
+    best = None
+    for k in KIND:
+        if path == k or path.startswith(k + "."):
+            if best is None or len(k) > len(best):
+                best = k
+    return KIND[best] if best else "unknown"
+
+
+def _paths(d: dict, pre: str = "") -> list[str]:
+    out = []
+    for k, v in d.items():
+        if k.startswith("_"):
+            continue
+        p = f"{pre}.{k}" if pre else k
+        if isinstance(v, dict) and k != "configs" and p not in GU_INPUT_PATHS:
+            out += _paths(v, p)
+        else:
+            out.append(p)
+    return out
 EQUITY_KEYS = {"far_m", "floor", "route_min_per_vehicle"}
 EQUITY_DEFAULT = {"far_m": 800, "floor": "muni", "route_min_per_vehicle": 90.0}
 
@@ -59,9 +95,19 @@ def _check(kw: dict, cls, where: str) -> dict:
 
 
 class GuConfig:
-    def __init__(self, raw: dict, gu: str, source: str = ""):
+    def __init__(self, raw: dict, gu: str, source: str = "", allow_rule_override: bool = False):
         self.gu, self.source = gu, source
-        self.raw = _merge(raw.get("default", {}), raw.get("gu", {}).get(gu, {}))
+        over = raw.get("gu", {}).get(gu, {})
+        self.gu_overrides = [{"path": p, "kind": kind_of(p)} for p in sorted(_paths(over))]
+        bad = [o["path"] for o in self.gu_overrides if o["path"] not in GU_INPUT_PATHS]
+        if bad:
+            msg = (f"구별 덮어쓰기는 입력 종류만 허용한다(설계 15절): gu.{gu}의 {bad}는 규칙·정책 상수다. "
+                   "규칙은 rules.py 식(default.rules)으로 계산된다")
+            if not allow_rule_override:
+                raise ValueError(msg)
+            import warnings
+            warnings.warn(msg, RuntimeWarning, stacklevel=2)
+        self.raw = _merge(raw.get("default", {}), over)
         base = self.raw.get("generate", {})
         self.configs = {name: _check({**base, **kw}, Params, f"configs.{name}")
                         for name, kw in self.raw.get("configs", {}).items()}
@@ -87,6 +133,8 @@ class GuConfig:
             raise ValueError(f"eval.combos: 모르는 축 {bad}")
         self.eval = ev
         EvalRule.from_dict(ev)                       # 오타·잘못된 값을 여기서 막는다
+        from .rules import RuleConstants
+        self.rules = RuleConstants.from_dict(self.raw.get("rules"))
 
     def eval_rule(self, **override) -> EvalRule:
         """평가·설계 기본 규칙(설정 파일 eval 절) 위에 override만 바꾼 규칙."""
@@ -110,11 +158,11 @@ class GuConfig:
 
     def record(self) -> dict:
         """결과 파일에 남길 실제 사용 값."""
-        return {"source": self.source, "gu": self.gu, **self.raw}
+        return {"source": self.source, "gu": self.gu, **self.raw, "gu_overrides": self.gu_overrides}
 
 
-def load(path: Path | str | None, gu: str) -> GuConfig:
+def load(path: Path | str | None, gu: str, allow_rule_override: bool = False) -> GuConfig:
     if path is None:
         return GuConfig({}, gu, "")
     p = Path(path)
-    return GuConfig(json.loads(p.read_text(encoding="utf-8")), gu, str(p))
+    return GuConfig(json.loads(p.read_text(encoding="utf-8")), gu, str(p), allow_rule_override)

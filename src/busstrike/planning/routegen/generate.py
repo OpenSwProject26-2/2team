@@ -63,6 +63,11 @@ class Params:
     # hub_floor = 그래도 이보다 작은 역은 허브로 두지 않는다(하루 명)
     hub_share: float | None = None
     hub_floor: float = 30.0
+    hub_min_count: int = 0            # 허브 최소 개수: 기준을 넘는 역이 이보다 적으면 수요 큰 역부터 채운다(파업 비율이 낮을 때)
+    # 필수 정류장(설계 6.1c, 통합 2026-11-21). 비면 필수 정류장 후보를 만들지 않는다
+    must_stops: tuple[str, ...] = ()
+    must_insert_radius_m: float = 600.0   # 이 거리 안에 정류장이 있는 후보에만 끼워 본다
+    must_feeder_stations: int = 3         # 전용 후보: 직선거리로 가까운 역 몇 곳까지 시도
     # 순환(6b). None = 편도 + 공차 복귀(예전 결과 재현용), "demand"(기본 경로) | "deadhead"(비교 기준) | "both"
     loop: str | None = None
     loop_closure_max_s: int = 300     # 고리 닫기 공차 상한(초). 지자체안 최대 약 4분
@@ -109,6 +114,7 @@ class Candidate:
     ret_oneway_s: int = 0
     out_n_stops: int = 0              # 방향별 정차 수(역 지정 정류장 제외, 꺾는 정류장은 가는 길)
     ret_n_stops: int = 0
+    must: tuple[str, ...] = ()        # 첫·끝이 아닌 정차로 지나는 필수 정류장(덮음)
 
     def record(self) -> dict:
         d = asdict(self)
@@ -168,9 +174,14 @@ def hub_threshold(demand: Demand, net: Network, p: Params) -> float:
 def hubs_of(demand: Demand, net: Network, p: Params) -> dict[str, float]:
     F = demand.station_total()
     th = hub_threshold(demand, net, p)
-    return {k: F[k] for k in sorted(F)
-            if F[k] >= th and k in net.stations
-            and (net.stations[k].access_stop or net.stations[k].egress_stop)}
+    ok = [k for k in sorted(F) if F[k] > 0 and k in net.stations
+          and (net.stations[k].access_stop or net.stations[k].egress_stop)]
+    hubs = {k: F[k] for k in ok if F[k] >= th}
+    for k in sorted(ok, key=lambda x: (-F[x], x)):       # 허브 최소 개수(기본 0 = 예전 동작)
+        if len(hubs) >= p.hub_min_count:
+            break
+        hubs.setdefault(k, F[k])
+    return dict(sorted(hubs.items()))
 
 
 def station_reach(graph: Graph, net: Network, k: str, s: str) -> float:
@@ -489,7 +500,13 @@ def _finish(c: Candidate, b: Builder, scenario: Scenario, p: Params, dropped: di
         c.cover_keys = b.cover_keys_of(c.stops)
         c.cover = sum(b.od_total[k] for k in c.cover_keys)
         c.cross_gu = any(net.stops[s].gu != p.home_gu for s in c.stops)
+        if p.must_stops:
+            ms = set(p.must_stops)
+            c.must = tuple(s for s in c.stops[1:-1] if s in ms)
         return True
+    if p.must_stops:
+        ms = set(p.must_stops)
+        c.must = tuple(s for s in c.stops[1:-1] if s in ms)
     c.oneway_s = g.oneway_s(c.stops)
     c.length_m = g.length_m(c.stops)
     c.detour = g.detour(c.stops)
@@ -529,7 +546,7 @@ def dedupe(cands: list[Candidate], threshold: float) -> tuple[list[Candidate], i
         dup = False
         dk = direction_key(c)
         for k in kept:
-            if direction_key(k) != dk:
+            if direction_key(k) != dk or k.must != c.must:   # 필수 정류장을 덮는 버전은 같은 필수 정류장끼리만 비교
                 continue
             sk = set(k.stops)
             if len(sc & sk) / len(sc | sk) >= threshold:
@@ -615,6 +632,12 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
         raw, loop_reasons = _loops(b, raw, p, scenario, dropped, jobs)
     t_loop = time.time()
 
+    # 6c. 필수 정류장: 가까운 기존 후보에 끼운 버전, 덮는 후보가 없을 때만 전용 순환
+    must_stats: dict = {}
+    if p.must_stops:
+        raw, must_stats = _must_candidates(b, raw, p, scenario)
+    t_must = time.time()
+
     # 7. 덮개·주기
     cands = []
     for key in sorted(raw):
@@ -623,10 +646,12 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
             cands.append(c)
         elif not c.loop:
             dropped["conversion_failed"] += 1
-    cands = [c for c in cands if c.cover > 0]
+    cands = [c for c in cands if c.cover > 0 or c.must]
     for i, c in enumerate(cands, start=1):
         c.route_id = f"c{i:04d}"
     t_fin = time.time()
+    if p.must_stops:
+        dropped["must"] = must_stats
     return Result(p, hubs, {k: len(v) for k, v in K.items()}, {f"{a}-{b_}": round(v, 4) for (a, b_), v in O.items()},
                   clusters, cands, dropped,
                   {"setup": round(t_setup - t0, 2), "insertion": round(t_gen - t_setup, 2),
@@ -713,6 +738,122 @@ def _loops(b: Builder, raw: dict, p: Params, scenario: Scenario, dropped: dict, 
                                  loop=mode, loop_variant=var, turn=len(c.stops) - 1)
     _LOOP_STATE.clear()
     return new, dict(sorted(reasons.items()))
+
+
+def _insert_must(g: Graph, stops: tuple[str, ...], turn: int, m: str):
+    """필수 정류장 m을 이웃한 두 정류장 사이에 끼운다(영업 시간 증가가 가장 작은 자리, 동률이면 앞자리).
+
+    사이에 끼우므로 m은 첫·끝이 아니다. 같은 정류장 두 번(S2)이 되면 그 자리는 버린다. 돌려주는 값: (정차열, 꺾는 순번).
+    """
+    best = None
+    for i in range(len(stops) - 1):
+        p1, p2 = g.path(stops[i], m), g.path(m, stops[i + 1])
+        if p1 is None or p2 is None:
+            continue
+        new = stops[:i + 1] + p1[1:] + p2[1:] + stops[i + 2:]
+        if len(set(new)) != len(new):
+            continue
+        t = g.oneway_s(new)
+        nt = turn if i >= turn else turn + (len(new) - len(stops))
+        if best is None or (t, i) < best[0]:
+            best = ((t, i), new, nt)
+    return (best[1], best[2]) if best else None
+
+
+def _must_candidates(b: "Builder", raw: dict, p: Params, scenario: Scenario) -> tuple[dict, dict]:
+    """6c. 필수 정류장 후보(설계 6.1c).
+
+    ① 끼운 버전(origin must_insert): 필수 정류장에서 must_insert_radius_m 안에 정류장이 있는 기존 후보에 끼운다.
+       순환 후보는 3b와 같은 제약(가는 길: 편도·정차·우회율·U턴, 돌아오는 길: `LoopBuilder.full_ok`)을 지킨 것만 남긴다.
+    ② 전용 후보(origin must_feeder): 기존 후보(①포함)가 하나도 덮지 못한 필수 정류장에만 만든다. 직선거리로 가까운
+       역부터 must_feeder_stations곳까지: 역 egress 정류장 → 필수 정류장(꺾는 정류장)을 가는 길로, 3b 수요 방식으로
+       돌아오는 길을 붙인다(egress 패턴: 고정 정류장 = 그 역 access 지정 정류장). 우회율은 보지 않는다(길이·정차·U턴·
+       고리 닫기는 지킨다). 필수 정류장은 꺾는 정류장이라 첫·끝이 아니다.
+    """
+    from .graph import Limits
+    from .loop import LoopBuilder, LoopLimits
+    g, net = b.g, b.net
+    known = net.tt.stop_ids()
+    must = sorted(set(p.must_stops))
+    stats = {"must_stops": must, "not_in_network": [m for m in must if m not in known],
+             "covered_by_existing": [], "insert": {}, "dedicated": {}}
+    lb = LoopBuilder(b, p.radius_m) if p.loop else None
+
+    def covers(c, m):
+        return m in c.stops[1:-1]
+
+    new = dict(raw)
+    for m in must:
+        if m in known and any(covers(c, m) for c in raw.values()):
+            stats["covered_by_existing"].append(m)
+    for key in sorted(raw):
+        c = raw[key]
+        for m in must:
+            if m not in known or m in c.stops:
+                continue
+            if min(net.stop_dist_m(m, s) for s in c.stops) > p.must_insert_radius_m:
+                continue
+            st = stats["insert"].setdefault(m, {"tried": 0, "ok": 0})
+            st["tried"] += 1
+            turn = c.turn if c.loop else len(c.stops) - 1
+            got = _insert_must(g, c.stops, turn, m)
+            if got is None:
+                continue
+            stops, nt = got
+            st_stops = frozenset(x for h in c.hubs for x in (net.stations[h].access_stop, net.stations[h].egress_stop) if x)
+            if c.loop:
+                lim = loop_limits(c, p)
+                out, ret = stops[:nt + 1], stops[nt:]
+                bad = g.violations(out, st_stops, Limits(lim.l_max_s, lim.max_stops, lim.max_detour)) + \
+                    lb.full_ok(out, ret, lim)
+            else:
+                L = min([int(t.split("_L")[1]) for t in c.made_by if "_L" in t] or [max(p.l_max_min)])
+                bad = g.violations(stops, st_stops, Limits(L * 60, p.max_stops, p.max_detour))
+            if bad:
+                continue
+            st["ok"] += 1
+            k2 = (("must_insert", c.kind, c.hubs, stops, c.loop, c.loop_variant) if c.loop
+                  else ("must_insert", c.kind, c.hubs, stops))
+            if k2 not in new:
+                new[k2] = Candidate("", c.kind, stops, "must_insert", c.hubs, c.cluster, (f"must:{m}",),
+                                    loop=c.loop, loop_variant=c.loop_variant, turn=nt if c.loop else 0)
+    stations = sorted(k for k, st_ in net.stations.items() if (st_.egress_stop or st_.access_stop) in known)
+    L_free = max(p.l_max_min) * 60
+    for m in must:
+        if m not in known or any(covers(c, m) for c in new.values()):
+            continue
+        made = None
+        for k in sorted(stations, key=lambda x: (net.station_stop_dist_m(x, m), x))[: p.must_feeder_stations]:
+            st_ = net.stations[k]
+            e = st_.egress_stop or st_.access_stop
+            S = g.path(e, m)
+            if S is None or len(S) < 2 or g.violations(S, frozenset({e}), Limits(L_free, p.loop_max_stops, float("inf"))):
+                continue
+            if lb is not None:
+                lim = LoopLimits(L_free, p.loop_max_stops, float("inf"), p.loop_closure_max_s, p.loop_max_stops_total)
+                ret = lb.demand_return("egress", (k,), S, lim)
+                if ret is None:
+                    continue
+                stops = S + ret[1:]
+                cand = Candidate("", "egress", stops, "must_feeder", (k,), None, (f"must:{m}",),
+                                 loop="demand", turn=len(S) - 1)
+                key = ("must_feeder", "egress", (k,), stops, "demand", "")
+            else:
+                back = g.path(m, st_.access_stop or e)
+                if back is None:
+                    continue
+                stops = S + back[1:]
+                if len(set(stops)) != len(stops):
+                    continue
+                cand = Candidate("", "egress", stops, "must_feeder", (k,), None, (f"must:{m}",))
+                key = ("must_feeder", "egress", (k,), stops)
+            if route_cycle(cand.stops, net.tt, scenario) is None:
+                continue
+            new[key] = cand
+            made = k
+            break
+        stats["dedicated"][m] = made
+    return new, stats
 
 
 def _multi_feeders(net: Network, graph: Graph, demand: Demand, p: Params, add) -> None:
