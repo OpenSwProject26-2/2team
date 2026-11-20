@@ -24,6 +24,12 @@ from typing import Iterable
 Key = tuple[str, str]
 
 
+def od_from_start(od: dict, start_hour: int, hours: tuple = (6, 7, 8, 9)) -> dict:
+    """시간대별 OD 수요({키: [6시, 7시, 8시, 9시]}) → 운행 시작 시(start_hour)부터의 합. 07:00 시작이면 06~07시를 뺀다."""
+    h0 = hours.index(start_hour)
+    return {k: sum(v[h0:]) for k, v in od.items()}
+
+
 def home_end(key: Key, station_stops: set[str]) -> str:
     """OD 키의 동네 끝 정류장(역 지정 정류장이 아닌 쪽, 둘 다 역이면 출발 쪽)."""
     o, d = key

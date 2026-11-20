@@ -220,5 +220,34 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(sorted(hubs_of(dem, net, Params(hub_min=500, hub_min_count=3))), ["A", "B", "C"])
 
 
+class ServiceStartTest(unittest.TestCase):
+    """07:00 시작: 차량 가용 시작 25,200초, 06~07시 수요는 모든 안에서 분모(탑승·형평)에서 뺀다."""
+
+    def test_fleet_scenario_available_start(self):
+        sys.path.insert(0, str(ROOT / "experiments" / "routegen_lab"))
+        from strike_eval import START_S, drop_before, fleet_scenario
+        base = {"scenario_id": "s", "fleet": {"authorized_count": 2, "vehicles": [
+            {"vehicle_id": "V001", "available_start_s": 21600, "available_end_s": 39600, "seat_capacity": 45}]}}
+        sc = fleet_scenario(base, 3, START_S, "t")
+        self.assertEqual(START_S, 25200)
+        self.assertEqual([v["available_start_s"] for v in sc["fleet"]["vehicles"]], [25200] * 3)
+        self.assertEqual([v["vehicle_id"] for v in sc["fleet"]["vehicles"]], ["V001", "V002", "V003"])
+        self.assertEqual(sc["fleet"]["authorized_count"], 3)
+        self.assertEqual(base["fleet"]["vehicles"][0]["available_start_s"], 21600)      # 원본은 그대로
+        from busstrike.sim.models import BinRow
+        bins = [BinRow("a-t021600", "x", "y", 21600, 3600, 5), BinRow("a-t025200", "x", "y", 25200, 3600, 7)]
+        self.assertEqual([b.bin_start_s for b in drop_before(bins)], [25200])
+
+    def test_equity_denominator_excludes_before_start(self):
+        from busstrike.planning.routegen.equity import EquityIndex, od_from_start
+        od = {("h", "G1"): [100.0, 10.0, 10.0, 0.0], ("f", "G1"): [0.0, 5.0, 5.0, 0.0]}
+        self.assertEqual(od_from_start(od, 6), {("h", "G1"): 120.0, ("f", "G1"): 10.0})
+        o7 = od_from_start(od, 7)
+        self.assertEqual(o7, {("h", "G1"): 20.0, ("f", "G1"): 10.0})
+        eq = EquityIndex.build(o7, {"G1"}, {"h", "f"}, {"h": {"h": 0.0}, "f": {"f": 0.0}}, 800.0)
+        self.assertAlmostEqual(eq.den_total, 30.0)
+        self.assertAlmostEqual(eq.ratios({("h", "G1")})["total"], 20 / 30)
+
+
 if __name__ == "__main__":
     unittest.main()

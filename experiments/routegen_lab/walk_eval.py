@@ -58,7 +58,7 @@ from busstrike.planning.routegen import rules as RU  # noqa: E402
 from busstrike.planning.routegen import strike as K  # noqa: E402
 from busstrike.planning.routegen.graph import Graph  # noqa: E402
 from busstrike.planning.routegen.absorb import Absorber, residual_rows  # noqa: E402
-from busstrike.planning.routegen.equity import EquityIndex  # noqa: E402
+from busstrike.planning.routegen.equity import EquityIndex, od_from_start  # noqa: E402
 from busstrike.planning.routegen.reach import Reach, StationIndex  # noqa: E402
 from busstrike.sim import io as sio  # noqa: E402
 from busstrike.sim.arrivals import build_run_inputs  # noqa: E402
@@ -227,7 +227,8 @@ def main() -> int:
     rn = RoadNet(args.osm, root)
     nb = walk_neighbors(rn, args.radius)
     # 망: 지자체 무정차 구간까지 담은 도로 망
-    tt_path = sw / "net" / "road.json" if muni_dirs else sw / "muni" / "road_muni.json"
+    has_muni = bool(muni_dirs) or (sw / "muni" / "plan.json").exists()   # 지자체안이 없는 구(스모크)는 우리 안만
+    tt_path = sw / "net" / "road.json" if (muni_dirs or not has_muni) else sw / "muni" / "road_muni.json"
     doc = json.loads(tt_path.read_text(encoding="utf-8"))
     turns_p = sw / "net" / "turns.json"
     if not turns_p.exists():
@@ -312,7 +313,9 @@ def main() -> int:
              for c in pool}
     sp_of = {rid: (None if v is None else v[1]) for rid, v in spans.items()}
     # 형평 지표(설계 2.2): 그 구 동네 정류장 수요, 역 far_m 밖 = 지정 정류장 도로 도보 far_m 안에 없는 정류장
-    eq_ix = EquityIndex.build({k: demand.od_total(k) for k in keys}, st_stops, home, nb_near, far_m)
+    # 운행 시작 전 시간대(07:00 시작이면 06~07시) 수요는 분모·분자에서 뺀다(통합 3.1, 모든 안 같게)
+    od_eq = od_from_start(demand.od, min(_hhmm(x) for x in starts) // 3600 if starts else D.HOURS[0], D.HOURS)
+    eq_ix = EquityIndex.build({k: od_eq[k] for k in keys if k in od_eq}, st_stops, home, nb_near, far_m)
     log = {"gu": info["gu"], "radius_m": args.radius, "fleets": fleets, "pool": len(pool),
            "code": code_state(), "command": sys.argv,
            "loop": p.loop, "pools": {(lsfx or "oneway"): len(ps) for lsfx, ps in psets},
@@ -386,7 +389,7 @@ def main() -> int:
 
     # muni
     muni_src: dict[str, Path] = {}
-    for lab, mdir in (muni_dirs.items() if muni_dirs else [("muni", sw / "muni")]):
+    for lab, mdir in (muni_dirs.items() if muni_dirs else ([("muni", sw / "muni")] if has_muni else [])):
         mp = json.loads((mdir / "plan.json").read_text(encoding="utf-8"))
         mf = sum(r["vehicles"] for r in mp["routes"])
         mrec = json.loads((mdir / "muni.json").read_text(encoding="utf-8")) if (mdir / "muni.json").exists() else {}

@@ -19,7 +19,9 @@ spec.json
   "renumber": false,                                    # true면 참고 구현처럼 aggregate_id를 a0000001…로 다시 매김
   "keep_events": "cov70r3md-f11/same_line-w400/exp/20261028",  # events.jsonl·realization.jsonl을 남길 실행 하나
   "equity": true,                                       # 안 × 조합마다 형평 지표(탈 수 있는 수요 비율 두 값)를 낸다(기본 켬)
-  "nb_far": "<도보 이웃 800m json>" | null              # 역 800m 밖 판정(없으면 osm으로 재서 out에 저장)
+  "nb_far": "<도보 이웃 800m json>" | null,             # 역 800m 밖 판정(없으면 osm으로 재서 out에 저장)
+  "strike": {"rate": 0.5, "draw": 0, "seed": 20261121} | null,   # 형평 수요를 그 파업 시나리오로(strike.py, 통합 3.1)
+  "equity_start": "07:00" | null                        # 형평 분모에서 이 시각 전 수요를 뺀다(07:00 시작)
 }
 결과: `<out>/runs/<tag>/<조합>/<split>/`(run_matrix 결과 + group.json), `<out>/results.json`(실행마다 한 줄),
 `<out>/meta.json`(코드 커밋·규칙·망·설정), `<out>/equity.json`(안 × 조합 형평 두 값, 설계 2.2, `equity_eval`).
@@ -234,8 +236,15 @@ def main() -> int:
     equity: dict = {}
     if spec.get("equity", True):
         from equity_eval import plan_equity, setup
+        erows = None
+        if spec.get("strike"):
+            from busstrike.planning.routegen import strike as K
+            sk = spec["strike"]
+            erows, _ = K.strike_rows(root, K.draw_strike(root, float(sk["rate"]), int(sk["draw"]),
+                                                         int(sk.get("seed", 20261121))))
         ectx = setup(root, cfg, Path(spec["osm"]), out, test_root, nb=nb,
-                     nb_far_path=Path(spec["nb_far"]) if spec.get("nb_far") else None, lines=Path(lines))
+                     nb_far_path=Path(spec["nb_far"]) if spec.get("nb_far") else None, lines=Path(lines), rows=erows,
+                     start_hour=hhmm_s(spec["equity_start"]) // 3600 if spec.get("equity_start") else 6)
         for p in spec["plans"]:
             routes = [r["stops"] for r in json.loads(Path(p["plan"]).read_text(encoding="utf-8"))["routes"]]
             equity[p["tag"]] = plan_equity(ectx, routes, combos)

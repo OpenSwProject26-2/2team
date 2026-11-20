@@ -118,6 +118,17 @@ class LoopCandidateTest(unittest.TestCase):
             self.assertLessEqual(c.closure_s, 300)
             self.assertFalse(g.has_uturn(cyclic_seq(c.stops, c.return_stops)))
             self.assertGreater(c.ret_n_stops, 0)                                         # 편도 + 긴 공차가 아니다
+            # 통합: 빈 차 구간은 고리를 닫는 한 구간뿐(정류장 2개, ≤ 300초), 변환기 S1~S6·RETURN 통과
+            cyc = route_cycle(c.stops, net.tt, scenario())
+            self.assertIsNotNone(cyc)
+            self.assertEqual(len(cyc.return_stops), 2, cyc.return_stops)
+            self.assertLessEqual(closure_s(g, cyc.return_stops), 300)
+            from busstrike.planning.routegen.cycle import single_route_plan
+            from busstrike.sim.adapters.comparison_plan import check_plan
+            rep_ = check_plan(single_route_plan(c.stops, net.tt, scenario()), net.tt, scenario())
+            self.assertTrue(rep_["ok"], rep_["failures"])
+            self.assertTrue(all(rep_["checks"][k] == "pass" for k in ("S1", "S2", "S3", "S4", "S5", "S6", "RETURN")),
+                            rep_["checks"])
             self.assertEqual(c.stops[c.turn], "H" if c.kind == "access" else c.stops[c.turn])
         acc = [c for c in res.candidates if c.kind == "access"]
         self.assertIn(("E", "B2"), acc[0].cover_keys)                                    # 돌아오는 길이 역 → 동네를 덮는다
