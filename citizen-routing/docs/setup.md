@@ -19,7 +19,7 @@ Python 3.10 이상과 Docker Desktop이 필요합니다. 셔틀을 포함한 실
 PowerShell에서 `citizen-routing`으로 이동한 뒤:
 
 ```powershell
-py -3 -m backend.prepare --existing "C:\path\to\busstrike_data_release_20261111.zip" --shuttle "C:\path\to\b_exported_gtfs" --strike-routes "C:\path\to\strike.json" --osm "C:\path\to\seoul.osm.pbf"
+py -3 -m backend.prepare --existing "C:\path\to\busstrike_data_release_20261111.zip" --osm "C:\path\to\seoul.osm.pbf"
 py -3 -m pip install --target runtime/python-libs osmium==4.3.2
 py -3 -B -m backend.build_places
 py -3 routing-engine/build_graph.py
@@ -27,11 +27,18 @@ docker compose -f routing-engine/docker-compose.yml up -d otp
 py -3 -m backend.server
 ```
 
-건물·시설·역 이름은 서울 OSM PBF에서 만든 로컬 색인으로 검색합니다. 출발지와 목적지 입력란에 이름을 입력해 결과를 선택하거나, 입력란을 선택한 뒤 지도에서 원하는 좌표를 클릭할 수 있습니다. OSM에 없는 장소도 지도 클릭으로 지정할 수 있습니다. 색인은 준비한 PBF의 이름과 주소 범위에 따라 달라지며, 운영 중 외부 장소 검색 API 호출은 하지 않습니다.
+건물·시설·역 이름은 준비 단계에서 복사된 `runtime/otp/streets.osm.pbf`로 로컬 색인을 만듭니다. OSM에 없는 장소도 지도 클릭 후 '이 지점의 좌표'를 선택해 지정할 수 있습니다. 색인 결과는 준비한 PBF의 이름과 주소 범위에 따라 달라지며, 운영 중 외부 장소 검색 API 호출은 하지 않습니다.
 
-셔틀 자료가 없다면 `--shuttle`을 생략할 수 있으며 화면에서 셔틀 옵션이 비활성화됩니다. 파업 대상 목록이 없다면 `--strike-routes`를 생략할 수 있으나 이 상태를 파업 대응 경로로 해석하면 안 됩니다. 초기 그래프 구축은 입력 크기에 따라 메모리와 시간이 필요합니다. `runtime/otp/graph.obj`가 생성되지 않으면 OTP 로그를 확인하세요.
+위 명령은 A GTFS만 있는 경우입니다. 예시 경로를 실제 파일 경로로 바꾸세요. 확정 B/C 셔틀 GTFS가 있다면 `backend.prepare` 명령에 `--shuttle "C:\path\to\b_exported_gtfs"`를, 파업 노선 JSON이 있다면 `--strike-routes "C:\path\to\strike.json"`을 추가합니다. 셔틀 자료가 없으면 화면에서 셔틀 옵션이 비활성화됩니다. 파업 대상 목록이 없다면 파업 노선을 제외하지 않으므로 이 결과를 파업 대응 경로로 해석하면 안 됩니다. 초기 그래프 구축은 입력 크기에 따라 메모리와 시간이 필요합니다. `runtime/otp/graph.obj`가 생성되지 않으면 OTP 로그를 확인하세요.
 
-운행안 변경 시 서버를 정지하고 변경된 GTFS로 `backend.prepare`를 다시 실행한 후 `py -3 routing-engine/build_graph.py`를 재실행하고 `otp`을 재시작합니다. 그래프 입력 버전이 준비된 GTFS·OSM과 다르면 시민 API는 `GRAPH_NOT_BUILT`을 반환합니다. `manifest.json`의 version은 준비 입력의 식별자이며 운영 승인 상태가 아닙니다. 운영자 대시보드와의 자동 동기화는 아직 없습니다.
+운행안 변경 시 시민 서버와 OTP를 정지하고 변경된 GTFS로 `backend.prepare`를 다시 실행한 뒤 `py -3 routing-engine/build_graph.py`를 재실행합니다. OSM 입력도 바뀌었다면 `py -3 -B -m backend.build_places`로 장소 색인을 다시 만드세요. 이후 OTP와 시민 서버를 다시 시작합니다. 그래프 입력 버전이 준비된 GTFS·OSM과 다르면 시민 API는 `GRAPH_NOT_BUILT`을 반환합니다. `manifest.json`의 version은 준비 입력의 식별자이며 운영 승인 상태가 아닙니다. 운영자 대시보드와의 자동 동기화는 아직 없습니다.
+
+## 화면 사용
+
+1. [http://127.0.0.1:8775/](http://127.0.0.1:8775/)을 열고 출발지·목적지 입력란에서 건물·시설·정류장 이름을 검색해 결과를 선택합니다.
+2. 지도에서 위치를 지정하려면 지도를 클릭한 뒤 표시된 장소 후보의 '출발지로' 또는 '목적지로'를 누릅니다. 임의 위치가 필요하면 '이 지점의 좌표'를 선택합니다. 지도에 보이는 시설·건물이 클릭 대상이 되려면 지도를 확대하세요.
+3. 준비된 GTFS의 운행 날짜 안에서 출발 시각을 정하고 '경로 찾기'를 누릅니다. 셔틀 GTFS가 있을 때만 대체 셔틀 포함 옵션을 사용할 수 있습니다.
+4. 추천 경로 카드는 출발지, 이동 구간, 도착지, 도보·대기·환승 요약을 순서대로 보여줍니다. 카드를 선택하면 해당 경로가 지도에 강조됩니다. 점선은 실제 도로 선형이 아닌 정차점 연결 개략선입니다.
 
 ## API
 
@@ -74,13 +81,13 @@ GET http://127.0.0.1:8775/api/citizen-routing/plan?origin_lat=37.558&origin_lon=
 }
 ```
 
-`include_shuttle=false`는 OTP GraphQL의 transit filter로 SHUTTLE 피드 노선을 **탐색 단계에서 제외**합니다. 셔틀 포함 검색은 셔틀을 우선 강제하지 않습니다. 추천 목록은 OTP 대안 중 도착 시각·환승·도보 시간순으로 정렬합니다. OTP에 경로가 없으면 빈 목록 또는 명시적 `NO_PATH` 오류를 반환합니다. 서버가 OTP에 접속하지 못하면 `OTP_UNAVAILABLE`을 반환하며 가상 경로를 만들지 않습니다.
+`include_shuttle=false`는 OTP GraphQL의 transit filter로 SHUTTLE 피드 노선을 **탐색 단계에서 제외**합니다. 셔틀 포함 검색은 셔틀을 우선 강제하지 않습니다. 화면의 기본 정렬은 최적 경로순(소요시간 + 환승당 10분 + 도보시간의 50%)이며 드롭다운에서 최소 시간순·최소 환승순·최소 도보순을 선택할 수 있습니다. OTP에 경로가 없으면 빈 목록 또는 명시적 `NO_PATH` 오류를 반환합니다. 서버가 OTP에 접속하지 못하면 `OTP_UNAVAILABLE`을 반환하며 가상 경로를 만들지 않습니다.
 
 통합 장소 검색은 `GET /api/citizen-routing/places?q=...`이며 OSM 건물·시설과 GTFS 정류장을 함께 반환합니다. 기존 정류장 전용 `GET /api/citizen-routing/stops?q=...`도 유지합니다. 지도 어느 곳이든 클릭하면 출발지·목적지 선택 창이 열립니다. 지도에 표시된 시설과 `GET /api/citizen-routing/nearby?lat=...&lon=...`의 주변 OSM 장소 후보를 보여주며, 장소가 없거나 임의 지점이 필요하면 '이 지점의 좌표'를 명시적으로 선택할 수 있습니다. MapLibre GL JS와 지도 스타일 파일은 신규 서비스의 vendor 디렉터리에서 제공하며, 실제 배경 타일·글꼴·스프라이트는 OpenFreeMap 인터넷 연결이 필요합니다.
 
 ## 검증 절차
 
-1. `py -3 -m unittest discover -s tests -v`로 GTFS 필터·셔틀 ID 변환·OTP 응답 정규화 테스트를 실행합니다.
+1. `py -3 -B -m unittest discover -s tests -v`로 장소 검색·GTFS 필터·셔틀 ID 변환·OTP 응답 정규화 테스트를 실행합니다.
 2. 실제 A, B/C, OSM을 준비한 뒤 OTP 빌드 로그와 `graph.obj` 생성 여부를 확인합니다.
 3. A만 있는 날짜에 정상 대중교통 검색을 확인합니다.
 4. 셔틀을 추가한 뒤 셔틀 정류장 인근 출발·도착 위치에서 `uses_shuttle=true` 구간이 실제 결과에 있는지 확인합니다.

@@ -116,7 +116,7 @@ def build(osm_path: Path, output: Path) -> int:
 
 def main():
     parser = argparse.ArgumentParser(description="Build a local OSM building and facility search index")
-    parser.add_argument("--osm", type=Path, default=ROOT / "runtime" / "downloads" / "seoul.osm.pbf")
+    parser.add_argument("--osm", type=Path, default=ROOT / "runtime" / "otp" / "streets.osm.pbf")
     parser.add_argument("--output", type=Path, default=ROOT / "runtime" / "places.sqlite")
     args = parser.parse_args()
     if not args.osm.is_file():
