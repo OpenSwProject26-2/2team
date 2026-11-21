@@ -27,7 +27,7 @@ sys.path.insert(0, str(HERE.parent))
 from busstrike.planning.routegen import data as D  # noqa: E402
 from busstrike.planning.routegen import gu_config  # noqa: E402
 from busstrike.planning.routegen.absorb import Absorber, residual_rows  # noqa: E402
-from busstrike.planning.routegen.equity import EquityIndex  # noqa: E402
+from busstrike.planning.routegen.equity import EquityIndex, od_from_start  # noqa: E402
 from busstrike.planning.routegen.reach import Reach, StationIndex  # noqa: E402
 
 
@@ -46,7 +46,7 @@ def load_or_measure_nb(path: Path | None, cache: Path, osm: Path, root: Path, ra
 
 def setup(root: Path, cfg, osm: Path, cache_dir: Path, test_root: Path | None = None, nb: dict | None = None,
           nb_path: Path | None = None, nb_far_path: Path | None = None, lines: Path | None = None,
-          demand=None, rows=None) -> dict:
+          demand=None, rows=None, start_hour: int = 6) -> dict:
     """형평 계산 준비: 수요(정밀 흡수 뒤) · 역 색인 · 도보 이웃(400m, 800m) · EquityIndex."""
     info = D.check_root(root, "exp")
     base = D.load_network(root)
@@ -68,7 +68,7 @@ def setup(root: Path, cfg, osm: Path, cache_dir: Path, test_root: Path | None = 
     if nb is None:
         nb, nb_src = load_or_measure_nb(nb_path, cache_dir / f"nb{int(rmax)}.json", osm, root, rmax)
     nb_far, far_src = load_or_measure_nb(nb_far_path, cache_dir / f"nb{int(far_m)}_home.json", osm, root, far_m, home)
-    od_total = {k: demand.od_total(k) for k in demand.od}
+    od_total = od_from_start(demand.od, start_hour, D.HOURS)   # 운행 시작 전 시간대 수요는 뺀다(07:00 → 06~07시 제외)
     eq = EquityIndex.build(od_total, st_stops, home, nb_far, far_m)
     return {"info": info, "base": base, "st_stops": st_stops, "home": home, "rows": rows, "demand": demand, "ix": ix,
             "nb": nb, "nb_src": nb_src, "nb_far_src": far_src, "od_total": od_total, "eq": eq, "keys": sorted(demand.od)}

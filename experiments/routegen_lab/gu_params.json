@@ -3,6 +3,11 @@
   "default": {
     "_generate_설명": "loop: 셔틀은 무조건 순환 운행(3b단계 원칙, 설계 6.1b). demand = 돌아오는 길을 수요에 맞춰 만든다(기본), deadhead = 공차 복귀 경로를 영업으로(비교 기준), null = 예전 편도 + 공차 복귀(옛 결과 재현용만). loop_closure_max_s = 고리 닫기 공차 상한(초), loop_max_stops = 방향마다 정차 상한(역 지정 정류장 제외)",
     "generate": {"distance_basis": "network", "loop": "demand", "loop_closure_max_s": 300, "loop_max_stops": 12},
+    "rules": {
+      "_설명": "규칙의 상대 기준 식 상수(설계 15절, rules.py). 구로 100%에서 예전 절댓값(허브 135명·권역 3km·편도 20·30분·여러 역 40분·허브 최소 3)을 재현하도록 2026-11-21에 정해 고정. 구별로 덮어쓰지 않는다",
+      "hub_share": 0.95, "hub_per_vehicles": 4, "radius_quantile": 0.999, "length_quantile": 0.5,
+      "length_mult": [1.531, 2.296], "multi_length_mult": 3.06
+    },
     "configs": {
       "base": {},
       "hub135": {"hub_min": 135},
