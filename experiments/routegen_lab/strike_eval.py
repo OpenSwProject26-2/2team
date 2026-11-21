@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -37,7 +38,8 @@ from busstrike.sim import io as sio  # noqa: E402
 from busstrike.sim.arrivals import build_run_inputs, realize_bins, write_demand_bins  # noqa: E402
 from busstrike.sim.models import DemandFlow  # noqa: E402
 
-W = Path("/mnt/c/Users/ddonggojin/orca/projects/guro_exp_work")
+# 저장소 밖 작업 폴더(데이터 위치, docs/design/routegen-data.md). 환경 변수 ROUTEGEN_WORK로 바꾼다
+W = Path(os.environ.get("ROUTEGEN_WORK", "/mnt/c/Users/ddonggojin/orca/projects/guro_exp_work"))
 START_S = 7 * 3600
 EXP_DATES = ("20261026", "20261027", "20261028", "20261029", "20261030")
 FIXED = 11
