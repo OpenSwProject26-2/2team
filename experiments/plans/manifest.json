@@ -10,8 +10,8 @@
       "license": "공공누리 제4유형 (출처표시·상업적이용금지·변경금지)",
       "service_period": "2026-01-13 ~ 파업 종료 시",
       "collected_at": "2026-11-16",
-      "status": "transcribed_only",
-      "status_note": "정류장 매칭 모호 55건과 노선별 차량 배분 미상으로 plan.json 미작성. conversion.md 참고"
+      "status": "plan_ready",
+      "status_note": "plan.json revision 3(2026-11-19, 정류장 8곳 정정), 오전 11대. 변환 기록은 plan-01/conversion.md"
     }
   }
 }
