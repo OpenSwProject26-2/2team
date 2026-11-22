@@ -1,0 +1,3 @@
+plan,target_trips,served_walk,served_pct,connectivity_pct,far_connectivity_pct,far_connected_daily
+municipal,51780,9086,17.547316,28.08,36.4,1801.9
+ours,51780,18741,36.193511,43.72,45.37,2245.7

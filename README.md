@@ -58,6 +58,19 @@ py -3 -B -m unittest discover -s tests/api -p "test_*.py" -v
 python3 -m busstrike.evaluation.verify <실행 결과 폴더>
 ```
 
+## 구로구 프로토타입 평가
+
+| 지표 | 구로구 시뮬레이션 결과 |
+| --- | --- |
+| ① 평상시 노선 재현율 | 평상시 852편의 운행 조건을 입력해 생성한 노선에서 **307구간 중 157구간(51.14%)**이 같은 방향으로 일치 |
+| ② 동네↔철도역 셔틀 수송률 | 세 안이 모두 셔틀 한 번으로 연결할 수 있는 이동에서 지자체안 59.31%, 범용 AI 20회 평균 76.29%, 우리 안 **87.43%** |
+| ③ 같은 배차에서의 수송 효율 | 셔틀 11대와 5일간 155편으로 맞춘 실험에서 도보·대기 반영 점수가 지자체안 14.43점/편, 범용 AI 30.58점/편, 우리 안 **32.69점/편** |
+
+②의 전체 셔틀 수요 51,780건 기준 충족률은 지자체안 17.55%, 범용 AI 37.74%, 우리 안 36.19%입니다.
+②·③은 셔틀 한 대로 이동해 하차까지 마친 구간을 평가합니다. 지하철 탑승과 최종 목적지 도착은 이 실험의 집계 범위 밖입니다.
+
+[평가 방법·AI 프롬프트·회차별 집계](experiments/guro-prototype-evaluation/README.md) · [① 노선 지도](experiments/guro-prototype-evaluation/figures/01-normal-route-recall.png) · [② 수송률](experiments/guro-prototype-evaluation/figures/02-shuttle-transport.png) · [③ 배차 효율](experiments/guro-prototype-evaluation/figures/03-dispatch-efficiency.png)
+
 ## 시뮬레이션 결과 독립 검증기 (M07)
 
 시뮬레이터가 낸 사건 로그·승객 결과·지표를 **엔진과 따로 다시 계산해서** 맞는지 봅니다.

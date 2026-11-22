@@ -1,0 +1,16 @@
+{
+  "normal_routes": 40,
+  "patterns": 46,
+  "trips": 852,
+  "hours": {
+    "7": 317,
+    "8": 273,
+    "9": 262
+  },
+  "normal_edges": 307,
+  "generated_edges": 402,
+  "shared": 157,
+  "recall": 0.511400651465798,
+  "precision": 0.39054726368159204,
+  "jaccard": 0.28442028985507245
+}
