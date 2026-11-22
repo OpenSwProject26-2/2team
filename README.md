@@ -134,6 +134,7 @@ python3 -m busstrike.evaluation.verify <실행 결과 폴더>
 | [시뮬레이션 결과 독립 검증기](src/busstrike/evaluation/README.md) | 검증기 실행법·결과 읽는 법·검사 항목 |
 | [검증기 구현 기록](docs/design/evaluation-verifier.md) | 재계산 알고리즘, 변조 검출, 명세와 구현의 차이 |
 | [평가·독립 검증 의사결정 기록](docs/design/evaluation-decisions.md) | 왜 그렇게 했는지와 발표용 설명. **아직 정하지 않은 것도 구분해 적음** |
+| [구로구 파업 대응 셔틀 평가](experiments/guro-shuttle-evaluation/README.md) | 평상시 노선 재현, 수요 충족률, 역에서 먼 지역 연결률과 범용 AI 참고 비교 |
 | [운행안 비교 평가 프로토콜](docs/design/evaluation-protocol.md) | 여러 운행안을 같은 조건에서 비교하는 절차 |
 | [비교 평가 자료 인벤토리](docs/design/evaluation-data-inventory.md) | 필요 자료의 출처·확보 상태·라이선스 |
 

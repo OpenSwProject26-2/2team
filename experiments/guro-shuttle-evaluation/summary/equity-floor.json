@@ -1,0 +1,17 @@
+{
+  "off": {
+    "far_pct": 34.32,
+    "total_pct": 41.49,
+    "daily_mean_served_walk": 2920.2
+  },
+  "on": {
+    "far_pct": 44.56,
+    "total_pct": 43.33,
+    "daily_mean_served_walk": 2759.2
+  },
+  "on_minus_off": {
+    "far_pct": 10.240000000000002,
+    "total_pct": 1.8399999999999963,
+    "daily_mean_served_walk": -161.0
+  }
+}

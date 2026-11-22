@@ -1,0 +1,17 @@
+{
+  "municipal_commit": "803325ead3d8492563e9eabc73157d915fdd52ba",
+  "municipal_path": "experiments/plans/plan-01/plan.json",
+  "municipal_source_sha256": "8de260f5786639ca3b8467de881b46864cc8dbf024b6edb8e49ae472a2ce6c38",
+  "vehicles": 11,
+  "demand_hours": [
+    7,
+    8
+  ],
+  "dropped_stops": {
+    "r2": [
+      "TEMP-G02-12",
+      "TEMP-G02-13"
+    ]
+  },
+  "added_segments": 11
+}
