@@ -279,10 +279,14 @@ class AllocateV1Test(unittest.TestCase):
                 self.assertEqual(set(ours["inits"]), {"greedy", "top_demand", "sp_plan"})
 
     def test_feeder_start_lifts_stuck_case(self):
-        """피더안 배분을 초기해로 넣지 않으면 피더안보다 낮은 사례에서도, 넣으면 피더안 이상."""
+        """피더안 배분을 초기해로 넣지 않으면 피더안보다 낮은 사례에서도, 넣으면 피더안 이상.
+
+        이 사례는 v1 규칙(노선을 1대까지 줄일 수 있음)에서 만든 것이라 respect_n0=False로 돈다.
+        """
         routes, od = random_instance(**STUCK)
-        sp_model = A.Model([r for r in routes if r[0].startswith("sp")], od, A.AllocParams())
-        ours_model = A.Model(routes, od, A.AllocParams())
+        old = A.AllocParams(respect_n0=False)
+        sp_model = A.Model([r for r in routes if r[0].startswith("sp")], od, old)
+        ours_model = A.Model(routes, od, old)
         for budget in (11, 13):
             sp = A.allocate(sp_model, budget)
             alone = A.allocate(ours_model, budget)
@@ -330,6 +334,68 @@ class AllocateV1Test(unittest.TestCase):
         for k, v in a["move_stats"].items():
             self.assertLessEqual(v["accepts"], v["tries"], k)
         self.assertGreater(a["move_stats"]["swap"]["tries"], 0)
+
+
+class AllocRulesTest(unittest.TestCase):
+    """배분 규칙: 열린 노선은 n0 아래로 줄이지 않는다, 그룹(역) 덮기."""
+
+    def test_open_routes_keep_n0(self):
+        for seed in range(12):
+            routes, od = random_instance(seed)
+            m = A.Model(routes, od, A.AllocParams())
+            for budget in (11, 13, 20):
+                n = A.allocate(m, budget)["n"]
+                self.assertEqual(sum(n.values()), budget)
+                bad = {r: (k, m.n0[r]) for r, k in n.items() if k < m.n0[r]}
+                # 예산이 어떤 노선의 n0보다도 작아 열 수 없는 경우를 빼면 n0 미만 노선이 없어야 한다
+                if budget >= min(m.n0.values()):
+                    self.assertEqual(bad, {}, (seed, budget))
+
+    def test_old_rule_can_go_below_n0(self):
+        """respect_n0=False(이전 규칙)에서는 n0 미만 노선이 실제로 나오는 사례가 있다(이 수정의 이유)."""
+        found = False
+        for seed in range(30):
+            routes, od = random_instance(seed)
+            m = A.Model(routes, od, A.AllocParams(respect_n0=False))
+            for budget in (11, 13):
+                n = A.allocate(m, budget)["n"]
+                found |= any(k < m.n0[r] for r, k in n.items())
+        self.assertTrue(found)
+
+    def test_cover_groups(self):
+        """그룹 덮기: 무게 큰 그룹부터 노선 하나씩, 예산이 되면 모든 그룹이 덮인다. 덮지 않으면 비는 그룹이 생기는 사례."""
+        routes, od = random_instance(3, n_routes=16)
+        groups = {r[0]: f"g{i % 4}" for i, r in enumerate(routes)}
+        weight = {"g0": 4.0, "g1": 3.0, "g2": 2.0, "g3": 1.0}
+        plain = A.allocate(A.Model(routes, od, A.AllocParams(), groups, weight), 13)
+        m = A.Model(routes, od, A.AllocParams(cover_groups=True), groups, weight)
+        res = A.allocate(m, 13)
+        got = {groups[r] for r in res["n"]}
+        self.assertEqual(sum(res["n"].values()), 13)
+        self.assertTrue(set(res["covered_groups"]) <= got)
+        self.assertGreaterEqual(len(got), len({groups[r] for r in plain["n"]}))
+        self.assertLessEqual(res["value"], plain["value"] + 1e-6)     # 제약을 더했으니 근사는 같거나 낮다
+
+
+class NetworkDistanceTest(unittest.TestCase):
+    """distance_basis="network": 우회율 분모가 망 위 최단 거리. U턴 판정."""
+
+    def test_detour_uses_network_distance(self):
+        net = line_network(4)
+        g_crow = Graph(net, 10, 3600)
+        g_net = Graph(net, 10, 3600, distance_basis="network")
+        stops = tuple(f"S{i}" for i in range(1, 5))
+        self.assertAlmostEqual(g_net.detour(stops), 1.0, places=6)    # 직선 노선: 노선 길이 = 망 최단 거리
+        self.assertGreater(g_crow.detour(stops), 0)
+
+    def test_uturn_rejected(self):
+        net = line_network(4)
+        net.turns = {"S1>S2": [1, 2, 2, 3], "S2>S3": [3, 2, 2, 5]}   # S2에서 마지막 조각(2→3)을 되돌아감(3→2)
+        g = Graph(net, 10, 3600)
+        self.assertTrue(g.has_uturn(("S1", "S2", "S3")))
+        self.assertIn("uturn", g.violations(("S1", "S2", "S3"), frozenset(), Limits(3600, None, 99)))
+        net.turns["S2>S3"] = [3, 4, 4, 5]
+        self.assertFalse(g.has_uturn(("S1", "S2", "S3")))
 
 
 class NmaxTest(unittest.TestCase):
