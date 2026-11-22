@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>서울 대체 셔틀 길찾기</title>
+  <link rel="stylesheet" href="/vendor/maplibre-gl.css">
+  <link rel="stylesheet" href="/style.css?v=20261120-14">
+</head>
+<body>
+  <main class="layout">
+    <section class="panel" aria-label="길찾기 검색">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 48 48" fill="none"><path d="M9 39 39 9M18 9h21v21" stroke="currentColor" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><div><strong>&#49436;&#50872; &#51060;&#46041; &#50504;&#45236;</strong><small>&#48260;&#49828; &#54028;&#50629; &#45824;&#52404; &#44221;&#47196; &#52286;&#44592;</small></div></div>
+      <div class="brand-divider" aria-hidden="true"></div>
+      <p class="eyebrow">BUS STRIKE ROUTING</p>
+      <h1>&#48260;&#49828; &#54028;&#50629; &#51473;&#50640;&#46020; &#47785;&#51201;&#51648;&#44620;&#51648;</h1>
+      <p class="intro">&#48260;&#49828; &#183; &#51648;&#54616;&#52384; &#183; &#45824;&#52404; &#49492;&#53952; &#50868;&#54665;&#49884;&#44036;&#51012; &#54632;&#44760; &#54869;&#51064;&#54633;&#45768;&#45796;.</p>
+      <form id="search-form">
+        <div class="field-group">
+          <label for="origin">출발지</label>
+          <input id="origin" autocomplete="off" placeholder="건물/시설/정류장·역 검색" required>
+          <div id="origin-suggestions" class="suggestions"></div>
+          <small id="origin-choice" class="choice">장소 검색 또는 지도 클릭 후 선택</small>
+        </div>
+        <button id="swap" class="swap" type="button" aria-label="출발지와 목적지 바꾸기">⇅</button>
+        <div class="field-group">
+          <label for="destination">목적지</label>
+          <input id="destination" autocomplete="off" placeholder="건물/시설/정류장·역 검색" required>
+          <div id="destination-suggestions" class="suggestions"></div>
+          <small id="destination-choice" class="choice">장소 검색 또는 지도 클릭 후 선택</small>
+        </div>
+        <div class="field-group">
+          <label for="departure">출발 날짜·시간 <span class="timezone">한국 시간</span></label>
+          <input id="departure" type="datetime-local" required>
+        </div>
+        <label class="check"><input id="include-shuttle" type="checkbox" checked><span>대체 셔틀 포함</span></label>
+        <button class="primary" type="submit">경로 찾기 <span>→</span></button>
+      </form>
+      <div class="results-heading"><h2>추천 경로</h2><span id="result-count"></span></div>
+      <div class="sort-dropdown" id="sort-dropdown">
+        <button id="sort-trigger" class="sort-trigger" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="sort-menu">
+          <span class="sort-label">최적 경로순</span>
+        </button>
+        <div id="sort-menu" class="sort-menu" role="group" aria-label="추천 경로 정렬" inert>
+          <button type="button" data-sort="optimal" aria-pressed="true" title="총 소요시간 + 환승 10분/회 + 도보시간의 50%">최적 경로순</button>
+          <button type="button" data-sort="fastest" aria-pressed="false">최소 시간순</button>
+          <button type="button" data-sort="transfers" aria-pressed="false">최소 환승순</button>
+          <button type="button" data-sort="walking" aria-pressed="false">최소 도보순</button>
+        </div>
+      </div>
+      <div id="message" class="message" role="alert">출발지와 목적지를 지정해 주세요.</div>
+      <div id="results" class="results"></div>
+      <footer>실제 운행표와 OTP 계산 결과만 표시합니다. 운행 전 현장 정보를 확인하세요.</footer>
+      <div id="status" class="status" role="status">데이터 상태 확인 중</div>
+    </section>
+    <section class="map-wrap" aria-label="길찾기 지도">
+      <div id="map"></div>
+      <div id="map-error" class="map-error" hidden>지도 배경을 불러올 수 없습니다. 인터넷 연결을 확인하세요.</div>
+      <div class="map-hint"><strong id="pick-mode">지도 선택: 출발지</strong><span>확대하면 주요 시설부터 단계적으로 표시됩니다.</span><span>장소나 좌표를 클릭해 출발지·목적지로 선택하세요.</span></div>
+      <div class="attribution">지도 © OpenStreetMap 기여자 · OpenFreeMap</div>
+    </section>
+  </main>
+  <script type="module" src="/app.js?v=20261120-13"></script>
+</body>
+</html>
