@@ -75,6 +75,9 @@ class Params:
     loop_max_stops_total: int | None = None   # 한 바퀴 전체 정차 상한(역 지정 정류장 제외). None = 검사하지 않음
     # 돌아오는 길 우회율 상한(꺾는 정류장 → 첫 정류장, 고리 닫기 포함). None = 가는 길과 같은 값(max_detour·multi_max_detour)
     loop_ret_detour: float | None = None
+    # 순환 시작점 최적화(개선 2026-11-22). True면 순환 후보마다 같은 고리를 덮는 수요가 가장 큰 시작점으로 돌린다(loop.best_rotation).
+    # 기본 False(예전 결과 재현)
+    loop_rotate: bool = False
 
     def __post_init__(self):
         if self.loop not in (None, "demand", "deadhead", "both"):
@@ -638,6 +641,11 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
         raw, must_stats = _must_candidates(b, raw, p, scenario)
     t_must = time.time()
 
+    # 6d. 순환 시작점 최적화(개선, 옵션)
+    rotate_stats: dict = {}
+    if p.loop and p.loop_rotate:
+        raw, rotate_stats = _rotate_loops(b, raw, p)
+
     # 7. 덮개·주기
     cands = []
     for key in sorted(raw):
@@ -652,6 +660,8 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
     t_fin = time.time()
     if p.must_stops:
         dropped["must"] = must_stats
+    if rotate_stats:
+        dropped["loop_rotate"] = rotate_stats
     return Result(p, hubs, {k: len(v) for k, v in K.items()}, {f"{a}-{b_}": round(v, 4) for (a, b_), v in O.items()},
                   clusters, cands, dropped,
                   {"setup": round(t_setup - t0, 2), "insertion": round(t_gen - t_setup, 2),
@@ -738,6 +748,43 @@ def _loops(b: Builder, raw: dict, p: Params, scenario: Scenario, dropped: dict, 
                                  loop=mode, loop_variant=var, turn=len(c.stops) - 1)
     _LOOP_STATE.clear()
     return new, dict(sorted(reasons.items()))
+
+
+def _rotate_loops(b: Builder, raw: dict, p: Params) -> tuple[dict, dict]:
+    """6d. 순환 후보마다 시작점을 덮는 수요가 가장 큰 곳으로 돌린다(loop.best_rotation).
+
+    원래 고리 닫기(마지막 → 첫)가 망의 한 구간이어야 한다(돌리면 그 구간이 영업 구간이 된다). 새 고리 닫기(원래 이웃한 두 정류장)는
+    망의 한 구간이고 06~09시 최댓값이 고리 닫기 상한 이하여야 한다. 필수 정류장은 첫·끝으로 보내지 않는다.
+    최종 고리 닫기·U턴 판정은 _finish가 변환기 경로로 다시 한다. 반환: (새 raw, {"loops", "rotated"})."""
+    from dataclasses import replace
+    from .loop import best_rotation
+    tt, g = b.net.tt, b.g
+    keep = frozenset(p.must_stops)
+
+    def closure_ok(a: str, z: str) -> bool:
+        return tt.has(a, z) and g.weight(a, z) <= p.loop_closure_max_s
+
+    new: dict = {}
+    stats = {"loops": 0, "rotated": 0}
+    for key in sorted(raw):
+        c = raw[key]
+        S = c.stops
+        i = 0
+        if c.loop and len(S) > 2:
+            stats["loops"] += 1
+            if tt.has(S[-1], S[0]):
+                i = best_rotation(S, b.cover_of, closure_ok, keep)
+        if not i:
+            new.setdefault(key, c)
+            continue
+        R = tuple(S[i:]) + tuple(S[:i])
+        k2 = (c.origin, c.kind, c.hubs, R, c.loop, c.loop_variant, "rot")
+        stats["rotated"] += 1
+        if k2 in new:
+            new[k2].made_by = tuple(sorted(set(new[k2].made_by) | set(c.made_by)))
+            continue
+        new[k2] = replace(c, stops=R, turn=(c.turn - i) % len(S), made_by=tuple(sorted(set(c.made_by) | {f"rot{i}"})))
+    return new, stats
 
 
 def _insert_must(g: Graph, stops: tuple[str, ...], turn: int, m: str):

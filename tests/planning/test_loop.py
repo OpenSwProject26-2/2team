@@ -133,6 +133,26 @@ class LoopCandidateTest(unittest.TestCase):
         acc = [c for c in res.candidates if c.kind == "access"]
         self.assertIn(("E", "B2"), acc[0].cover_keys)                                    # 돌아오는 길이 역 → 동네를 덮는다
 
+    def test_generate_loop_rotate_keeps_rules_and_cover(self):
+        """순환 시작점 최적화(loop_rotate): 모든 후보가 여전히 순환·짧은 고리 닫기·U턴 없음·변환기 통과이고 덮는 수요가 줄지 않는다."""
+        net = loop_network()
+        b, g = builder(net, OD)
+        kw = dict(distance_basis="network", loop="demand", hub_min=1, radius_m=5000, l_max_min=(30,), sectors=(1,), max_detour=3.0)
+        base = G.generate(net, b.demand, scenario(), G.Params(**kw))
+        rot = G.generate(net, b.demand, scenario(), G.Params(**kw, loop_rotate=True))
+        self.assertTrue(rot.candidates)
+        from busstrike.planning.routegen.cycle import single_route_plan
+        from busstrike.sim.adapters.comparison_plan import check_plan
+        for c in rot.candidates:
+            self.assertEqual(c.loop, "demand")
+            self.assertLessEqual(c.closure_s, 300)
+            self.assertFalse(g.has_uturn(cyclic_seq(c.stops, c.return_stops)))
+            rep_ = check_plan(single_route_plan(c.stops, net.tt, scenario()), net.tt, scenario())
+            self.assertTrue(rep_["ok"], rep_["failures"])
+        self.assertGreaterEqual(max(c.cover for c in rot.candidates), max(c.cover for c in base.candidates) - 1e-9)
+        self.assertIn("loop_rotate", rot.dropped)
+        self.assertNotIn("loop_rotate", base.dropped)                                     # 기본(끔)은 예전과 같다
+
     def test_closure_limit(self):
         lim = LoopLimits(1800, 12, 3.0, 30)                     # 30초: 어떤 이음도 못 넘는다
         self.assertIsNone(self.lb.demand_return("access", ("K",), self.S, lim))
