@@ -158,7 +158,8 @@ class Model:
 
     # -- 노선 하나(그 노선과 키를 나누는 열린 노선의 대수가 같으면 결과가 같다 → 캐시)
     def _route(self, r: str, n: dict[str, int]) -> tuple[list[float], float]:
-        ck = (r, n[r], tuple((x, n[x]) for x in self.overlap[r] if n.get(x, 0) > 0))
+        opened = tuple((x, n[x]) for x in self.overlap[r] if n.get(x, 0) > 0)
+        ck = (r, n[r], opened)
         got = self._rcache.get(ck)
         if got is not None:
             return got
@@ -166,14 +167,14 @@ class Model:
         fr = n[r] / self.cycle[r]
         cap = fr * 3600 * seat
         cov = self.cover[r]
-        # 키별 배차 합 f_k = Σ_{x∋k, 열림} n_x / C_x
+        # 키별 배차 합 f_k = Σ_{x∋k, 열림} n_x / C_x. 열린 겹침 노선만 미리 추린다(같은 순서로 더하므로 결과는 비트 단위로 같다)
+        op = [(self._cover_set(x), nx / self.cycle[x]) for x, nx in opened]
         loads = []                                   # 키마다 [h6..h9] 승객(절단 전)
         for ki in cov:
             fk = fr
-            for x in self.overlap[r]:
-                nx = n.get(x, 0)
-                if nx > 0 and ki in self._cover_set(x):
-                    fk += nx / self.cycle[x]
+            for cs, fx in op:
+                if ki in cs:
+                    fk += fx
             share = kappa * min(1.0, W * fk) * fr / fk
             dk = self.d[ki]
             loads.append([dk[h] * share for h in range(4)])
