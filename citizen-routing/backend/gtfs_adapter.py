@@ -200,6 +200,7 @@ def prepare(existing: Path, shuttle: Path | None, strike_json: Path | None,
             osm: Path, output: Path) -> dict:
     if not osm.is_file() or osm.suffix.lower() != ".pbf":
         raise FeedError("OSM .pbf 파일 경로가 필요합니다.")
+    existing_input_hash = hashlib.sha256(existing.read_bytes()).digest() if existing.is_file() else hashlib.sha256(b"".join(read_feed(existing).values())).digest()
     source = read_feed(existing)
     source_stats = validate(source)
     affected: set[str] = set()
@@ -223,7 +224,8 @@ def prepare(existing: Path, shuttle: Path | None, strike_json: Path | None,
         write_feed(shuttle_tables, output / "shuttle.gtfs.zip")
     elif (output / "shuttle.gtfs.zip").exists():
         (output / "shuttle.gtfs.zip").unlink()
-    shutil.copyfile(osm, output / "streets.osm.pbf")
+    if osm.resolve() != (output / "streets.osm.pbf").resolve():
+        shutil.copyfile(osm, output / "streets.osm.pbf")
     config = {"transitServiceStart": service_bounds(filtered, shuttle_tables)[0],
               "transitServiceEnd": service_bounds(filtered, shuttle_tables)[1],
               "transitFeeds": [{"type": "gtfs", "feedId": "A",
@@ -233,7 +235,7 @@ def prepare(existing: Path, shuttle: Path | None, strike_json: Path | None,
                                        "source": "shuttle.gtfs.zip"})
     (output / "build-config.json").write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     digest = hashlib.sha256()
-    digest.update(existing.read_bytes() if existing.is_file() else b"".join(source.values()))
+    digest.update(existing_input_hash)
     digest.update(shuttle.read_bytes() if shuttle and shuttle.is_file() else
                   b"".join(shuttle_tables.values()) if shuttle_tables else b"")
     digest.update(json.dumps(sorted(affected)).encode())

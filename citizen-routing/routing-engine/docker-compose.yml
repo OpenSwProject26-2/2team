@@ -16,3 +16,21 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     command: ["--load", "--serve"]
+  otp-strike-build:
+    image: docker.io/opentripplanner/opentripplanner:2.10.0
+    profiles: [strike-build]
+    environment:
+      JAVA_TOOL_OPTIONS: -Xmx8g
+    volumes:
+      - ../runtime/otp-strike:/var/opentripplanner
+    command: ["--build", "--save"]
+  otp-strike:
+    image: docker.io/opentripplanner/opentripplanner:2.10.0
+    profiles: [strike]
+    environment:
+      JAVA_TOOL_OPTIONS: -Xmx8g
+    volumes:
+      - ../runtime/otp-strike:/var/opentripplanner
+    ports:
+      - "127.0.0.1:8081:8080"
+    command: ["--load", "--serve"]
