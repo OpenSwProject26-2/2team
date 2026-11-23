@@ -26,6 +26,7 @@ from .d_geometry import bus_geometry_view, fetch_rail_gis, load_rail_gis, rail_g
 from .d_scenario import evaluate_demo
 from .d_simulation import SelectionStore, SimulationStore
 from .d_transit_data import TransitData
+from .d_transport_demand import TransportDemandStore
 
 ROOT = Path(__file__).resolve().parents[3]
 DEMO = ROOT / "tests" / "fixtures" / "d_dashboard" / "demo.json"
@@ -41,6 +42,7 @@ class Store:
         rail_gis_file: Path | None = None,
         rail_gis_live: bool = False,
         bus_geometry_file: Path | None = None,
+        transport_demand_file: Path | None = None,
     ) -> None:
         self.lock = Lock()
         self.demo = load_demo(DEMO)
@@ -55,6 +57,7 @@ class Store:
         self.last_error: dict | None = None
         self.network_cache: dict[tuple[str, str, str], dict] = {}
         self.transit = TransitData(transit_data)
+        self.transport_demand = TransportDemandStore(transport_demand_file)
         if a_gtfs:
             self.refresh()
 
@@ -139,6 +142,8 @@ class Store:
             },
             "C": {"status": "unavailable", "reason": "후보안 산출물 미연결"},
             "M07": {"status": "unavailable", "reason": "완전 독립 검증 산출물 미연결"},
+            "transport_demand": {"status": "ready" if self.transport_demand.path else "unavailable",
+                                 "scenario_count": len(self.transport_demand.scenarios)},
         }
 
     def network(self, snapshot: MapSnapshot, district: str, extent: str) -> dict:
@@ -290,6 +295,8 @@ def make_handler(store: Store, simulation: SimulationStore | None = None, lab=No
                             query.get("date", ["mean"])[0],
                         )
                     )
+                if parts.path == "/api/d/simulation/transport-demand":
+                    return self._json(store.transport_demand.get(query))
                 if parts.path.startswith("/api/d/simulation/"):
                     selected = simulation.selection(query)
                     field = {
@@ -395,7 +402,7 @@ def make_handler(store: Store, simulation: SimulationStore | None = None, lab=No
                 if parts.path == "/api/d/demand":
                     hour = query.get("hour", ["07"])[0]
                     demand_mode = query.get("demand_mode", ["total"])[0]
-                    return self._json(demand_geojson(snapshot, hour, demand_mode))
+                    return self._json(demand_geojson(snapshot, hour, demand_mode, query.get("date", [None])[0]))
                 self.send_error(HTTPStatus.NOT_FOUND)
             except DataError as error:
                 self._error(error)
@@ -479,11 +486,14 @@ def main() -> None:
         type=Path,
         help="C팀 지역 입력 루트(<구>_0610_v4/network/stops.csv)",
     )
+    parser.add_argument("--transport-demand", type=Path,
+                        help="교통수단 제외 조건별 정류장 수요 JSON(d-transport-demand/1), 저장소 밖 파일")
     parser.add_argument("--lab-dir", type=Path, help="routegen 실험실 데이터 폴더(build_lab_data.py 출력)")
     parser.add_argument("--lab-region", type=Path, help="구 묶음을 푼 region 폴더(<구>_0610_v4가 들어 있음)")
     parser.add_argument("--lab-all", type=Path, help="구별 실험실 폴더들의 부모(<slug>/layers/meta.json, build_lab_data --sweep 출력)")
     args = parser.parse_args()
-    store = Store(args.a_gtfs, args.service_date, args.transit_data, args.rail_gis_file, args.rail_gis_live, args.bus_geometry_file)
+    store = Store(args.a_gtfs, args.service_date, args.transit_data, args.rail_gis_file,
+                  args.rail_gis_live, args.bus_geometry_file, args.transport_demand)
     lab = None
     if args.lab_all:
         from .routegen_lab import LabSet

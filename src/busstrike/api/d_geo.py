@@ -61,6 +61,7 @@ class MapSnapshot:
             if self.source == "synthetic"
             else "unavailable",
             "fleet": self.fleet,
+            "demo_dates": sorted(self.demand[0]["date_counts"]) if self.source == "synthetic" and self.demand else [],
             "feed_version": self.feed_version,
             "warnings": list(self.warnings),
         }
@@ -166,10 +167,21 @@ def load_demo(path: Path) -> MapSnapshot:
                 route_id=route["route_id"],
             )
     by_stop = {stop["stop_id"]: stop for stop in stops}
+    strike_ids = {route["route_id"] for route in routes if route["kind"] == "strike"}
+    date_profiles = data.get("date_profiles", {data["service_date"]: {hub["stop_id"]: hub["weight"] for hub in data["demand_hubs"]}})
+    hub_ids = {hub["stop_id"] for hub in data["demand_hubs"]}
+    if not isinstance(date_profiles, dict) or data["service_date"] not in date_profiles or any(
+        not isinstance(day, str) or not isinstance(weights, dict) or set(weights) != hub_ids
+        or any(type(value) is not int or value < 0 for value in weights.values())
+        for day, weights in date_profiles.items()
+    ):
+        raise DataError("DATA_INCOMPLETE", "합성 날짜별 거점 수요 입력이 유효하지 않습니다.")
     demand = []
     # 수요 셀은 합성 예제에만 적용하는 결정론적 분포다. 실제 OD에는 사용하지 않는다.
     for hub in data["demand_hubs"]:
         stop = by_stop[hub["stop_id"]]
+        if hub.get("strike_route_id") not in strike_ids:
+            raise DataError("DATA_INCOMPLETE", "합성 수요의 파업 노선 ID가 잘못되었습니다.", stop_id=hub["stop_id"])
         destinations = hub.get("destination_stop_ids")
         if (
             not isinstance(destinations, list)
@@ -202,6 +214,9 @@ def load_demo(path: Path) -> MapSnapshot:
                         round(lat + math.sin(angle) * distance * 0.68, 7),
                     ],
                     "base_count": count,
+                    "date_counts": {day: max(0, round(count * weights[hub["stop_id"]] / hub["weight"]))
+                                    for day, weights in date_profiles.items()},
+                    "strike_route_id": hub["strike_route_id"],
                     "origin_count": origin,
                     "destination_count": count - origin,
                     "source": "synthetic",
@@ -664,21 +679,22 @@ def map_geojson(
     }
 
 
-def demand_geojson(snapshot: MapSnapshot, hour: str, mode: str) -> dict:
+def demand_geojson(snapshot: MapSnapshot, hour: str, mode: str, service_date: str | None = None) -> dict:
     if hour not in {"06", "07", "08", "09", "18"}:
         raise DataError("OUT_OF_SCOPE", "합성 예제의 지원 시간대 밖입니다.", hour=hour)
     if mode not in {"total", "origin", "dest", "unmet", "affected"}:
         raise DataError("INPUT_INVALID", "지원하지 않는 수요 모드입니다.", mode=mode)
     if snapshot.source != "synthetic":
         raise DataError("DATA_INCOMPLETE", "실제 집계 OD가 연결되지 않았습니다.")
+    service_date = service_date or snapshot.service_date
+    if snapshot.demand and service_date not in snapshot.demand[0]["date_counts"]:
+        raise DataError("OUT_OF_SCOPE", "합성 예제에서 지원하지 않는 날짜입니다.", date=service_date)
     factor = {"06": 0.65, "07": 1.0, "08": 1.24, "09": 0.88, "18": 1.13}[hour]
     features = []
     for cell in snapshot.demand:
-        values = {
-            "total": cell["base_count"],
-            "origin": cell["origin_count"],
-            "dest": cell["destination_count"],
-        }
+        dated_count = cell["date_counts"][service_date]
+        origin_count = round(dated_count * cell["origin_count"] / cell["base_count"])
+        values = {"total": dated_count, "origin": origin_count, "dest": dated_count - origin_count}
         # 파업 영향과 미충족은 운행/평가 입력이 없어 계산할 수 없다.
         value = round(values[mode] * factor) if mode in values else None
         features.append(
@@ -703,6 +719,7 @@ def demand_geojson(snapshot: MapSnapshot, hour: str, mode: str) -> dict:
         "source": snapshot.source,
         "mode": mode,
         "hour": hour,
+        "date": service_date,
         "total": sum(
             feature["properties"]["passenger_count"] or 0 for feature in features
         ),

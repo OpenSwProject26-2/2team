@@ -10,3 +10,6 @@ VW_KSCC_*.csv
 data/raw/
 *.egg-info/
 .browser-check*/
+.browser-smoke*/
+.tmp-tests/
+web/operator/data/districts.geojson
