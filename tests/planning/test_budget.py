@@ -40,5 +40,62 @@ class UturnOptionTest(unittest.TestCase):
         self.assertFalse(G.Params().allow_uturn)
 
 
+
+def budget_params(**kw):
+    base = dict(tour=("sector", "feeder"), tour_only=True, budget_h_s=600, budget_ns=(1, 2, 3))
+    base.update(kw)
+    return base
+
+
+class BudgetTest(unittest.TestCase):
+    """1단계 배차 예산: 노선 대수 n마다 순환 상한 n × H, 후보에 n을 기록한다."""
+
+    def setUp(self):
+        self.res = run(**budget_params())
+        self.T = tours(self.res)
+
+    def test_cycle_within_n_times_h(self):
+        self.assertTrue(self.T)
+        for c in self.T:
+            self.assertIn(c.vehicles, (1, 2, 3), c.stops)
+            self.assertLessEqual(c.cycle_s, c.vehicles * 600, (c.stops, c.vehicles))
+
+    def test_same_stops_kept_for_each_n(self):
+        by = {}
+        for c in self.T:
+            by.setdefault(c.stops, set()).add(c.vehicles)
+        self.assertTrue(any(len(v) > 1 for v in by.values()))        # 같은 순회가 n = 2, 3으로 따로 남는다
+        pool = G.pools(self.res.candidates, 0.8)["ours"][0]
+        by2 = {}
+        for c in pool:
+            by2.setdefault(c.stops, set()).add(c.vehicles)
+        self.assertTrue(any(len(v) > 1 for v in by2.values()))      # 중복 제거도 n이 다르면 지우지 않는다
+
+    def test_tour_only_skips_r1_candidates(self):
+        self.assertEqual([c for c in self.res.candidates if c.loop != "tour"], [])
+        with_r1 = run(**budget_params(tour_only=False))
+        self.assertTrue([c for c in with_r1.candidates if c.loop != "tour"])
+
+    def test_deterministic(self):
+        again = tours(run(**budget_params()))
+        self.assertEqual([c.record() for c in self.T], [c.record() for c in again])
+
+    def test_must_dedicated_is_tour(self):
+        res = run(**budget_params(tour=("feeder",), sp_top=1, must_stops=("M1",), must_insert_radius_m=0.0))
+        got = [c for c in res.candidates if c.origin == "tour_must"]
+        self.assertTrue(got)
+        for c in got:
+            self.assertEqual(c.loop, "tour")
+            self.assertIn("M1", c.stops[1:-1])
+            self.assertEqual(c.must, ("M1",))
+            self.assertLessEqual(c.cycle_s, c.vehicles * 600)
+
+    def test_budget_needs_tour(self):
+        with self.assertRaises(ValueError):
+            G.Params(budget_h_s=600)
+        with self.assertRaises(ValueError):
+            G.Params(tour_only=True)
+
+
 if __name__ == "__main__":
     unittest.main()
