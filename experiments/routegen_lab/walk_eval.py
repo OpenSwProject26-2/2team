@@ -153,6 +153,21 @@ def run(bundles: Path, out: Path, plans: list[str], jobs: int) -> None:
     subprocess.run(cmd, check=False)
 
 
+def apply_far_floor(floor: dict | None, arg: str) -> dict:
+    """--far-floor: 형평 하한(floor = {total, far, source})의 역 800m 밖 값만 바꾼 새 dict. 전체 하한은 그대로.
+
+    off = 역 밖 하한 없음(0, 부족분이 늘 0이라 하한 없음과 같다), +x = 원래 역 밖 하한 + x, 숫자 = 그 값.
+    """
+    if floor is None:
+        raise SystemExit("--far-floor는 형평 하한(--equity-floor muni 또는 고정값)이 켜져 있을 때만 쓴다")
+    if floor.get("extra"):
+        raise SystemExit("--far-floor는 --floor-combos base에서만 쓴다")
+    ff = arg.strip()
+    base_far = float(floor["far"])
+    far = 0.0 if ff == "off" else (base_far + float(ff[1:]) if ff.startswith("+") else float(ff))
+    return {**floor, "far": far, "far_rule": {"arg": ff, "base_far": base_far}}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--sweep", required=True, type=Path)
@@ -174,6 +189,9 @@ def main() -> int:
     ap.add_argument("--legacy-rule", action="store_true", help="2단계 전 규칙(역 고정, 역 쪽 지정 정류장 걷기)으로 설계·평가")
     ap.add_argument("--service-start", default=None, help="안 만들기 운행 시작 시각(쉼표로 여러 개, 비우면 설정 파일 walk.service_starts)")
     ap.add_argument("--equity-floor", default=None, help='형평 하한: muni / none / "전체,역800m밖"(비율). 비우면 설정 파일 equity.floor')
+    ap.add_argument("--far-floor", default=None,
+                    help='역 800m 밖 하한만 바꾼다(전체 하한은 --equity-floor 그대로, 형평 하한이 켜져 있어야 함): '
+                         'off = 역 밖 하한 없음(0), +x = 정해진 역 밖 하한(예: muni 값) + x, 숫자 = 그 값. 비우면 예전 그대로')
     ap.add_argument("--floor-combos", default="base", choices=("base", "all"),
                     help="형평 하한을 걸 평가 조합: base = 기본 조합 하나(기본), all = 9개 조합 모두(안 이름 eqa…)")
     ap.add_argument("--route-min", type=float, default=None, help="노선 근사 대당 탑승 하한(비우면 설정 파일 equity.route_min_per_vehicle)")
@@ -473,6 +491,8 @@ def main() -> int:
         else:
             ft = floor_cfg if isinstance(floor_cfg, dict) else dict(zip(("total", "far"), map(float, floor_cfg.split(","))))
             floor = {"total": float(ft["total"]), "far": float(ft["far"]), "source": "fixed"}
+    if args.far_floor is not None:                    # 역 밖 하한만 바꾸기(충족률-형평성 곡선 실험, 기본 끔)
+        floor = apply_far_floor(floor, args.far_floor)
     log["equity_floor"] = None if floor is None else {
         **{k: (round(v, 4) if isinstance(v, float) else v) for k, v in floor.items() if k != "extra"},
         **({"extra": {lab: {"total": round(ft, 4), "far": round(ff, 4)} for lab, _, ft, ff in floor["extra"]}}
