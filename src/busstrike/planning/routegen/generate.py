@@ -103,6 +103,10 @@ class Params:
     # 2단계 호선 단위 묶기(budget.py): ②-T 골격과 4단계 삽입의 수요 단위를 역이 아니라 꼬리표(station_lines.csv tags)로.
     # 끝 역 = 씨앗에서 망 거리로 가장 가까운 그 꼬리표 역(끝점 쌍이 있는 역). made_by에 lg:<꼬리표>, orig:<원래 역>
     line_group: bool = False
+    # 5단계 역 쌍 병합(budget.py): 끝 역이 다른 두 배차 예산 순회를 (n₁ + n₂) × H 안에서 한 고리로(합 n ≤ max(budget_ns)).
+    # 역·n마다 근사 상위 merge_top개끼리만 본다
+    merge: bool = False
+    merge_top: int = 3
 
     def __post_init__(self):
         if self.loop not in (None, "demand", "deadhead", "both"):
@@ -114,8 +118,8 @@ class Params:
                 raise ValueError(f"tour는 {TOUR_KINDS} 중 일부이고 순환(loop)이 켜져 있어야 한다: {self.tour}")
         if (self.tour_only or self.budget_h_s is not None) and not self.tour:
             raise ValueError("tour_only·budget_h_s는 tour가 켜져 있어야 한다")
-        if self.fill and self.budget_h_s is None:
-            raise ValueError("fill은 배차 예산(budget_h_s)이 있어야 한다")
+        if (self.fill or self.merge) and self.budget_h_s is None:
+            raise ValueError("fill·merge는 배차 예산(budget_h_s)이 있어야 한다")
 
     @property
     def f_min(self) -> float:
@@ -1132,17 +1136,63 @@ def _units(b: Builder, tb, p: Params, hub_ids: list[str], K: dict, values_of, in
     return out
 
 
+def _budget_tools(b: Builder, tb, p: Params, far_stops: frozenset):
+    """배차 예산 도구(budget.BudgetTours, 탑승 근사 포함). 생성 한 번에 하나."""
+    if _TOUR_STATE.get("bt") is None:
+        from .allocate import AllocParams
+        from .budget import BudgetTours, RideApprox
+        from .loop import designated_stops
+        hw = AllocParams(service_start_s=p.budget_start_s).hour_weights()
+        _TOUR_STATE["bt"] = BudgetTours(tb, p, RideApprox(b, hw, p.seat, far_stops, designated_stops(b.net)))
+    return _TOUR_STATE["bt"]
+
+
+def _merge_tours(b: Builder, tb, p: Params, raw: dict, add, far_stops: frozenset) -> None:
+    """5단계: 끝 역이 다른 두 배차 예산 순회 t₁(E₁…A₁) + (A₁ → E₂ 사이 정류장) + t₂(E₂…A₂). A₁ → E₂·A₂ → E₁ 공차가 고리 닫기
+    상한 안, 반복·U턴·순환 ≤ (n₁+n₂) × H, 근사(n₁+n₂) > 근사₁ + 근사₂일 때만. 역·n마다 근사 상위 merge_top개."""
+    from .loop import closure_s
+    bt = _budget_tools(b, tb, p, far_stops)
+    g = b.g
+    by: dict[tuple[str, int], list] = {}
+    for key in sorted(raw):
+        c = raw[key]
+        if c.loop != "tour" or not c.vehicles or len(c.hubs) != 1:
+            continue
+        v = bt.value(c.stops, c.vehicles)[1]
+        by.setdefault((c.hubs[0], c.vehicles), []).append((v, c.stops))
+    top = {k: sorted(v, key=lambda x: (-x[0], x[1]))[:p.merge_top] for k, v in by.items()}
+    stations = sorted({k for k, _ in top})
+    nmax = max(p.budget_ns)
+    for k1 in stations:
+        for k2 in stations:
+            if k1 == k2:
+                continue
+            e1, a1, _ = tb.ends(k1)
+            e2, a2, _ = tb.ends(k2)
+            mid, back = g.path(a1, e2), g.path(a2, e1)
+            if mid is None or back is None or closure_s(g, mid) > p.loop_closure_max_s or \
+                    closure_s(g, back) > p.loop_closure_max_s:
+                continue
+            for n1 in p.budget_ns:
+                for n2 in p.budget_ns:
+                    if n1 + n2 > nmax:
+                        continue
+                    for v1, s1 in top.get((k1, n1), ()):
+                        for v2, s2 in top.get((k2, n2), ()):
+                            stops = tuple(s1) + tuple(mid[1:-1]) + tuple(s2)
+                            if len(set(stops)) != len(stops) or tb.violations(stops, bt.lim(n1 + n2)):
+                                continue
+                            if bt.value(stops, n1 + n2)[1] > v1 + v2 + 1e-9:
+                                add(stops, "tour_merge", (k1, k2), None, "merge", n1 + n2)
+
+
 def _fill_tours(b: Builder, tb, p: Params, units: list[dict], cl_of: dict, add, far_stops: frozenset) -> None:
     """허브마다 가치 큰 씨앗부터 골격 [E, 씨앗, A]를 n마다 n × H까지 채운다(fill_top개의 씨앗: 어느 n에서든 채운 순회가 나온 씨앗)."""
-    from .allocate import AllocParams
-    from .budget import BudgetTours, RideApprox
     from .equity import home_end
     from .loop import designated_stops
-    hw = AllocParams(service_start_s=p.budget_start_s).hour_weights()
+    bt = _budget_tools(b, tb, p, far_stops)
+    ap = bt.ap
     dz = designated_stops(b.net)
-    ap = RideApprox(b, hw, p.seat, far_stops, dz)
-    bt = BudgetTours(tb, p, ap)
-    _TOUR_STATE["bt"] = bt
     stop_far: dict[str, float] = {}
     for k, v in ap.far_w.items():
         h_ = home_end(k, set(dz))
@@ -1252,6 +1302,9 @@ def _tours(b: Builder, raw: dict, p: Params, scenario: Scenario, clusters: list[
     # 4단계 소외 우선 삽입(배차 예산 순회, budget.py)
     if p.fill:
         _fill_tours(b, tb, p, units, cl_of, add, far_stops)
+    # 5단계 역 쌍 병합
+    if p.merge:
+        _merge_tours(b, tb, p, raw, add, far_stops)
     # ③-T
     if "pair" in p.tour:
         lines = (inputs.lines if inputs is not None else {})

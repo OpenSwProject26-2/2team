@@ -218,5 +218,54 @@ class LineGroupTest(unittest.TestCase):
             self.assertEqual(got.tags, {"0001": frozenset({"1-경부", "1-경인"})})
 
 
+
+# 병합 망: 역 K(KE → a → KA)와 역 Q(QE → b → QA). KA → QE, QA → KE가 한 구간이라 두 순회를 한 고리로 이을 수 있다.
+M_EDGES = [("KE", "a"), ("a", "KA"), ("KA", "KE"), ("QE", "b"), ("b", "QA"), ("QA", "QE"), ("KA", "QE"), ("QA", "KE")]
+M_POS = {"KE": (0, 0), "a": (1, 0), "KA": (2, 0), "QE": (3, 0), "b": (4, 0), "QA": (3, 0.4)}
+M_OD = {("a", "KA"): ("K", 30.0), ("b", "QA"): ("Q", 30.0), ("a", "QA"): ("Q", 20.0)}
+
+
+def merge_run(merge: bool):
+    stops = {s: _stop(s, x, y) for s, (x, y) in M_POS.items()}
+    tt = TravelTimeTable.from_dict({"schema_version": 1, "network_snapshot_id": "syn-1", "valid_from_s": 21600,
+                                    "valid_until_s": 43200, "segments": _segments(stops, M_EDGES)})
+    turns: dict = {"_meta": {"format": "turns-v2"}}
+    for a, b in M_EDGES:
+        turns[f"{a}>{b}"] = {"s": f"n{a}", "e": f"n{b}", "tail": [[f"{a}{b}t", f"{a}{b}u"]], "head": [[f"{a}{b}h", f"{a}{b}i"]]}
+    st = {"K": Station("K", "역K", stops["KA"].lat, stops["KA"].lon, "KA", "KE"),
+          "Q": Station("Q", "역Q", stops["QA"].lat, stops["QA"].lon, "QA", "QE")}
+    net = Network(tt, stops, st, turns)
+    d = Demand("v", ("20261026",))
+    for (o, t), (k, v) in M_OD.items():
+        d.od[(o, t)] = [v / 4] * 4
+        d.pair[("access", o, k)] = [v / 4] * 4
+    ix = StationIndex({("K", "access"): "KA", ("K", "egress"): "KE", ("Q", "access"): "QA", ("Q", "egress"): "QE"},
+                      {"K": {"KA", "KE"}, "Q": {"QA", "QE"}}, {"K": frozenset({"1"}), "Q": frozenset({"2"})})
+    reach = Reach(ix, EvalRule(walk_radius_m=0.0, station_mode="fixed"), {}, sorted(M_OD))
+    p = G.Params(distance_basis="network", loop="demand", l_max_min=(15,), hub_min=1.0, radius_m=10000.0, max_stops=None,
+                 tour=("feeder",), tour_only=True, budget_h_s=600, budget_ns=(1, 2), merge=merge)
+    ends = {"K": (("KE",), ("KA",)), "Q": (("QE",), ("QA",))}
+    return G.generate(net, d, scenario(), p, reach=reach,
+                      tour_inputs=T.TourInputs(ends, {"K": ("역K", frozenset({"1"})), "Q": ("역Q", frozenset({"2"}))}))
+
+
+class MergeTest(unittest.TestCase):
+    """5단계 역 쌍 병합: 끝점이 붙은 두 순회를 (n₁ + n₂) × H 안에서 합칠 때만, 근사가 나아질 때만."""
+
+    def test_merge_makes_two_station_tour(self):
+        got = [c for c in merge_run(True).candidates if c.origin == "tour_merge"]
+        self.assertTrue(got)
+        for c in got:
+            self.assertEqual(c.vehicles, 2)
+            self.assertLessEqual(c.cycle_s, 2 * 600)
+            self.assertTrue({"KE", "KA", "QE", "QA"} <= set(c.stops))
+            self.assertEqual(len(set(c.stops)), len(c.stops))
+            self.assertIn(("a", "QA"), c.cover_keys)
+
+    def test_merge_off_by_default(self):
+        self.assertFalse(G.Params().merge)
+        self.assertEqual([c for c in merge_run(False).candidates if c.origin == "tour_merge"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
