@@ -86,6 +86,8 @@ class Params:
     tour_detour: float | None = None
     tour_pair_max_s: int = 900
     tour_pair_top: int = 10
+    # 새 알고리즘(New_Algol.md 3.3, 작업 2026-11-25). 모두 기본 끔(예전 결과 그대로)
+    allow_uturn: bool = False         # 9단계 U턴 허용: Graph.is_uturn이 늘 False(모든 생성기·판정)
 
     def __post_init__(self):
         if self.loop not in (None, "demand", "deadhead", "both"):
@@ -583,7 +585,8 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
     tour_inputs(`tour.TourInputs`, p.tour일 때): 역 끝점 후보·호선. 비우면 지정 정류장만(③-T 없음)."""
     t0 = time.time()
     hubs = hubs_of(demand, net, p)
-    graph = Graph(net, scenario.policy.dwell_base_s, cutoff_s=max(p.l_max_min) * 60, distance_basis=p.distance_basis)
+    graph = Graph(net, scenario.policy.dwell_base_s, cutoff_s=max(p.l_max_min) * 60, distance_basis=p.distance_basis,
+                  allow_uturn=p.allow_uturn)
     K = catchments(demand, net, hubs, p, graph)
     hub_ids = sorted(hubs)
     O = {(a, b): overlap(a, b, K, hubs) for a in hub_ids for b in hub_ids if a < b}
