@@ -93,6 +93,13 @@ class Params:
     # 1단계 배차 예산: H(초, 목표 배차). 주면 순회 상한 = n × H(n = budget_ns 각각, 길이 목록 대신), 후보에 n(vehicles)을 남긴다
     budget_h_s: int | None = None
     budget_ns: tuple[int, ...] = (1, 2, 3)
+    budget_start_s: int | None = None   # 탑승 근사(4·5단계)의 운행 시작 시각(초). None = 06:00(시간대 처음부터)
+    # 4단계 소외 우선 삽입(budget.py): 허브(또는 호선)마다 수요 큰 씨앗 fill_top개의 골격(②-T)에서 n × H까지 삽입.
+    # 삽입 후보 정류장 = 그 허브 권역 중 (가치 + fill_bonus × 소외 수요) 큰 순 fill_pool개. fill_bonus = 소외 수요 가산점 β(0 = 끔)
+    fill: bool = False
+    fill_bonus: float = 0.0
+    fill_top: int = 5
+    fill_pool: int = 60
 
     def __post_init__(self):
         if self.loop not in (None, "demand", "deadhead", "both"):
@@ -104,6 +111,8 @@ class Params:
                 raise ValueError(f"tour는 {TOUR_KINDS} 중 일부이고 순환(loop)이 켜져 있어야 한다: {self.tour}")
         if (self.tour_only or self.budget_h_s is not None) and not self.tour:
             raise ValueError("tour_only·budget_h_s는 tour가 켜져 있어야 한다")
+        if self.fill and self.budget_h_s is None:
+            raise ValueError("fill은 배차 예산(budget_h_s)이 있어야 한다")
 
     @property
     def f_min(self) -> float:
@@ -587,10 +596,11 @@ def dedupe(cands: list[Candidate], threshold: float) -> tuple[list[Candidate], i
 
 
 def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Params(), reach=None,
-             jobs: int = 1, tour_inputs=None) -> Result:
+             jobs: int = 1, tour_inputs=None, far_stops: frozenset | None = None) -> Result:
     """reach(`reach.Reach`, 선택): 덮는 수요를 평가 규칙으로 센다(설계와 평가가 같은 규칙, 설계 6.2·7절).
     jobs: 순환(6b) 돌아오는 길 만들기를 나눠 돌릴 프로세스 수(결과는 같다).
-    tour_inputs(`tour.TourInputs`, p.tour일 때): 역 끝점 후보·호선. 비우면 지정 정류장만(③-T 없음)."""
+    tour_inputs(`tour.TourInputs`, p.tour일 때): 역 끝점 후보·호선. 비우면 지정 정류장만(③-T 없음).
+    far_stops(p.fill_bonus > 0일 때): 소외 위험 정류장(역 지정 정류장 도로 도보 800m 밖 동네 정류장)."""
     t0 = time.time()
     hubs = hubs_of(demand, net, p)
     graph = Graph(net, scenario.policy.dwell_base_s, cutoff_s=max(p.l_max_min) * 60, distance_basis=p.distance_basis,
@@ -665,7 +675,7 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
     # 6e. 닫힌 순회(tour, 옵션). 순환 다음·필수 정류장 전
     tour_reasons: dict[str, int] = {}
     if p.tour:
-        tour_reasons = _tours(b, raw, p, scenario, clusters, K, hubs, tour_inputs)
+        tour_reasons = _tours(b, raw, p, scenario, clusters, K, hubs, tour_inputs, far_stops or frozenset())
 
     # 6c. 필수 정류장: 가까운 기존 후보에 끼운 버전, 덮는 후보가 없을 때만 전용 순환
     must_stats: dict = {}
@@ -1090,8 +1100,46 @@ def _finish_tour(c: Candidate, b: Builder, p: Params, dropped: dict | None) -> b
     return True
 
 
+def _fill_tours(b: Builder, tb, p: Params, hub_ids: list[str], K: dict, cl_of: dict, values_of, add,
+                far_stops: frozenset) -> None:
+    """허브마다 가치 큰 씨앗부터 골격 [E, 씨앗, A]를 n마다 n × H까지 채운다(fill_top개의 씨앗: 어느 n에서든 채운 순회가 나온 씨앗)."""
+    from .allocate import AllocParams
+    from .budget import BudgetTours, RideApprox
+    from .equity import home_end
+    from .loop import designated_stops
+    hw = AllocParams(service_start_s=p.budget_start_s).hour_weights()
+    dz = designated_stops(b.net)
+    ap = RideApprox(b, hw, p.seat, far_stops, dz)
+    bt = BudgetTours(tb, p, ap)
+    _TOUR_STATE["bt"] = bt
+    stop_far: dict[str, float] = {}
+    for k, v in ap.far_w.items():
+        h_ = home_end(k, set(dz))
+        stop_far[h_] = stop_far.get(h_, 0.0) + v
+    for h in hub_ids:
+        ea = tb.ends(h)
+        if ea is None:
+            continue
+        e, a, _ = ea
+        values = values_of(h)
+        rank = sorted(values, key=lambda x: (-(values[x] + p.fill_bonus * stop_far.get(x, 0.0)), x))
+        pool = rank[:p.fill_pool]
+        picked = 0
+        for s in sorted(values, key=lambda x: (-values[x], x)):
+            if picked >= p.fill_top:
+                break
+            got = False
+            for n in p.budget_ns:
+                stops = bt.fill([e, s, a], n, pool, f"fill_n{n}")
+                if stops is not None:
+                    add(stops, "tour_fill", (h,), cl_of[h], f"fill:{s}", n)
+                    got = True
+            picked += got
+
+
 def _tours(b: Builder, raw: dict, p: Params, scenario: Scenario, clusters: list[dict],
-           K: dict[str, dict[str, float]], hubs: dict[str, float], inputs) -> dict[str, int]:
+           K: dict[str, dict[str, float]], hubs: dict[str, float], inputs, far_stops: frozenset = frozenset()
+           ) -> dict[str, int]:
     """6e. ①-T 섹터 순회, ②-T 피더 순회, ③-T 역 쌍 순회를 raw에 더한다. 반환: "tour/단계/사유" → 횟수."""
     from .tour import TourBuilder, TourLimits, default_inputs, line_pairs
     net, graph = b.net, b.g
@@ -1166,6 +1214,9 @@ def _tours(b: Builder, raw: dict, p: Params, scenario: Scenario, clusters: list[
                 for n in p.budget_ns:                      # 순환이 n × H 안이면 그 n마다 후보(대수 고정 배분용)
                     if cyc <= n * p.budget_h_s:
                         add(stops, "tour_feeder", (h,), cl_of[h], f"tsp:{s}", n)
+    # 4단계 소외 우선 삽입(배차 예산 순회, budget.py)
+    if p.fill:
+        _fill_tours(b, tb, p, hub_ids, K, cl_of, values_of, add, far_stops)
     # ③-T
     if "pair" in p.tour:
         lines = (inputs.lines if inputs is not None else {})
