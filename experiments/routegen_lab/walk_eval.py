@@ -192,6 +192,9 @@ def main() -> int:
     ap.add_argument("--far-floor", default=None,
                     help='역 800m 밖 하한만 바꾼다(전체 하한은 --equity-floor 그대로, 형평 하한이 켜져 있어야 함): '
                          'off = 역 밖 하한 없음(0), +x = 정해진 역 밖 하한(예: muni 값) + x, 숫자 = 그 값. 비우면 예전 그대로')
+    ap.add_argument("--lean", action="store_true",
+                    help="형평 하한 안(eq…)마다 진단용 배분 두 개(하한 없이, 필수 정류장 끔)를 건너뛴다(안은 같고 기록만 줄어듦). "
+                         "기본 끔")
     ap.add_argument("--floor-combos", default="base", choices=("base", "all"),
                     help="형평 하한을 걸 평가 조합: base = 기본 조합 하나(기본), all = 9개 조합 모두(안 이름 eqa…)")
     ap.add_argument("--route-min", type=float, default=None, help="노선 근사 대당 탑승 하한(비우면 설정 파일 equity.route_min_per_vehicle)")
@@ -234,6 +237,8 @@ def main() -> int:
     args.targets = args.targets or ",".join(str(x) for x in wc.get("targets", []))   # 비면 형평 먼저(예전)를 만들지 않는다
     starts = [x for x in (args.service_start or ",".join(wc.get("service_starts", ["06:00"]))).split(",") if x]
     eqc = cfg.equity
+    if args.lean and args.free:
+        raise SystemExit("--lean은 --free(하한 없는 안 내기)와 같이 쓸 수 없다")
     floor_cfg = args.equity_floor if args.equity_floor is not None else eqc["floor"]
     route_min = args.route_min if args.route_min is not None else float(eqc["route_min_per_vehicle"])
     far_m = float(eqc["far_m"])
@@ -560,13 +565,16 @@ def main() -> int:
                 continue
             m = model(st, floor, route_min)
             a = A.allocate(m, f, extra_starts(m, (lsfx, "eq"), f, st))
-            mf = model(st)
-            free = A.allocate(mf, f, extra_starts(mf, (lsfx, "free"), f, st))   # 같은 근사, 하한 없이
+            free = None
+            if not args.lean:                                 # --lean: 진단용 배분 두 개(하한 없이, 필수 정류장 끔)를 건너뛴다
+                mf = model(st)
+                free = A.allocate(mf, f, extra_starts(mf, (lsfx, "free"), f, st))   # 같은 근사, 하한 없이
             solved.setdefault((lsfx, "eq"), {})[(f, st)] = dict(a["n"])
-            solved.setdefault((lsfx, "free"), {})[(f, st)] = dict(free["n"])
-            fe = m.equity_of(free["n"]) if floor is not None else None
+            if free is not None:
+                solved.setdefault((lsfx, "free"), {})[(f, st)] = dict(free["n"])
+            fe = m.equity_of(free["n"]) if floor is not None and free is not None else None
             must_effect = None
-            if p.must_stops:                                  # 필수 정류장을 끈 같은 배분(하한 같음)과 비교
+            if p.must_stops and not args.lean:                # 필수 정류장을 끈 같은 배분(하한 같음)과 비교
                 mn = model(st, floor, route_min, use_must=False)
                 an = A.allocate(mn, f)
                 wn, fn = a["n"], an["n"]
@@ -581,11 +589,11 @@ def main() -> int:
                     "uncovered_without_must": sorted(s_ for s_ in p.must_stops
                                                      if not any(s_ in by[c].must for c in fn))}
             ids = [k for k, _ in sorted(a["n"].items())]
-            fids = [k for k, _ in sorted(free["n"].items())]
+            fids = [k for k, _ in sorted(free["n"].items())] if free is not None else []
             record(label, f, [(list(by[k].stops), v) for k, v in sorted(a["n"].items())],
                    {"approx": round(a["value"], 1), "service_start": st, "alloc": alloc_record(a),
                     "route_ids": ids, "route_info": route_info(ids), "must_effect": must_effect,
-                    "unconstrained": {"n": free["n"], "approx": round(free["value"], 1),
+                    "unconstrained": None if free is None else {"n": free["n"], "approx": round(free["value"], 1),
                                       "per_vehicle": free["per_vehicle"],
                                       "equity": None if fe is None else {"total": round(fe["total"], 4),
                                                                          "far": round(fe["far"], 4)},
@@ -610,7 +618,7 @@ def main() -> int:
                         "equity_floor_check": None if fe is None else {"total": round(fe["total"], 4),
                                                                        "far": round(fe["far"], 4)}})
             print(f"{label}-f{f}: 근사 {a['value']:.1f}, 하한 만족 {a['feasible']}, 형평 {a['equity']}, "
-                  f"하한 없이 {free['value']:.1f} {fe}", flush=True)
+                  + (f"하한 없이 {free['value']:.1f} {fe}" if free is not None else "하한 없이 (--lean: 안 풂)"), flush=True)
             for w in a["warnings"]:
                 print(f"경고 {label}-f{f}: {w}", flush=True)
         for t in [float(x) for x in args.targets.split(",") if x]:
