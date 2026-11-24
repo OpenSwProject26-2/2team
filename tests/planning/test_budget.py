@@ -323,5 +323,30 @@ class FixedNTest(unittest.TestCase):
         self.assertNotEqual(plain["n"], a["n"])
 
 
+
+OFF = dict(allow_uturn=False, tour_only=False, budget_h_s=None, budget_ns=(1, 2, 3), budget_start_s=None, fill=False,
+           fill_bonus=0.0, fill_top=5, fill_pool=60, line_group=False, merge=False, merge_top=3)
+
+
+class OptionsOffTest(unittest.TestCase):
+    """새 옵션을 모두 기본값(끔)으로 적어도 결과는 예전과 같다(회귀 방지). tags를 넣어도 묶기를 끄면 같다."""
+
+    def test_all_off_same_candidates(self):
+        base = run()
+        again = run(**OFF)
+        self.assertEqual([c.record() for c in base.candidates], [c.record() for c in again.candidates])
+        net = tour_network()
+        with_tags = G.generate(net, demand(), scenario(), params(**OFF), reach=reach_rule(net),
+                               tour_inputs=T.TourInputs(ENDS, LINES, TAGS))
+        self.assertEqual([c.record() for c in base.candidates], [c.record() for c in with_tags.candidates])
+
+    def test_no_tour_same_as_before(self):
+        net = tour_network()
+        a = G.generate(net, demand(), scenario(), params(tour=None), reach=reach_rule(net))
+        b = G.generate(net, demand(), scenario(), params(tour=None, **{k: v for k, v in OFF.items()}), reach=reach_rule(net))
+        self.assertEqual([c.record() for c in a.candidates], [c.record() for c in b.candidates])
+        self.assertTrue(all(c.vehicles == 0 for c in a.candidates))
+
+
 if __name__ == "__main__":
     unittest.main()

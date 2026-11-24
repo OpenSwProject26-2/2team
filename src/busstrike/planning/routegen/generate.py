@@ -683,6 +683,7 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
     tour_reasons: dict[str, int] = {}
     if p.tour:
         tour_reasons = _tours(b, raw, p, scenario, clusters, K, hubs, tour_inputs, far_stops or frozenset())
+    t_tour = time.time()
 
     # 6c. 필수 정류장: 가까운 기존 후보에 끼운 버전, 덮는 후보가 없을 때만 전용 순환
     must_stats: dict = {}
@@ -716,7 +717,8 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
                   clusters, cands, dropped,
                   {"setup": round(t_setup - t0, 2), "insertion": round(t_gen - t_setup, 2),
                    "shortest_path_feeders": round(t_sp - t_gen, 2), "multi_station_feeders": round(t_multi - t_sp, 2),
-                   "loops": round(t_loop - t_multi, 2), "cover_cycle": round(t_fin - t_loop, 2)},
+                   "loops": round(t_loop - t_multi, 2), "cover_cycle": round(t_fin - t_loop, 2),
+                   **({"tours": round(t_tour - t_loop, 2)} if p.tour else {})},
                   {**{"/".join(k): v for k, v in sorted(b.reasons.items())}, **loop_reasons, **tour_reasons},
                   {"/".join(k): v for k, v in sorted(b.reason_sets.items())})
 
