@@ -78,10 +78,23 @@ class Params:
     # 순환 시작점 최적화(개선 2026-11-22). True면 순환 후보마다 같은 고리를 덮는 수요가 가장 큰 시작점으로 돌린다(loop.best_rotation).
     # 기본 False(예전 결과 재현)
     loop_rotate: bool = False
+    # 닫힌 순회(tour.py, 작업 2026-11-24). None(기본) = 만들지 않음(예전 결과 그대로). 켜면 ("sector", "feeder", "pair") 중 일부.
+    # 순환 시간 ≤ 2 × L(l_max_min 각각), 정차 ≤ tour_max_stops, tour_detour(None = 우회율 검사 안 함, 기록만),
+    # ③-T 역 쌍: 같은 군집이거나 망 최단 시간 ≤ tour_pair_max_s, 셔틀 수요 합 상위 tour_pair_top쌍
+    tour: tuple[str, ...] | None = None
+    tour_max_stops: int | None = 24
+    tour_detour: float | None = None
+    tour_pair_max_s: int = 900
+    tour_pair_top: int = 10
 
     def __post_init__(self):
         if self.loop not in (None, "demand", "deadhead", "both"):
             raise ValueError(f"loop은 None, demand, deadhead, both 중 하나: {self.loop}")
+        if self.tour is not None:
+            from .tour import TOUR_KINDS
+            bad = [x for x in self.tour if x not in TOUR_KINDS]
+            if bad or not self.loop:
+                raise ValueError(f"tour는 {TOUR_KINDS} 중 일부이고 순환(loop)이 켜져 있어야 한다: {self.tour}")
 
     @property
     def f_min(self) -> float:
@@ -477,6 +490,8 @@ def _finish(c: Candidate, b: Builder, scenario: Scenario, p: Params, dropped: di
     if cyc is None:
         return False
     c.cycle_s, c.return_stops = cyc.period_s, cyc.return_stops
+    if c.loop == "tour":
+        return _finish_tour(c, b, p, dropped)
     if c.loop:
         # 최종 판정은 변환기가 실제로 고르는 고리 닫기 공차 경로로 한다
         from .loop import closure_s, cyclic_seq, designated_stops
@@ -562,9 +577,10 @@ def dedupe(cands: list[Candidate], threshold: float) -> tuple[list[Candidate], i
 
 
 def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Params(), reach=None,
-             jobs: int = 1) -> Result:
+             jobs: int = 1, tour_inputs=None) -> Result:
     """reach(`reach.Reach`, 선택): 덮는 수요를 평가 규칙으로 센다(설계와 평가가 같은 규칙, 설계 6.2·7절).
-    jobs: 순환(6b) 돌아오는 길 만들기를 나눠 돌릴 프로세스 수(결과는 같다)."""
+    jobs: 순환(6b) 돌아오는 길 만들기를 나눠 돌릴 프로세스 수(결과는 같다).
+    tour_inputs(`tour.TourInputs`, p.tour일 때): 역 끝점 후보·호선. 비우면 지정 정류장만(③-T 없음)."""
     t0 = time.time()
     hubs = hubs_of(demand, net, p)
     graph = Graph(net, scenario.policy.dwell_base_s, cutoff_s=max(p.l_max_min) * 60, distance_basis=p.distance_basis)
@@ -635,6 +651,11 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
         raw, loop_reasons = _loops(b, raw, p, scenario, dropped, jobs)
     t_loop = time.time()
 
+    # 6e. 닫힌 순회(tour, 옵션). 순환 다음·필수 정류장 전
+    tour_reasons: dict[str, int] = {}
+    if p.tour:
+        tour_reasons = _tours(b, raw, p, scenario, clusters, K, hubs, tour_inputs)
+
     # 6c. 필수 정류장: 가까운 기존 후보에 끼운 버전, 덮는 후보가 없을 때만 전용 순환
     must_stats: dict = {}
     if p.must_stops:
@@ -654,6 +675,7 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
             cands.append(c)
         elif not c.loop:
             dropped["conversion_failed"] += 1
+    _TOUR_STATE.clear()
     cands = [c for c in cands if c.cover > 0 or c.must]
     for i, c in enumerate(cands, start=1):
         c.route_id = f"c{i:04d}"
@@ -667,7 +689,7 @@ def generate(net: Network, demand: Demand, scenario: Scenario, p: Params = Param
                   {"setup": round(t_setup - t0, 2), "insertion": round(t_gen - t_setup, 2),
                    "shortest_path_feeders": round(t_sp - t_gen, 2), "multi_station_feeders": round(t_multi - t_sp, 2),
                    "loops": round(t_loop - t_multi, 2), "cover_cycle": round(t_fin - t_loop, 2)},
-                  {**{"/".join(k): v for k, v in sorted(b.reasons.items())}, **loop_reasons},
+                  {**{"/".join(k): v for k, v in sorted(b.reasons.items())}, **loop_reasons, **tour_reasons},
                   {"/".join(k): v for k, v in sorted(b.reason_sets.items())})
 
 
@@ -770,7 +792,7 @@ def _rotate_loops(b: Builder, raw: dict, p: Params) -> tuple[dict, dict]:
         c = raw[key]
         S = c.stops
         i = 0
-        if c.loop and len(S) > 2:
+        if c.loop and c.loop != "tour" and len(S) > 2:
             stats["loops"] += 1
             if tt.has(S[-1], S[0]):
                 i = best_rotation(S, b.cover_of, closure_ok, keep)
@@ -848,6 +870,18 @@ def _must_candidates(b: "Builder", raw: dict, p: Params, scenario: Scenario) -> 
                 continue
             stops, nt = got
             st_stops = frozenset(x for h in c.hubs for x in (net.stations[h].access_stop, net.stations[h].egress_stop) if x)
+            if c.loop == "tour":
+                if _TOUR_STATE.get("tb") is None:
+                    continue
+                bad = _TOUR_STATE["tb"].violations(stops, tour_limits(c, p))
+                if bad:
+                    continue
+                st["ok"] += 1
+                k2 = (c.origin, c.kind, c.hubs, stops, c.loop, "must")
+                if k2 not in new:
+                    new[k2] = Candidate("", c.kind, stops, c.origin, c.hubs, c.cluster,
+                                        tuple(sorted(set(c.made_by) | {f"must:{m}"})), loop="tour")
+                continue
             if c.loop:
                 lim = loop_limits(c, p)
                 out, ret = stops[:nt + 1], stops[nt:]
@@ -944,3 +978,183 @@ def pools(cands: list[Candidate], threshold: float) -> dict[str, tuple[list[Cand
     """배분 후보 풀. ours = 생성 + 최단경로 피더(중복 제거), sp = 최단경로 피더만(중복 제거)."""
     return {"ours": dedupe(cands, threshold),
             "sp": dedupe([c for c in cands if c.origin == "shortest_path_feeder"], threshold)}
+
+
+# ---------------------------------------------------------------- 6e 닫힌 순회(tour.py)
+
+_TOUR_STATE: dict = {}
+
+
+def tour_limits(c: Candidate, p: Params):
+    """후보를 만든 L(made_by의 "_L"; 없으면 목록 최댓값)로 순환 상한 2L."""
+    from .tour import TourLimits
+    Ls = [int(t.split("_L")[1]) for t in c.made_by if "_L" in t]
+    L = min(Ls) if Ls else max(p.l_max_min)
+    return TourLimits(2 * L * 60, p.tour_max_stops, p.tour_detour, p.loop_closure_max_s)
+
+
+def select_pool(cands: list[Candidate], which: str) -> list[Candidate]:
+    """배분 후보 풀(중복 제거 전): ours = tour가 아닌 후보, tour = tour만, all = 전부, tour_<생성기> = 그 생성기만."""
+    if which == "all":
+        return list(cands)
+    if which == "ours":
+        return [c for c in cands if not c.origin.startswith("tour_")]
+    if which == "tour":
+        return [c for c in cands if c.origin.startswith("tour_")]
+    if which in ("tour_sector", "tour_feeder", "tour_pair"):
+        return [c for c in cands if c.origin == which]
+    raise ValueError(f"풀은 ours, tour, all, tour_sector, tour_feeder, tour_pair 중 하나: {which}")
+
+
+def _finish_tour(c: Candidate, b: Builder, p: Params, dropped: dict | None) -> bool:
+    """tour 최종 판정: 변환기 공차 경로로 고리 닫기·U턴, route_cycle 주기 ≤ 2L."""
+    from .loop import closure_s, cyclic_seq, designated_stops
+    g, net = b.g, b.net
+    lim = tour_limits(c, p)
+    c.closure_s = closure_s(g, c.return_stops)
+    why = None
+    if c.closure_s > lim.closure_max_s:
+        why = "tour_closure"
+    elif g.has_uturn(cyclic_seq(c.stops, c.return_stops)):
+        why = "tour_uturn"
+    elif c.cycle_s > lim.cycle_max_s:
+        why = "tour_cycle"
+    if why:
+        if dropped is not None:
+            dropped[why] = dropped.get(why, 0) + 1
+        return False
+    dz = designated_stops(net)
+    tb = _TOUR_STATE.get("tb")
+    c.turn = tb.far_index(c.stops) if tb is not None else len(c.stops) - 1
+    out, ret = c.stops[:c.turn + 1], c.stops[c.turn:]
+    c.out_oneway_s = g.oneway_s(out)
+    c.ret_oneway_s = g.oneway_s(ret) if len(ret) > 1 else 0
+    c.out_n_stops = sum(1 for s in out if s not in dz)
+    c.ret_n_stops = sum(1 for s in ret[1:] if s not in dz)
+    c.oneway_s = g.oneway_s(c.stops)
+    c.length_m = g.length_m(c.stops)
+    c.detour = g.detour(out) if len(out) > 1 else 1.0
+    c.n_stops = sum(1 for s in c.stops if s not in dz)
+    c.cover_keys = b.cover_keys_of(c.stops)
+    c.cover = sum(b.od_total[k] for k in c.cover_keys)
+    c.cross_gu = any(net.stops[s].gu != p.home_gu for s in c.stops)
+    if p.must_stops:
+        ms = set(p.must_stops)
+        c.must = tuple(s for s in c.stops[1:-1] if s in ms)
+    return True
+
+
+def _tours(b: Builder, raw: dict, p: Params, scenario: Scenario, clusters: list[dict],
+           K: dict[str, dict[str, float]], hubs: dict[str, float], inputs) -> dict[str, int]:
+    """6e. ①-T 섹터 순회, ②-T 피더 순회, ③-T 역 쌍 순회를 raw에 더한다. 반환: "tour/단계/사유" → 횟수."""
+    from .tour import TourBuilder, TourLimits, default_inputs, line_pairs
+    net, graph = b.net, b.g
+    tb = TourBuilder(b, scenario.policy, inputs or default_inputs(net), p.loop_closure_max_s)
+    _TOUR_STATE["tb"] = tb
+    cl_of = {h: cl["id"] for cl in clusters for h in cl["hubs"]}
+
+    def lim_of(L: int) -> TourLimits:
+        return TourLimits(2 * L * 60, p.tour_max_stops, p.tour_detour, p.loop_closure_max_s)
+
+    def add(stops, origin, hubs_, cluster, tag):
+        key = (origin, "tour", hubs_, stops, "tour", "")
+        if key in raw:
+            raw[key].made_by = tuple(sorted(set(raw[key].made_by) | {tag}))
+            return
+        raw[key] = Candidate("", "tour", stops, origin, hubs_, cluster, (tag,), loop="tour")
+
+    def values_of(h: str) -> dict[str, float]:
+        ea = tb.ends(h)
+        ends = {ea[0], ea[1]} if ea else set()
+        vals = {s: tb.value(h, "access", s) + tb.value(h, "egress", s) for s in sorted(K.get(h, {})) if s not in ends}
+        return {s: v for s, v in vals.items() if v > 0}
+
+    hub_ids = sorted(hubs)
+    for h in hub_ids:
+        if tb.ends(h) is None:
+            tb.count("ends", "no_end_pair")
+    # ①-T
+    if "sector" in p.tour:
+        for h in hub_ids:
+            ea = tb.ends(h)
+            if ea is None:
+                continue
+            e, a, _ = ea
+            st = net.stations[h]
+            pat = Pattern("tour", (h,), e, a, (st.lat, st.lon))
+            values = values_of(h)
+            for L in p.l_max_min:
+                lim = lim_of(L)
+                feas = [s for s in values if tb.route([e, s, a], lim, f"sector_seed_L{L}") is not None]
+                for m in p.sectors:
+                    for sec in sectors(feas, values, pat.center, m, net):
+                        seed = max(sec, key=lambda s: (values[s] * seed_dist(graph, net, pat, s, p), s))
+                        stops = tb.insertion([e, seed, a], sec, lim, f"sector_L{L}", frozenset({e, a}))
+                        if stops is not None:
+                            add(stops, "tour_sector", (h,), cl_of[h], f"tm{m}_L{L}")
+    # ②-T
+    if "feeder" in p.tour:
+        L = max(p.l_max_min)
+        lim = lim_of(L)
+        for h in hub_ids:
+            if tb.ends(h) is None:
+                continue
+            values = values_of(h)
+            picked = 0
+            for s in sorted(values, key=lambda x: (-values[x], x)):
+                if picked >= p.sp_top:
+                    break
+                stops = tb.feeder(h, s, lim, f"feeder_L{L}")
+                if stops is None:
+                    continue
+                picked += 1
+                add(stops, "tour_feeder", (h,), cl_of[h], f"tsp:{s}_L{L}")
+    # ③-T
+    if "pair" in p.tour:
+        lines = (inputs.lines if inputs is not None else {})
+        ok = {h: hubs[h] for h in hub_ids if tb.ends(h) is not None}
+        chosen = []
+        for P, Q in line_pairs(ok, lines):
+            eP, aP, _ = tb.ends(P)
+            eQ, aQ, _ = tb.ends(Q)
+            same = cl_of.get(P) == cl_of.get(Q)
+            if not same:
+                tP = graph.tree(eP).get(aQ)
+                tQ = graph.tree(eQ).get(aP)
+                t = min(x[0] for x in (tP, tQ) if x) if (tP or tQ) else None
+                if t is None or t > p.tour_pair_max_s:
+                    tb.count("pair", "far")
+                    continue
+            chosen.append((P, Q))
+            if len(chosen) >= p.tour_pair_top:
+                break
+        for P0, Q0 in chosen:
+            for P, Q in ((P0, Q0), (Q0, P0)):
+                eP, aP, _ = tb.ends(P)
+                eQ, aQ, _ = tb.ends(Q)
+                ends = {eP, aP, eQ, aQ}
+                pool = sorted((set(K.get(P, {})) | set(K.get(Q, {}))) - ends)
+                v1 = {s: tb.value(P, "egress", s) + tb.value(Q, "access", s) for s in pool}
+                v2 = {s: tb.value(Q, "egress", s) + tb.value(P, "access", s) for s in pool}
+                vals = {s: v1[s] + v2[s] for s in pool}
+                pool = [s for s in pool if vals[s] > 0]
+
+                def seed_of(v, start, end, taken):
+                    """그 구간(start → 씨앗 → end)을 같은 정류장 반복 없이 이을 수 있는 정류장 중 가치 × 망 거리 최대."""
+                    df, dt = graph.dist_from(start), graph.dist_to(end)
+                    c = [s for s in pool if v[s] > 0 and s not in taken and graph.expand([start, s, end]) is not None]
+                    if not c:
+                        return None
+                    return max(c, key=lambda s: (v[s] * float(min(df.get(s, 0), dt.get(s, 0))), s))
+
+                mid = [aQ] if aQ == eQ else [aQ, eQ]
+                for L in p.l_max_min:
+                    lim = lim_of(L)
+                    s1 = seed_of(v1, eP, aQ, set())
+                    s2 = seed_of(v2, eQ, aP, {s1})
+                    anchors = [eP] + ([s1] if s1 else []) + mid + ([s2] if s2 else []) + [aP]
+                    stops = tb.insertion(anchors, pool, lim, f"pair_L{L}", frozenset(ends))
+                    if stops is not None:
+                        add(stops, "tour_pair", (P, Q), cl_of.get(P) if cl_of.get(P) == cl_of.get(Q) else None,
+                            f"tpair_L{L}")
+    return {f"tour/{st}/{r}": v for (st, r), v in sorted(tb.reasons.items())}

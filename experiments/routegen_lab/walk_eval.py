@@ -196,6 +196,9 @@ def main() -> int:
     ap.add_argument("--must-min-tph", type=float, default=0.0, help="필수 정류장 시간당 최소 운행(기본 0 = 요구 안 함)")
     ap.add_argument("--absolute-rules", action="store_true",
                     help="규칙을 상대 기준(rules.py) 대신 설정 파일 절댓값으로(옛 결과 재현용)")
+    ap.add_argument("--tour", default="", help="닫힌 순회 후보(tour.py): sector,feeder,pair 중 일부(쉼표). 비우면 끔(예전 그대로)")
+    ap.add_argument("--tour-pool", default="all", choices=("ours", "tour", "all", "tour_sector", "tour_feeder", "tour_pair"),
+                    help="--tour일 때 배분 후보 풀: ours(tour 아닌 후보) / tour / all / 한 생성기만")
     ap.add_argument("--allow-rule-override", action="store_true", help="구별 규칙·정책 상수 덮어쓰기를 경고만(재현용)")
     args = ap.parse_args()
     muni_dirs = {k: Path(v).resolve() for k, v in (x.split("=", 1) for x in args.muni)}
@@ -280,6 +283,9 @@ def main() -> int:
                     (set() if args.demand_mode == "all_bus_no_absorption" else None))
         must_res = MS.for_bundle(args.facilities, root, info["gu"], MS.MustConfig(), override)
         rule_kw["must_stops"] = tuple(must_res["must_stops"])
+    tour_kinds = tuple(x for x in args.tour.split(",") if x)
+    if tour_kinds:
+        rule_kw["tour"] = tour_kinds
     p = cfg.walk_params(home_gu=info["gu"], multi=args.multi,
                         **({} if args.loop is None else {"loop": None if args.loop == "none" else args.loop}),
                         **rule_kw, **(json.loads(args.gen) if args.gen else {}))
@@ -294,7 +300,20 @@ def main() -> int:
         if troot.exists():
             ix.add_flows(D.load_flows(troot))
         reach = Reach(ix, rule, nb, keys)
-    gres = G.generate(net, demand, scen, p, reach=reach, jobs=args.gen_jobs)
+    tour_inputs = None
+    if tour_kinds:
+        from busstrike.planning.routegen import tour as TR
+        tour_inputs = TR.load_inputs(root, args.lines)
+    gres = G.generate(net, demand, scen, p, reach=reach, jobs=args.gen_jobs,
+                      **({"tour_inputs": tour_inputs} if tour_kinds else {}))
+    tour_log = None
+    if tour_kinds:                                    # 풀 고르기(tour를 켰을 때만, 중복 제거 전)
+        from collections import Counter
+        tour_log = {"kinds": list(tour_kinds), "pool": args.tour_pool,
+                    "candidates_by_origin": dict(sorted(Counter(c.origin for c in gres.candidates).items())),
+                    "reasons": {k: v for k, v in gres.reasons.items() if k.startswith("tour/")},
+                    "dropped": {k: v for k, v in gres.dropped.items() if k.startswith("tour_")}}
+        gres.candidates = G.select_pool(gres.candidates, args.tour_pool)
     # 후보 풀: 순환 방식마다 따로 중복 제거(방식끼리 서로 지우지 않게). 꼬리표 lsfx는 안 이름에 붙는다
     lsfx_of = {"demand": "c", "deadhead": "cd", None: ""}
     if p.loop == "both":
@@ -332,6 +351,7 @@ def main() -> int:
            "strike": strike_log, "rules": rules_log,
            "must": None if must_res is None else {k: must_res[k] for k in ("must_stops", "counts", "gu_code", "config")},
            "must_candidates": gres.dropped.get("must"),
+           **({"tour": tour_log} if tour_log else {}),
            "plans": {}, "walk_stats": {}, "absorbed": hs["absorbed"], "affected_total": hs["affected_total"],
            "absorbed_test": hs["absorbed_test"], "affected_total_test": hs["affected_total_test"]}
     if only and (out / "walk_eval.json").exists():
@@ -351,7 +371,8 @@ def main() -> int:
                          "loop_variant": c.loop_variant, "turn": c.turn, "cycle_s": c.cycle_s,
                          "closure_s": c.closure_s, "closure_stops": list(c.return_stops),
                          "out_oneway_s": c.out_oneway_s, "ret_oneway_s": c.ret_oneway_s,
-                         "out_n_stops": c.out_n_stops, "ret_n_stops": c.ret_n_stops, "cover": round(c.cover, 1)})
+                         "out_n_stops": c.out_n_stops, "ret_n_stops": c.ret_n_stops, "cover": round(c.cover, 1),
+                         **({"made_by": list(c.made_by), "detour": round(c.detour, 3)} if tour_kinds else {})})
         return out_
 
     def record(label: str, fleet: int, routes: list[tuple[list[str], int]], extra: dict) -> None:
