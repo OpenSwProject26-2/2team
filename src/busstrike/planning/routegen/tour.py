@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import csv
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .graph import Graph
@@ -37,6 +37,7 @@ TOUR_KINDS = ("sector", "feeder", "pair")
 class TourInputs:
     ends: dict          # 역 → (egress 후보 정류장들, access 후보 정류장들)
     lines: dict         # 역 → (물리적 역 이름, 호선 집합)
+    tags: dict = field(default_factory=dict)   # 역 → 평가 규칙 꼬리표(station_lines.csv tags, 호선 단위 묶기용)
 
 
 @dataclass(frozen=True)
@@ -60,11 +61,15 @@ def load_inputs(root: Path | str, lines_path: Path | str) -> TourInputs:
             m[r["kind"]].update(r["candidates"].split())
             m[r["kind"]].add(r["station_stop_id"])
     lines: dict[str, set[str]] = {}
+    tags: dict[str, frozenset[str]] = {}
     with open(lines_path, encoding="utf-8", newline="") as f:
         for r in csv.DictReader(f):
             lines[r["station_id"]] = set(r["lines"].replace(";", " ").split())
+            if r.get("tags"):
+                tags[r["station_id"]] = frozenset(r["tags"].split())
     return TourInputs({k: (tuple(sorted(v["egress"])), tuple(sorted(v["access"]))) for k, v in sorted(ends.items())},
-                      {k: (names.get(k, k), frozenset(lines.get(k, ()))) for k in sorted(names)})
+                      {k: (names.get(k, k), frozenset(lines.get(k, ()))) for k in sorted(names)},
+                      {k: tags[k] for k in sorted(tags) if k in names})
 
 
 def default_inputs(net) -> TourInputs:

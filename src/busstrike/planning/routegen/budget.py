@@ -27,6 +27,27 @@ from .tour import TourLimits
 EPS = 1e-9
 
 
+def line_groups(tags: dict, hubs, stations) -> dict[str, list[str]]:
+    """2단계: 꼬리표 → 그 꼬리표 역들(stations 중, ID 순). 허브가 하나라도 가진 꼬리표만."""
+    want = sorted({t for h in hubs for t in tags.get(h, ())})
+    out = {t: sorted(k for k in stations if t in tags.get(k, ())) for t in want}
+    return {t: v for t, v in out.items() if v}
+
+
+def nearest_end_station(g, group: list[str], ends_of, s: str) -> str | None:
+    """씨앗 s에서 망 거리로 가장 가까운 역: min(s → 그 역 A, 그 역 E → s), 동률 역 ID. 못 닿으면 None."""
+    best = None
+    for k in group:
+        ea = ends_of(k)
+        if ea is None:
+            continue
+        e, a, _ = ea
+        d = min(g.dist_to(a).get(s, math.inf), g.dist_from(e).get(s, math.inf))
+        if d < math.inf and (best is None or (d, k) < best):
+            best = (d, k)
+    return None if best is None else best[1]
+
+
 class RideApprox:
     """노선 하나의 탑승 근사와 덮는 소외 수요. builder = generate.Builder(덮는 키는 평가 규칙 reach로 센다)."""
 
