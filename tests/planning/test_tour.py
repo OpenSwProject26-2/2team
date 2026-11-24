@@ -176,6 +176,27 @@ class TourPairTest(unittest.TestCase):
             self.assertLess(S.index(ENDS[q][1][0]), S.index(ENDS[q][0][0]))
 
 
+class PairSeedTest(unittest.TestCase):
+    """③-T 씨앗도 1절처럼 그 L의 순회 제약을 지키는 정류장 중에서 고른다."""
+
+    def setUp(self):
+        net = tour_network()
+        g = Graph(net, 10, 3600, "network")
+        b = G.Builder(net, g, demand(), params(), reach_rule(net))
+        self.tb = T.TourBuilder(b, scenario().policy, T.TourInputs(ENDS, LINES), 300)
+
+    def test_picks_best_feasible(self):
+        lim = T.TourLimits(1800)
+        v = {"N1": 1.0, "M1": 5.0}
+        got = self.tb.pair_seed(v, lambda s: ["KE", s, "QA", "QE", "KA"], lim, frozenset())
+        self.assertEqual(got, "M1")
+
+    def test_none_when_no_seed_fits(self):
+        lim = T.TourLimits(300)          # 5분: 어떤 순회도 못 맞춘다
+        got = self.tb.pair_seed({"N1": 1.0, "M1": 5.0}, lambda s: ["KE", s, "QA", "QE", "KA"], lim, frozenset())
+        self.assertIsNone(got)
+
+
 class TourOptionTest(unittest.TestCase):
     def test_off_by_default(self):
         self.assertIsNone(G.Params().tour)

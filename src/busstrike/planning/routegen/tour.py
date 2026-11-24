@@ -258,6 +258,27 @@ class TourBuilder:
                         anchors, stops, cur_t, cur_dem = trial, new, t, dem
         return stops
 
+    # ---------------------------------------------------------------- ③-T 씨앗
+    def pair_seed(self, v: dict[str, float], anchors_of, lim: TourLimits, taken: frozenset[str],
+                  start: str | None = None, end: str | None = None) -> str | None:
+        """가치 × 망 거리(start에서, end까지 중 작은 쪽; 안 주면 가치만)가 큰 순으로, anchors_of(씨앗)이 그 L의 순회 제약을
+        지키는 첫 정류장(1절 씨앗과 같은 규칙: 실행 가능한 정류장 중 최대). 없으면 None."""
+        df = self.g.dist_from(start) if start else None
+        dt = self.g.dist_to(end) if end else None
+
+        def w(s: str) -> float:
+            if df is None and dt is None:
+                return 1.0
+            ds = [d.get(s) for d in (df, dt) if d is not None]
+            ds = [x for x in ds if x is not None]
+            return float(min(ds)) if ds else 0.0
+
+        cand = sorted((s for s in v if v[s] > 0 and s not in taken), key=lambda s: (-(v[s] * w(s)), s))
+        for s in cand:
+            if self.route(anchors_of(s), lim, None) is not None:
+                return s
+        return None
+
     # ---------------------------------------------------------------- ②-T
     def feeder(self, k: str, seed: str, lim: TourLimits, stage: str) -> tuple[str, ...] | None:
         ea = self.ends(k)

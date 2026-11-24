@@ -1139,19 +1139,14 @@ def _tours(b: Builder, raw: dict, p: Params, scenario: Scenario, clusters: list[
                 vals = {s: v1[s] + v2[s] for s in pool}
                 pool = [s for s in pool if vals[s] > 0]
 
-                def seed_of(v, start, end, taken):
-                    """그 구간(start → 씨앗 → end)을 같은 정류장 반복 없이 이을 수 있는 정류장 중 가치 × 망 거리 최대."""
-                    df, dt = graph.dist_from(start), graph.dist_to(end)
-                    c = [s for s in pool if v[s] > 0 and s not in taken and graph.expand([start, s, end]) is not None]
-                    if not c:
-                        return None
-                    return max(c, key=lambda s: (v[s] * float(min(df.get(s, 0), dt.get(s, 0))), s))
-
                 mid = [aQ] if aQ == eQ else [aQ, eQ]
                 for L in p.l_max_min:
                     lim = lim_of(L)
-                    s1 = seed_of(v1, eP, aQ, set())
-                    s2 = seed_of(v2, eQ, aP, {s1})
+                    # 씨앗(1절과 같은 규칙): 구간 1 → 그 씨앗만 넣은 순회가 제약을 지키는 정류장 중 가치 × 망 거리 최대,
+                    # 구간 2 → 구간 1 씨앗을 둔 채 같은 규칙
+                    s1 = tb.pair_seed(v1, lambda s: [eP, s] + mid + [aP], lim, frozenset(), eP, aQ)
+                    pre = [eP] + ([s1] if s1 else []) + mid
+                    s2 = tb.pair_seed(v2, lambda s: pre + [s, aP], lim, frozenset({s1} if s1 else ()), eQ, aP)
                     anchors = [eP] + ([s1] if s1 else []) + mid + ([s2] if s2 else []) + [aP]
                     stops = tb.insertion(anchors, pool, lim, f"pair_L{L}", frozenset(ends))
                     if stops is not None:
