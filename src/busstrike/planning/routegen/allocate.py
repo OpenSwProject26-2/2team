@@ -52,6 +52,7 @@ from dataclasses import dataclass
 
 EPS = 1e-9
 VIOL_EPS = 1e-6                                     # 위반 인원 비교 허용 오차
+BAN_PENALTY = 1e9                                   # 금지 조합(banned)의 위반량(새 알고리즘 7단계 상위 k개)
 
 
 SERVICE_T0 = 6 * 3600                               # 근사 시간대 06~10시(data.HOURS)
@@ -112,8 +113,11 @@ class Model:
     def __init__(self, routes: list[tuple], od_hourly: dict[tuple[str, str], list[float]], p: AllocParams = AllocParams(),
                  groups: dict[str, str] | None = None, group_weight: dict[str, float] | None = None,
                  equity: EquityFloor | None = None, must: dict[str, tuple[str, ...]] | None = None,
-                 must_min_tph: float = 0.0):
+                 must_min_tph: float = 0.0, banned=()):
         self.p = p
+        # 금지할 노선 조합(새 알고리즘 7단계, 기본 없음): 열린 노선 집합이 이 중 하나와 같으면 위반량에 BAN_PENALTY를 더한다.
+        # 상위 k개 조합을 낼 때 앞서 찾은 조합을 금지하고 다시 푼다(budget_alloc.top_k). 비면 예전과 같다.
+        self.banned = frozenset(frozenset(b) for b in banned)
         # 필수 정류장(설계 6.2b): 정류장 → 그 정류장을 첫·끝이 아닌 정차로 지나는 후보 노선들. 덮음은 하드 조건(valid)
         self.must = {s: tuple(sorted(rs)) for s, rs in sorted((must or {}).items())}
         self.must_min_tph = must_min_tph
@@ -283,6 +287,8 @@ class Model:
             if eq is not None:
                 viol += eq["short"]
             viol += sum(self.route_shortfall(dict(key), det["by_route"]).values())
+            if self.banned and frozenset(r for r, _ in key) in self.banned:
+                viol += BAN_PENALTY
             got = self._cache[key] = (viol, det["total"])
         return got
 

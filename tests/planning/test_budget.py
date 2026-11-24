@@ -267,5 +267,61 @@ class MergeTest(unittest.TestCase):
         self.assertEqual([c for c in merge_run(False).candidates if c.origin == "tour_merge"], [])
 
 
+
+def alloc_model(cls=None, **kw):
+    from busstrike.planning.routegen import allocate as A
+    routes = [("rA", 1200, [("o1", "d")]), ("rB", 1200, [("o2", "d")]), ("rC", 1200, [("o3", "d")]),
+              ("rD", 1200, [("o4", "d")])]
+    od = {("o1", "d"): [10.0] * 4, ("o2", "d"): [8.0] * 4, ("o3", "d"): [6.0] * 4, ("o4", "d"): [4.0] * 4}
+    return (cls or A.Model)(routes, od, A.AllocParams(), **kw)
+
+
+class AllocBanTest(unittest.TestCase):
+    """7단계: 배분기에 금지할 노선 조합 옵션. 끄면 기존과 같다. 상위 k개는 서로 다른 조합."""
+
+    def test_banned_empty_is_same(self):
+        from busstrike.planning.routegen import allocate as A
+        a0 = A.allocate(alloc_model(), 2)
+        a1 = A.allocate(alloc_model(banned=()), 2)
+        self.assertEqual(a0["n"], a1["n"])
+        self.assertEqual(a0["value"], a1["value"])
+        self.assertEqual(set(a0["n"]), {"rA", "rB"})
+
+    def test_banned_set_avoided(self):
+        from busstrike.planning.routegen import allocate as A
+        a = A.allocate(alloc_model(banned=[frozenset({"rA", "rB"})]), 2)
+        self.assertNotEqual(set(a["n"]), {"rA", "rB"})
+        self.assertTrue(a["feasible"])
+
+    def test_top_k_distinct(self):
+        from busstrike.planning.routegen import budget_alloc as BA
+        got = BA.top_k(lambda banned: alloc_model(banned=banned), 2, 3)
+        sets = [frozenset(a["n"]) for a in got]
+        self.assertEqual(len(sets), 3)
+        self.assertEqual(len(set(sets)), 3)
+        self.assertEqual(sets[0], frozenset({"rA", "rB"}))
+        vals = [a["value"] for a in got]
+        self.assertEqual(vals, sorted(vals, reverse=True))
+
+
+class FixedNTest(unittest.TestCase):
+    """1단계: 후보에 기록한 n으로 그 노선 대수를 고정한다."""
+
+    def test_counts_equal_fixed(self):
+        from busstrike.planning.routegen import allocate as A
+        from busstrike.planning.routegen import budget_alloc as BA
+        routes = [("rA", 1000, [("o1", "d")]), ("rB", 1000, [("o2", "d")]), ("rC", 2000, [("o3", "d")])]
+        od = {("o1", "d"): [300.0] * 4, ("o2", "d"): [5.0] * 4, ("o3", "d"): [30.0] * 4}   # rA는 정원(1대 시간당 162석)보다 수요가 크다
+        fixed = {"rA": 1, "rB": 1, "rC": 2}
+        m = BA.FixedNModel(routes, od, A.AllocParams(), fixed_n=fixed)
+        a = A.allocate(m, 4)
+        self.assertTrue(a["feasible"])
+        for r, k in a["n"].items():
+            self.assertEqual(k, fixed[r])
+        self.assertEqual(sum(a["n"].values()), 4)
+        plain = A.allocate(A.Model(routes, od, A.AllocParams()), 4)     # 고정이 없으면 rA에 더 넣는다
+        self.assertNotEqual(plain["n"], a["n"])
+
+
 if __name__ == "__main__":
     unittest.main()
