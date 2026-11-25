@@ -140,6 +140,7 @@ PYTHONPATH=src python3 -m busstrike.pipeline --gu guro --strike 1.0 --fleet 11 -
 | 후보 풀 합집합(`--tour-pool tour`, `all`) | 실험은 한 종류 풀만 |
 | 상위 k개(`--topk`, `Model.banned`), U턴 허용(`allow_uturn`) | 안 씀, 공통 조건이 U턴 금지 |
 | lab 스크립트 `summarize_sweep.py`, `summarize_walk.py`, `run_all_gus.py` | 일회성, 참조 0건 |
+| `routegen/delay.py`(평소 대비 지연 도구)와 `test_delay.py` | 평상시 표가 오지 않아 실행된 적 없음, 참조 0건. 같은 질문을 지표 `time_ratio_rode`·`time_ratio_common`이 답함 |
 
 ## 7. 관문(검증)
 
