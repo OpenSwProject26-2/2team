@@ -106,11 +106,20 @@ def _segment_parameters(a: list[float], b: list[float], geometry: dict) -> list[
     return sorted({round(t, 12) for t in ts})
 
 
-def clip_line(points: list[list[float]], geometry: dict) -> list[list[list[float]]]:
+def clip_line(
+    points: list[list[float]], geometry: dict, bounds: list[float] | None = None
+) -> list[list[list[float]]]:
     """Clip each segment to a district; preserve traversal order and disjoint parts."""
+    west, south, east, north = bounds or bbox(geometry)
     parts: list[list[list[float]]] = []
     current: list[list[float]] = []
     for a, b in pairwise(points):
+        if (max(a[0], b[0]) < west or min(a[0], b[0]) > east
+                or max(a[1], b[1]) < south or min(a[1], b[1]) > north):
+            if len(current) > 1:
+                parts.append(current)
+                current = []
+            continue
         ts = _segment_parameters(a, b, geometry)
         for start, end in pairwise(ts):
             t = (start + end) / 2
@@ -149,11 +158,14 @@ def network_view(
         raise DataError("INPUT_INVALID", "자치구 또는 표시 범위가 올바르지 않습니다.")
     feature = districts()[district]
     polygon = feature["geometry"]
+    bounds = bbox(polygon)
     stop_by_id = {stop["stop_id"]: stop for stop in snapshot.stops}
     inside_ids = {
         sid
         for sid, stop in stop_by_id.items()
-        if contains(stop["coordinates"], polygon)
+        if bounds[0] <= stop["coordinates"][0] <= bounds[2]
+        and bounds[1] <= stop["coordinates"][1] <= bounds[3]
+        and contains(stop["coordinates"], polygon)
     }
     routes = []
     used_ids: set[str] = set()
@@ -165,21 +177,21 @@ def network_view(
             relevant = any(
                 clip_line(
                     [stop_by_id[a]["coordinates"], stop_by_id[b]["coordinates"]],
-                    polygon,
+                    polygon, bounds,
                 )
                 for a, b in links
                 if a in stop_by_id and b in stop_by_id
             )
         if not relevant and route.get("coordinates"):
             geometry_lines = route["coordinates"] if route.get("geometry_type") == "MultiLineString" else [route["coordinates"]]
-            relevant = any(clip_line(line, polygon) for line in geometry_lines)
+            relevant = any(clip_line(line, polygon, bounds) for line in geometry_lines)
         if not relevant:
             continue
         item = route.copy()
         if extent == "inside":
             if route.get("coordinates"):
                 geometry_lines = route["coordinates"] if route.get("geometry_type") == "MultiLineString" else [route["coordinates"]]
-                segments = [part for line in geometry_lines for part in clip_line(line, polygon)]
+                segments = [part for line in geometry_lines for part in clip_line(line, polygon, bounds)]
                 item["coordinates"] = segments if segments else None
                 item["geometry_type"] = "MultiLineString" if segments else None
             item["schematic_stop_links"] = [
@@ -189,7 +201,7 @@ def network_view(
                 and b in stop_by_id
                 and clip_line(
                     [stop_by_id[a]["coordinates"], stop_by_id[b]["coordinates"]],
-                    polygon,
+                    polygon, bounds,
                 )
             ]
         routes.append(item)

@@ -33,10 +33,14 @@ class DashboardHttpTests(unittest.TestCase):
             self.assertEqual(response.headers.get_content_type(), "application/json")
             return json.load(response)
 
-    def post_scenario(self, routes: list[dict]) -> dict:
-        body = json.dumps(
-            {"hour": "07", "routes": routes, "active_normal_route_ids": []}
-        ).encode("utf-8")
+    def post_scenario(self, routes: list[dict], normal_ids: list[str] | None = None,
+                      strike_ids: list[str] | None = None, date: str | None = None) -> dict:
+        payload = {"hour": "07", "routes": routes, "active_normal_route_ids": normal_ids or []}
+        if date is not None:
+            payload["date"] = date
+        if strike_ids is not None:
+            payload["strike_route_ids"] = strike_ids
+        body = json.dumps(payload).encode("utf-8")
         request = Request(
             self.base + "/api/d/demo/scenario/evaluate",
             data=body,
@@ -66,6 +70,14 @@ class DashboardHttpTests(unittest.TestCase):
         self.assertEqual(sources["demo"]["status"], "ready")
         self.assertEqual(sources["B"]["status"], "unavailable")
 
+    def test_transport_demand_without_condition_file_is_explicitly_unavailable(self) -> None:
+        result = self.get_json(
+            "/api/d/simulation/transport-demand?region=guro&fleet=11&plan=ours"
+            "&period=exp&date=2026-10-26&disabled_modes=metro"
+        )
+        self.assertEqual(result["status"], "not_configured")
+        self.assertEqual(result["selection"]["disabled_modes"], ["metro"])
+
     def test_scenario_route_addition_and_removal_changes_unmet(self) -> None:
         empty = self.post_scenario([])
         shuttle = self.post_scenario(
@@ -83,6 +95,78 @@ class DashboardHttpTests(unittest.TestCase):
         self.assertEqual(empty["total"], shuttle["total"])
         self.assertGreater(shuttle["served"], empty["served"])
         self.assertLess(shuttle["unmet"], empty["unmet"])
+
+    def test_normal_transport_changes_spatial_unmet_demand(self) -> None:
+        routes = self.get_json("/api/d/routes?mode=demo")["routes"]
+        normal_ids = [route["route_id"] for route in routes if route["kind"] in
+                      {"city", "village", "gyeonggi", "metro"}]
+        baseline = self.post_scenario([], normal_ids)
+        for removed_id in normal_ids:
+            with self.subTest(removed=removed_id):
+                changed = self.post_scenario(
+                    [], [route_id for route_id in normal_ids if route_id != removed_id]
+                )
+                self.assertEqual(changed["total"], baseline["total"])
+                self.assertGreater(changed["unmet"], baseline["unmet"])
+                self.assertTrue(any(
+                    before["properties"]["unmet"] != after["properties"]["unmet"]
+                    for before, after in zip(baseline["features"], changed["features"])
+                ))
+
+    def test_releasing_strike_route_reduces_affected_and_unmet_demand(self) -> None:
+        routes = self.get_json("/api/d/routes?mode=demo")["routes"]
+        normal_ids = [r["route_id"] for r in routes if r["kind"] in
+                      {"city", "village", "gyeonggi", "metro"}]
+        strike_ids = [r["route_id"] for r in routes if r["kind"] == "strike"]
+        shuttle = [{"route_id": "demo-shuttle-01", "stop_ids": ["d-a", "d-b", "d-c", "d-d"], "vehicles": 5}]
+        both = self.post_scenario(shuttle, normal_ids, strike_ids)
+        one = self.post_scenario(shuttle, normal_ids, strike_ids[:1])
+        none = self.post_scenario(shuttle, normal_ids, [])
+        self.assertEqual(both["total"], one["total"])
+        self.assertEqual(one["total"], none["total"])
+        self.assertGreater(both["unmet"], one["unmet"])
+        self.assertGreater(one["unmet"], none["unmet"])
+        self.assertEqual(none["restored_strike_route_ids"], sorted(strike_ids))
+        self.assertTrue(any(effect["kind"] == "restored_city" and effect["served"] > 0
+                            for effect in none["route_effects"]))
+        self.assertTrue(any(
+            a["properties"]["unmet"] > b["properties"]["unmet"]
+            for a, b in zip(both["features"], one["features"])
+        ))
+
+    def test_shuttle_coverage_and_vehicle_count_change_spatial_unmet(self) -> None:
+        routes = self.get_json("/api/d/routes?mode=demo")["routes"]
+        normal_ids = [r["route_id"] for r in routes if r["kind"] in
+                      {"city", "village", "gyeonggi", "metro"}]
+        def shuttle(stops: list[str], vehicles: int) -> list[dict]:
+            return [{"route_id": "demo-shuttle-01", "stop_ids": stops, "vehicles": vehicles}]
+        no_shuttle = self.post_scenario([], normal_ids)
+        one = self.post_scenario(shuttle(["d-a", "d-b", "d-c", "d-d"], 1), normal_ids)
+        five = self.post_scenario(shuttle(["d-a", "d-b", "d-c", "d-d"], 5), normal_ids)
+        poor_path = self.post_scenario(shuttle(["d-h", "d-i"], 5), normal_ids)
+        self.assertGreater(no_shuttle["unmet"], one["unmet"])
+        self.assertGreater(one["unmet"], five["unmet"])
+        self.assertGreater(poor_path["unmet"], five["unmet"])
+        self.assertEqual(one["total"], five["total"])
+        self.assertTrue(any(
+            a["properties"]["unmet"] != b["properties"]["unmet"]
+            for a, b in zip(one["features"], five["features"])
+        ))
+
+    def test_demo_date_changes_od_and_preserves_allocation_invariants(self) -> None:
+        dates = self.get_json("/api/d/dashboard?mode=demo")["demo_dates"]
+        self.assertEqual(dates, ["2026-11-13", "2026-11-14", "2026-11-16"])
+        totals = []
+        for day in dates:
+            with self.subTest(date=day):
+                result = self.post_scenario([], date=day)
+                demand = self.get_json(f"/api/d/demand?mode=demo&hour=07&date={day}")
+                self.assertEqual(result["total"], demand["total"])
+                self.assertEqual(result["total"], result["served"] + result["unmet"])
+                self.assertEqual(result["served"], sum(item["served"] for item in result["route_effects"]))
+                self.assertEqual(result["unmet"], sum(item["properties"]["unmet"] for item in result["features"]))
+                totals.append(result["total"])
+        self.assertEqual(len(set(totals)), len(dates))
 
     def test_real_mode_without_a_feed_reports_missing_data(self) -> None:
         with self.assertRaises(HTTPError) as error:
