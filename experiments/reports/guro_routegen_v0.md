@@ -637,6 +637,8 @@ plan_id는 출처를 드러내지 않는다(schema.md §1): `plan-01-*` = 우리
 
 ## 10. 재현
 
+> 참고(2026-11-26): `python -m busstrike.planning.routegen` CLI(`routegen/__main__.py`)는 지웠다. 이 명령으로 재현하려면 커밋 47ed2bd(또는 그 이전)를 체크아웃한다. 지금 실험은 `python -m busstrike.pipeline`([pipeline.md](../../docs/design/pipeline.md)).
+
 ```sh
 # <DATA> = guro_0610_2.zip을 푼 guro_0610/, <OUT> = 저장소 밖 결과 폴더, <RM> = feat/guro-exp-1026-30의 experiments/guro_exp/run_matrix.py
 PYTHONPATH=src python3 -m busstrike.planning.routegen --root <DATA> --out <OUT>
