@@ -141,6 +141,7 @@ PYTHONPATH=src python3 -m busstrike.pipeline --gu guro --strike 1.0 --fleet 11 -
 | 상위 k개(`--topk`, `Model.banned`), U턴 허용(`allow_uturn`) | 안 씀, 공통 조건이 U턴 금지 |
 | lab 스크립트 `summarize_sweep.py`, `summarize_walk.py`, `run_all_gus.py` | 일회성, 참조 0건 |
 | `routegen/delay.py`(평소 대비 지연 도구)와 `test_delay.py` | 평상시 표가 오지 않아 실행된 적 없음, 참조 0건. 같은 질문을 지표 `time_ratio_rode`·`time_ratio_common`이 답함 |
+| `routegen/__main__.py`(`python -m busstrike.planning.routegen`, v0~v4 CLI) | 저장소 안 import 0건, 옛 보고서 재현 명령에만 쓰임(그 보고서에 47ed2bd 이전 커밋에서 재현하라고 안내). 지금 진입점은 `python -m busstrike.pipeline` |
 
 ## 7. 관문(검증)
 
