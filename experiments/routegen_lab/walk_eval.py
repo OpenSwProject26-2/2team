@@ -153,11 +153,14 @@ def run(bundles: Path, out: Path, plans: list[str], jobs: int) -> None:
     subprocess.run(cmd, check=False)
 
 
-def apply_far_floor(floor: dict | None, arg: str) -> dict:
+def apply_far_floor(floor: dict | None, arg: str) -> dict | None:
     """--far-floor: 형평 하한(floor = {total, far, source})의 역 800m 밖 값만 바꾼 새 dict. 전체 하한은 그대로.
 
-    off = 역 밖 하한 없음(0, 부족분이 늘 0이라 하한 없음과 같다), +x = 원래 역 밖 하한 + x, 숫자 = 그 값.
+    none = 전체·역 밖 하한 모두 끔(None, 형평 기준 없음), off = 역 밖 하한 없음(0, 부족분이 늘 0이라 하한 없음과 같다),
+    +x = 원래 역 밖 하한 + x, 숫자 = 그 값(절대값, 예: 0.58 = 역 밖 형평 0.58 이상).
     """
+    if arg.strip() == "none":
+        return None
     if floor is None:
         raise SystemExit("--far-floor는 형평 하한(--equity-floor muni 또는 고정값)이 켜져 있을 때만 쓴다")
     if floor.get("extra"):
@@ -191,7 +194,8 @@ def main() -> int:
     ap.add_argument("--equity-floor", default=None, help='형평 하한: muni / none / "전체,역800m밖"(비율). 비우면 설정 파일 equity.floor')
     ap.add_argument("--far-floor", default=None,
                     help='역 800m 밖 하한만 바꾼다(전체 하한은 --equity-floor 그대로, 형평 하한이 켜져 있어야 함): '
-                         'off = 역 밖 하한 없음(0), +x = 정해진 역 밖 하한(예: muni 값) + x, 숫자 = 그 값. 비우면 예전 그대로')
+                         'none = 전체·역 밖 하한 모두 끔, off = 역 밖 하한 없음(0), +x = 정해진 역 밖 하한(예: muni 값) + x, '
+                         '숫자 = 그 값(절대값). 비우면 예전 그대로')
     ap.add_argument("--lean", action="store_true",
                     help="형평 하한 안(eq…)마다 진단용 배분 두 개(하한 없이, 필수 정류장 끔)를 건너뛴다(안은 같고 기록만 줄어듦). "
                          "기본 끔")
@@ -330,15 +334,20 @@ def main() -> int:
         if troot.exists():
             ix.add_flows(D.load_flows(troot))
         reach = Reach(ix, rule, nb, keys)
+    if p.fill and p.fill_start_s is None and starts:   # 소외 삽입 탑승 근사의 시간대 = 안 만들기 운행 시작(06:00이면 None)
+        from dataclasses import replace as _replace
+        st0 = min(starts, key=_hhmm)
+        p = _replace(p, fill_start_s=None if st0 == "06:00" else _hhmm(st0))
     tour_inputs = None
-    if tour_kinds:
+    if tour_kinds or p.line_group:                    # 호선 단위 묶기는 꼬리표(station_lines.csv tags)가 필요하다
         from busstrike.planning.routegen import tour as TR
         tour_inputs = TR.load_inputs(root, args.lines)
     far_set = None
     if p.fill_bonus > 0:                              # 4단계 소외 가산점: 역 지정 정류장 도로 도보 far_m 밖 동네 정류장
         from busstrike.planning.routegen.equity import far_stops as _far_stops
         far_set = frozenset(_far_stops(home, nb_near, st_stops, far_m))
-    gen_kwargs = {**({"tour_inputs": tour_inputs} if tour_kinds else {}), **({"far_stops": far_set} if far_set else {})}
+    gen_kwargs = {**({"tour_inputs": tour_inputs} if tour_inputs is not None else {}),
+                  **({"far_stops": far_set} if far_set else {})}
     if args.cand_cache is not None and args.cand_cache.exists():
         import pickle
         from dataclasses import asdict
