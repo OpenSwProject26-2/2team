@@ -9,7 +9,7 @@
 
 검사(지시문 6절): (a) 첫 정류장 = 역 egress 후보, 끝 = access 후보 (b) 같은 정류장 반복 없음 (c) 고리 닫기 ≤ 300초
 (d) U턴 없음(고리 닫는 이음 포함) (e) 덮는 수요 = Reach 재계산값 (f) 같은 입력 두 번 → 같은 결과.
-③-T: 같은 호선 역 쌍(K–R)은 후보에 나오지 않는다. tour=None이면 tour 후보가 없다.
+tour=None이면 tour 후보가 없다. (③-T 역 쌍 순회는 지웠다, docs/design/pipeline.md)
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ def demand() -> Demand:
 
 def params(**kw) -> G.Params:
     base = dict(distance_basis="network", loop="demand", l_max_min=(15,), sectors=(2,), hub_min=1.0,
-                radius_m=10000.0, max_stops=None, tour=("sector", "feeder", "pair"))
+                radius_m=10000.0, max_stops=None, tour=("sector", "feeder"))
     base.update(kw)
     return G.Params(**base)
 
@@ -114,8 +114,8 @@ class TourShapeTest(unittest.TestCase):
         self.res = run(self.net)
         self.T = tours(self.res)
 
-    def test_all_three_generators_make_tours(self):
-        self.assertEqual({c.origin for c in self.T}, {"tour_sector", "tour_feeder", "tour_pair"})
+    def test_both_generators_make_tours(self):
+        self.assertEqual({c.origin for c in self.T}, {"tour_sector", "tour_feeder"})
 
     def test_ends_are_station_candidates(self):
         for c in self.T:
@@ -155,48 +155,6 @@ class TourShapeTest(unittest.TestCase):
         self.assertEqual([c.record() for c in self.T], [c.record() for c in again])
 
 
-class TourPairTest(unittest.TestCase):
-    def test_same_line_pair_excluded(self):
-        res = run()
-        pairs = {frozenset(c.hubs) for c in tours(res) if c.origin == "tour_pair"}
-        self.assertIn(frozenset({"K", "Q"}), pairs)
-        self.assertNotIn(frozenset({"K", "R"}), pairs)        # 둘 다 1호선
-        self.assertEqual(T.line_pairs({"K": 1.0, "Q": 1.0, "R": 1.0}, LINES),
-                         [("K", "Q"), ("Q", "R")])
-
-    def test_pair_tour_passes_through_second_station(self):
-        res = run()
-        for c in tours(res):
-            if c.origin != "tour_pair":
-                continue
-            p, q = c.hubs
-            S = c.stops
-            self.assertIn(ENDS[q][1][0], S)                      # Q.A
-            self.assertIn(ENDS[q][0][0], S)                      # Q.E
-            self.assertLess(S.index(ENDS[q][1][0]), S.index(ENDS[q][0][0]))
-
-
-class PairSeedTest(unittest.TestCase):
-    """③-T 씨앗도 1절처럼 그 L의 순회 제약을 지키는 정류장 중에서 고른다."""
-
-    def setUp(self):
-        net = tour_network()
-        g = Graph(net, 10, 3600, "network")
-        b = G.Builder(net, g, demand(), params(), reach_rule(net))
-        self.tb = T.TourBuilder(b, scenario().policy, T.TourInputs(ENDS, LINES), 300)
-
-    def test_picks_best_feasible(self):
-        lim = T.TourLimits(1800)
-        v = {"N1": 1.0, "M1": 5.0}
-        got = self.tb.pair_seed(v, lambda s: ["KE", s, "QA", "QE", "KA"], lim, frozenset())
-        self.assertEqual(got, "M1")
-
-    def test_none_when_no_seed_fits(self):
-        lim = T.TourLimits(300)          # 5분: 어떤 순회도 못 맞춘다
-        got = self.tb.pair_seed({"N1": 1.0, "M1": 5.0}, lambda s: ["KE", s, "QA", "QE", "KA"], lim, frozenset())
-        self.assertIsNone(got)
-
-
 class TourOptionTest(unittest.TestCase):
     def test_off_by_default(self):
         self.assertIsNone(G.Params().tour)
@@ -228,9 +186,11 @@ class TourOptionTest(unittest.TestCase):
         cs = res.candidates
         ours = G.select_pool(cs, "ours")
         self.assertTrue(ours and all(not c.origin.startswith("tour_") for c in ours))
-        self.assertEqual({c.origin for c in G.select_pool(cs, "tour")}, {"tour_sector", "tour_feeder", "tour_pair"})
-        self.assertEqual({c.origin for c in G.select_pool(cs, "tour_pair")}, {"tour_pair"})
-        self.assertEqual(len(G.select_pool(cs, "all")), len(cs))
+        for which in ("tour_sector", "tour_feeder"):
+            self.assertEqual({c.origin for c in G.select_pool(cs, which)}, {which})
+        for gone in ("tour", "all", "tour_pair"):              # 합집합 풀·역 쌍 순회는 지웠다
+            with self.assertRaises(ValueError):
+                G.select_pool(cs, gone)
 
 
 if __name__ == "__main__":

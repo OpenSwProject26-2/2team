@@ -17,7 +17,7 @@ tour는 역을 차고지처럼 양 끝에 둔다.
 - 생성기
   ①-T `sector`: 기존 ①의 섹터·씨앗으로 [E, 씨앗, A]에서 시작해 한 바퀴 점수(덮는 수요 증가 ÷ 순환 시간 증가)로 삽입, 2-opt 1회.
   ②-T `feeder`: E → 씨앗 → A를 U턴 없는 최단경로로(삽입 없음, 기준선).
-  ③-T `pair`: 호선을 하나도 공유하지 않는 두 물리적 역 P, Q: P.E → … → Q.A → Q.E → … → P.A. 고리 전체에 삽입, 구간마다 2-opt.
+  (③-T 역 쌍 순회는 실험에 쓰지 않아 지웠다, docs/design/pipeline.md.)
 """
 
 from __future__ import annotations
@@ -30,13 +30,13 @@ from pathlib import Path
 from .graph import Graph
 from .loop import closure_s, cyclic_seq, designated_stops
 
-TOUR_KINDS = ("sector", "feeder", "pair")
+TOUR_KINDS = ("sector", "feeder")
 
 
 @dataclass(frozen=True)
 class TourInputs:
     ends: dict          # 역 → (egress 후보 정류장들, access 후보 정류장들)
-    lines: dict         # 역 → (물리적 역 이름, 호선 집합)
+    lines: dict         # 역 → (물리적 역 이름, 호선 집합). 기록용(역 쌍 순회를 지운 뒤 생성에는 쓰지 않음)
     tags: dict = field(default_factory=dict)   # 역 → 평가 규칙 꼬리표(station_lines.csv tags, 호선 단위 묶기용)
 
 
@@ -73,7 +73,7 @@ def load_inputs(root: Path | str, lines_path: Path | str) -> TourInputs:
 
 
 def default_inputs(net) -> TourInputs:
-    """station_stops.csv를 주지 않았을 때: 지정 정류장만, 호선 정보 없음(③-T 없음)."""
+    """station_stops.csv를 주지 않았을 때: 지정 정류장만, 호선 정보 없음."""
     ends = {k: ((st.egress_stop,) if st.egress_stop else (), (st.access_stop,) if st.access_stop else ())
             for k, st in sorted(net.stations.items())}
     return TourInputs(ends, {})
@@ -97,25 +97,6 @@ def end_pair(g: Graph, egress: tuple[str, ...], access: tuple[str, ...], closure
             if best is None or key < best[0]:
                 best = (key, e, a, p)
     return None if best is None else (best[1], best[2], best[3])
-
-
-def line_pairs(F: dict[str, float], lines: dict) -> list[tuple[str, str]]:
-    """호선을 하나도 공유하지 않는 물리적 역(이름) 쌍. 같은 이름 역(환승역의 호선별 ID)은 호선을 합친다.
-    호선 정보가 없는 역은 쓰지 않는다. 순위: 두 역 F 합 큰 순, 동률 ID 순. 쌍 안은 ID 순."""
-    by_name: dict[str, set[str]] = {}
-    for k in F:
-        if k in lines:
-            nm, ls = lines[k]
-            by_name.setdefault(nm, set()).update(ls)
-    ids = sorted(k for k in F if k in lines and lines[k][1])
-    out = []
-    for i, p in enumerate(ids):
-        for q in ids[i + 1:]:
-            np_, nq = lines[p][0], lines[q][0]
-            if np_ == nq or by_name[np_] & by_name[nq]:
-                continue
-            out.append((p, q))
-    return sorted(out, key=lambda x: (-(F[x[0]] + F[x[1]]), x))
 
 
 class TourBuilder:
@@ -262,27 +243,6 @@ class TourBuilder:
                     if t < cur_t and dem >= cur_dem - 1e-9:
                         anchors, stops, cur_t, cur_dem = trial, new, t, dem
         return stops
-
-    # ---------------------------------------------------------------- ③-T 씨앗
-    def pair_seed(self, v: dict[str, float], anchors_of, lim: TourLimits, taken: frozenset[str],
-                  start: str | None = None, end: str | None = None) -> str | None:
-        """가치 × 망 거리(start에서, end까지 중 작은 쪽; 안 주면 가치만)가 큰 순으로, anchors_of(씨앗)이 그 L의 순회 제약을
-        지키는 첫 정류장(1절 씨앗과 같은 규칙: 실행 가능한 정류장 중 최대). 없으면 None."""
-        df = self.g.dist_from(start) if start else None
-        dt = self.g.dist_to(end) if end else None
-
-        def w(s: str) -> float:
-            if df is None and dt is None:
-                return 1.0
-            ds = [d.get(s) for d in (df, dt) if d is not None]
-            ds = [x for x in ds if x is not None]
-            return float(min(ds)) if ds else 0.0
-
-        cand = sorted((s for s in v if v[s] > 0 and s not in taken), key=lambda s: (-(v[s] * w(s)), s))
-        for s in cand:
-            if self.route(anchors_of(s), lim, None) is not None:
-                return s
-        return None
 
     # ---------------------------------------------------------------- ②-T
     def feeder(self, k: str, seed: str, lim: TourLimits, stage: str) -> tuple[str, ...] | None:

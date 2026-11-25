@@ -217,13 +217,13 @@ def main() -> int:
     ap.add_argument("--must-min-tph", type=float, default=0.0, help="필수 정류장 시간당 최소 운행(기본 0 = 요구 안 함)")
     ap.add_argument("--absolute-rules", action="store_true",
                     help="규칙을 상대 기준(rules.py) 대신 설정 파일 절댓값으로(옛 결과 재현용)")
-    ap.add_argument("--tour", default="", help="닫힌 순회 후보(tour.py): sector,feeder,pair 중 일부(쉼표). 비우면 끔(예전 그대로)")
-    ap.add_argument("--tour-pool", default="all", choices=("ours", "tour", "all", "tour_sector", "tour_feeder", "tour_pair"),
-                    help="--tour일 때 배분 후보 풀: ours(tour 아닌 후보) / tour / all / 한 생성기만")
+    ap.add_argument("--tour", default="", help="닫힌 순회 후보(tour.py): sector,feeder 중 일부(쉼표). 비우면 끔(예전 그대로)")
+    ap.add_argument("--tour-pool", default=None, choices=("ours", "tour_sector", "tour_feeder"),
+                    help="--tour일 때 배분 후보 풀(꼭 줌): ours(tour 아닌 후보 = 편도 노선 생성 후 순회) / 한 순회 생성기만. "
+                         "합집합 풀(tour·all)은 지웠다")
     # 새 알고리즘(New_Algol.md 3.3, 작업 2026-11-25). 모두 기본 끔(예전 그대로)
     ap.add_argument("--cand-cache", type=Path, default=None,
                     help="후보 캐시(pickle): 있으면 생성 대신 읽고(생성 설정이 같아야 함), 없으면 생성 뒤 저장")
-    ap.add_argument("--topk", type=int, default=1, help="형평 하한 안(eq…)의 상위 k개 조합(금지 목록, 안 이름 …k2~kK). 1 = 끔")
     ap.add_argument("--allow-rule-override", action="store_true", help="구별 규칙·정책 상수 덮어쓰기를 경고만(재현용)")
     args = ap.parse_args()
     muni_dirs = {k: Path(v).resolve() for k, v in (x.split("=", 1) for x in args.muni)}
@@ -311,6 +311,8 @@ def main() -> int:
         must_res = MS.for_bundle(args.facilities, root, info["gu"], MS.MustConfig(), override)
         rule_kw["must_stops"] = tuple(must_res["must_stops"])
     tour_kinds = tuple(x for x in args.tour.split(",") if x)
+    if tour_kinds and args.tour_pool is None:
+        raise SystemExit("--tour를 주면 --tour-pool(ours, tour_sector, tour_feeder)도 준다")
     if tour_kinds:
         rule_kw["tour"] = tour_kinds
     gen_kw = {k: (tuple(v) if isinstance(v, list) else v) for k, v in (json.loads(args.gen) if args.gen else {}).items()}
@@ -419,8 +421,7 @@ def main() -> int:
                          "closure_s": c.closure_s, "closure_stops": list(c.return_stops),
                          "out_oneway_s": c.out_oneway_s, "ret_oneway_s": c.ret_oneway_s,
                          "out_n_stops": c.out_n_stops, "ret_n_stops": c.ret_n_stops, "cover": round(c.cover, 1),
-                         **({"made_by": list(c.made_by), "detour": round(c.detour, 3)} if tour_kinds else {}),
-                         **({"vehicles_planned": c.vehicles} if c.vehicles else {})})
+                         **({"made_by": list(c.made_by), "detour": round(c.detour, 3)} if tour_kinds else {})})
         return out_
 
     def record(label: str, fleet: int, routes: list[tuple[list[str], int]], extra: dict) -> None:
@@ -505,7 +506,7 @@ def main() -> int:
     log["floor_combos"] = args.floor_combos
     log["alloc"] = {"cap_mode": args.cap_mode, "route_min_per_vehicle": route_min, "service_starts": starts}
 
-    def model(start: str | None, eq_floor=None, rmin: float = 0.0, use_must: bool = True, banned=()) -> A.Model:
+    def model(start: str | None, eq_floor=None, rmin: float = 0.0, use_must: bool = True) -> A.Model:
         ap_ = A.AllocParams(cap_mode=args.cap_mode, route_min_per_vehicle=rmin,
                             service_start_s=None if start in (None, "06:00") else _hhmm(start))
         ef = None if eq_floor is None else A.EquityFloor.from_index(eq_ix, eq_floor["total"], eq_floor["far"],
@@ -520,14 +521,6 @@ def main() -> int:
             ids = {rid for rid, _, _ in cands}
             must_map = {s: tuple(c.route_id for c in pool if c.route_id in ids and s in c.must) for s in p.must_stops}
         routes_ = [(rid, cyc, wkeys[rid], sp_of[rid]) for rid, _, cyc in cands]
-        fixed_n = {rid: by[rid].vehicles for rid, _, _ in cands if by[rid].vehicles}
-        if fixed_n:                                           # 1단계 배차 예산 후보: 노선 대수 = 후보 n(budget_alloc)
-            from busstrike.planning.routegen.budget_alloc import FixedNModel
-            return FixedNModel(routes_, demand.od, ap_, groups, equity=ef, must=must_map, must_min_tph=args.must_min_tph,
-                               banned=banned, fixed_n=fixed_n)
-        if banned:
-            return A.Model(routes_, demand.od, ap_, groups, equity=ef, must=must_map, must_min_tph=args.must_min_tph,
-                           banned=banned)
         return A.Model(routes_, demand.od, ap_, groups, equity=ef,
                        must=must_map, must_min_tph=args.must_min_tph)
 
@@ -598,19 +591,6 @@ def main() -> int:
                                       "equity": None if fe is None else {"total": round(fe["total"], 4),
                                                                          "far": round(fe["far"], 4)},
                                       "same_as_constrained": free["n"] == a["n"]}})
-            ban = [frozenset(a["n"])]                         # 7단계 상위 k개: 앞서 찾은 조합을 금지하고 다시 푼다
-            for kk in range(2, args.topk + 1):
-                mk = model(st, floor, route_min, banned=tuple(ban))
-                ak = A.allocate(mk, f, extra_starts(mk, (lsfx, "eq"), f, st))
-                if frozenset(ak["n"]) in ban:
-                    print(f"{label}-f{f}: 상위 {kk}번째 조합 없음(금지 조합밖에 없음)", flush=True)
-                    break
-                ban.append(frozenset(ak["n"]))
-                kids = [k for k, _ in sorted(ak["n"].items())]
-                record(f"{label}k{kk}", f, [(list(by[k].stops), v) for k, v in sorted(ak["n"].items())],
-                       {"approx": round(ak["value"], 1), "service_start": st, "alloc": alloc_record(ak), "rank": kk,
-                        "route_ids": kids, "route_info": route_info(kids)})
-                print(f"{label}k{kk}-f{f}: 근사 {ak['value']:.1f}, 하한 만족 {ak['feasible']}, 형평 {ak['equity']}", flush=True)
             if args.free:
                 record(flabel, f, [(list(by[k].stops), v) for k, v in sorted(free["n"].items())],
                        {"approx": round(free["value"], 1), "service_start": st, "alloc": alloc_record(free),

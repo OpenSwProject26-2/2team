@@ -61,8 +61,7 @@ def parse_turns(turns: dict | None):
 
 
 class Graph:
-    def __init__(self, net: Network, dwell_s: int, cutoff_s: int, distance_basis: str = "crow",
-                 allow_uturn: bool = False):
+    def __init__(self, net: Network, dwell_s: int, cutoff_s: int, distance_basis: str = "crow"):
         if distance_basis not in ("crow", "network"):
             raise ValueError(f"distance_basis는 crow 또는 network: {distance_basis}")
         self.net = net
@@ -70,8 +69,6 @@ class Graph:
         self.dwell_s = dwell_s
         self.cutoff_s = cutoff_s
         self.distance_basis = distance_basis
-        # U턴 허용(새 알고리즘 9단계, 기본 끔): 켜면 is_uturn이 늘 False → 모든 생성기·판정에서 U턴 검사를 끈다
-        self.allow_uturn = allow_uturn
         self.turns_format, self._turns = parse_turns(net.turns)
         self._dfrom: dict[str, dict[str, int]] = {}
         self._dto: dict[str, dict[str, int]] = {}
@@ -149,7 +146,7 @@ class Graph:
 
     def is_uturn(self, a: str, b: str, c: str) -> bool:
         """a→b→c가 정류장 b에서 U턴인가(두 구간 모두 도로 조각 기록이 있을 때만 판단). 규칙은 모듈 설명."""
-        if self.allow_uturn or self.turns_format is None:
+        if self.turns_format is None:
             return False
         e1, e2 = self._turns.get(f"{a}>{b}"), self._turns.get(f"{b}>{c}")
         if not (e1 and e2):
