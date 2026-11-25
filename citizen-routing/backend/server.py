@@ -17,7 +17,9 @@ from .bus_categories import load_categories
 from .citizen_map_style import citizen_style
 from .otp_client import OTPError, healthy
 from .place_search import compact, nearby as nearby_places, search as search_places, visible as visible_places
-from .route_service import InputError, plan
+from .route_service import InputError
+from .mode_service import (NORMAL_DIR, NORMAL_URL, STRIKE_DIR, STRIKE_URL, compare_routes,
+                           mode_status, read_manifest, route_for_mode)
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "frontend"
@@ -42,7 +44,8 @@ def load_stops(otp_dir: Path) -> list[dict]:
     return list(stops.values())
 
 
-def handler(otp_dir: Path, endpoint: str):
+def handler(otp_dir: Path, endpoint: str, strike_dir: Path = STRIKE_DIR,
+            strike_endpoint: str = STRIKE_URL):
     stops_cache = None
 
     def cached_stops():
@@ -67,17 +70,12 @@ def handler(otp_dir: Path, endpoint: str):
                 self._json(200, citizen_style())
                 return
             if parsed.path == "/api/citizen-routing/status":
-                path = otp_dir / "manifest.json"
-                if not path.exists():
-                    self._json(503, {"code": "DATA_NOT_PREPARED", "message": "GTFS와 OSM을 먼저 준비하세요."})
+                normal = mode_status("normal", otp_dir, endpoint)
+                strike = mode_status("strike", strike_dir, strike_endpoint, normal.get("version"))
+                if normal.get("code") == "DATA_NOT_PREPARED":
+                    self._json(503, {**normal, "modes": {"normal": normal, "strike": strike}})
                 else:
-                    manifest = json.loads(path.read_text(encoding="utf-8"))
-                    stamp = otp_dir / "graph-version.txt"
-                    manifest["graph_ready"] = (stamp.is_file() and
-                                               stamp.read_text(encoding="utf-8") == manifest["version"])
-                    manifest["otp_running"] = healthy(endpoint) if manifest["graph_ready"] else False
-                    manifest["places_ready"] = (otp_dir.parent / "places.sqlite").is_file()
-                    self._json(200, manifest)
+                    self._json(200, {**normal, "modes": {"normal": normal, "strike": strike}})
                 return
             if parsed.path == "/api/citizen-routing/stops":
                 term = parse_qs(parsed.query).get("q", [""])[0].strip().casefold()
@@ -142,18 +140,25 @@ def handler(otp_dir: Path, endpoint: str):
                 except (OSError, sqlite3.DatabaseError):
                     self._json(503, {"code": "PLACE_SEARCH_UNAVAILABLE", "message": "Place search data could not be read."})
                 return
-            if parsed.path == "/api/citizen-routing/plan":
+            if parsed.path in {"/api/citizen-routing/plan", "/api/citizen-routing/compare"}:
                 try:
-                    manifest = json.loads((otp_dir / "manifest.json").read_text(encoding="utf-8"))
-                    stamp = otp_dir / "graph-version.txt"
-                    if not stamp.is_file() or stamp.read_text(encoding="utf-8") != manifest["version"]:
-                        raise OTPError("GRAPH_NOT_BUILT", "현재 입력 버전의 OTP 그래프를 먼저 구축하세요.")
                     params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
-                    self._json(200, plan(params, manifest, endpoint, load_categories(otp_dir)))
-                except FileNotFoundError:
-                    self._json(503, {"code": "DATA_NOT_PREPARED", "message": "GTFS와 OSM을 먼저 준비하세요."})
+                    normal_manifest = read_manifest(otp_dir)
+                    normal_version = normal_manifest.get("version") if normal_manifest else None
+                    if parsed.path.endswith("/compare"):
+                        result = compare_routes(params, otp_dir, endpoint, strike_dir, strike_endpoint)
+                    else:
+                        mode = params.pop("mode", "normal")
+                        if mode not in {"normal", "strike"}:
+                            raise InputError("mode는 normal 또는 strike여야 합니다.")
+                        directory, url = ((otp_dir, endpoint) if mode == "normal"
+                                          else (strike_dir, strike_endpoint))
+                        result = route_for_mode(params, mode, directory, url, normal_version)
+                    self._json(200, result)
                 except InputError as error:
                     self._json(400, {"code": "INPUT_INVALID", "message": str(error)})
+                except (FileNotFoundError, OSError, ValueError) as error:
+                    self._json(503, {"code": "DATA_NOT_PREPARED", "message": str(error)})
                 except OTPError as error:
                     self._json(404 if error.code == "NO_PATH" else 503,
                                {"code": error.code, "message": str(error)})
@@ -165,7 +170,11 @@ def handler(otp_dir: Path, endpoint: str):
                 return
             content = file.read_bytes()
             self.send_response(200)
-            self.send_header("Content-Type", mimetypes.guess_type(file.name)[0] or "application/octet-stream")
+            content_type = mimetypes.guess_type(file.name)[0] or "application/octet-stream"
+            if content_type.startswith("text/") or content_type in {"application/javascript", "application/json"}:
+                content_type += "; charset=utf-8"
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(content)))
             self.end_headers()
             self.wfile.write(content)
@@ -176,10 +185,12 @@ def handler(otp_dir: Path, endpoint: str):
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8775)
-    parser.add_argument("--otp-url", default="http://127.0.0.1:8080/otp/gtfs/v1")
-    parser.add_argument("--otp-dir", type=Path, default=ROOT / "runtime" / "otp")
+    parser.add_argument("--otp-url", default=NORMAL_URL)
+    parser.add_argument("--strike-otp-url", default=STRIKE_URL)
+    parser.add_argument("--strike-otp-dir", type=Path, default=STRIKE_DIR)
+    parser.add_argument("--otp-dir", type=Path, default=NORMAL_DIR)
     args = parser.parse_args()
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler(args.otp_dir, args.otp_url))
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler(args.otp_dir, args.otp_url, args.strike_otp_dir, args.strike_otp_url))
     print(f"Citizen routing: http://127.0.0.1:{args.port}/", flush=True)
     try:
         server.serve_forever()

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>서울 대체 셔틀 길찾기</title>
   <link rel="stylesheet" href="/vendor/maplibre-gl.css">
-  <link rel="stylesheet" href="/style.css?v=20261120-14">
+  <link rel="stylesheet" href="/style.css?v=20261123-13">
 </head>
 <body>
   <main class="layout">
@@ -15,6 +15,8 @@
       <p class="eyebrow">BUS STRIKE ROUTING</p>
       <h1>&#48260;&#49828; &#54028;&#50629; &#51473;&#50640;&#46020; &#47785;&#51201;&#51648;&#44620;&#51648;</h1>
       <p class="intro">&#48260;&#49828; &#183; &#51648;&#54616;&#52384; &#183; &#45824;&#52404; &#49492;&#53952; &#50868;&#54665;&#49884;&#44036;&#51012; &#54632;&#44760; &#54869;&#51064;&#54633;&#45768;&#45796;.</p>
+      <div class="mode-switch" role="group" aria-label="운행 모드"><button type="button" data-mode="normal" aria-pressed="true">일반 운행</button><button type="button" data-mode="strike" aria-pressed="false">파업 운행</button></div>
+      <div id="mode-note" class="mode-note" role="status">일반 운행 교통망으로 검색합니다.</div>
       <form id="search-form">
         <div class="field-group">
           <label for="origin">출발지</label>
@@ -36,7 +38,8 @@
         <label class="check"><input id="include-shuttle" type="checkbox" checked><span>대체 셔틀 포함</span></label>
         <button class="primary" type="submit">경로 찾기 <span>→</span></button>
       </form>
-      <div class="results-heading"><h2>추천 경로</h2><span id="result-count"></span></div>
+      <div id="comparison" class="comparison" hidden></div>
+      <div class="results-heading"><h2 id="results-title">일반 운행 추천 경로</h2><span id="result-count"></span></div>
       <div class="sort-dropdown" id="sort-dropdown">
         <button id="sort-trigger" class="sort-trigger" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="sort-menu">
           <span class="sort-label">최적 경로순</span>
@@ -55,11 +58,16 @@
     </section>
     <section class="map-wrap" aria-label="길찾기 지도">
       <div id="map"></div>
+      <div class="map-hint"><strong id="pick-mode">지도 선택: 출발지</strong><span>확대하면 주요 시설부터 단계적으로 표시됩니다.</span><span id="map-hint-detail">장소나 좌표를 클릭해 출발지·목적지로 선택하세요.</span></div>
+      <div id="map-strike-notice" class="map-strike-notice" role="status" hidden>
+          <span class="notice-mark" aria-hidden="true">!</span>
+          <div><strong>버스 파업 안내 · 시나리오 기준</strong><span id="map-strike-notice-text">일부 시내버스 노선이 운행하지 않습니다.</span></div>
+      </div>
+      <div id="map-mode-indicator" class="map-mode-indicator" aria-live="polite">일반 운행</div>
       <div id="map-error" class="map-error" hidden>지도 배경을 불러올 수 없습니다. 인터넷 연결을 확인하세요.</div>
-      <div class="map-hint"><strong id="pick-mode">지도 선택: 출발지</strong><span>확대하면 주요 시설부터 단계적으로 표시됩니다.</span><span>장소나 좌표를 클릭해 출발지·목적지로 선택하세요.</span></div>
       <div class="attribution">지도 © OpenStreetMap 기여자 · OpenFreeMap</div>
     </section>
   </main>
-  <script type="module" src="/app.js?v=20261120-13"></script>
+  <script type="module" src="/app.js?v=20261123-6"></script>
 </body>
 </html>

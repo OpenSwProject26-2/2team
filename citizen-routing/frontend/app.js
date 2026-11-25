@@ -1,7 +1,7 @@
 import * as maplibregl from "/vendor/maplibre-gl.mjs";
 const $ = id => document.getElementById(id);
-const state = {origin:null,destination:null,active:"origin",routes:[],selected:0,sortMode:"optimal",markers:[],routeMarkers:[],routeEndpoints:null};
-const colors = {walk:"#a6b2b6",bus:"#2461ea",shuttle:"#182740",subway:"#8645dc"};
+const state = {origin:null,destination:null,active:"origin",routes:[],selected:0,sortMode:"optimal",markers:[],routeMarkers:[],routeEndpoints:null,mode:"normal",status:null,comparison:null,requestId:0,hasSearched:false};
+const colors = {walk:"#a6b2b6",bus:"#2461ea",shuttle:"#0f9b87",subway:"#8645dc"};
 const busColors = {city:"#2461ea",gyeonggi:"#ff9d1e",village:"#0aa86c",unclassified:"#718198"};
 const legColor=leg=>leg.kind==="bus"?(busColors[leg.bus_category]||busColors.unclassified):(colors[leg.kind]||"#546d68");
 const map = new maplibregl.Map({container:"map",style:"/citizen-map-style.json",center:[126.97,37.54],zoom:11});
@@ -159,19 +159,70 @@ $("swap").addEventListener("click",()=>{
   const a=state.origin,b=state.destination;
   if(a&&b){setPlace("origin",b);setPlace("destination",a)}
 });
+function updateModeUI(){
+  for(const button of document.querySelectorAll("[data-mode]"))button.setAttribute("aria-pressed",button.dataset.mode===state.mode?"true":"false");
+  const strike=state.status?.modes?.strike;
+  const shuttle=state.mode==="strike"&&!!strike?.shuttle_stats;
+  $("include-shuttle").checked=shuttle;$("include-shuttle").disabled=!shuttle;
+  $("include-shuttle").closest(".check").hidden=state.mode==="normal";
+  $("mode-note").textContent=state.mode==="normal"?
+    "일반 운행 교통망 · 파업 제외 노선도 운행하는 기준 경로":
+    strike?.available?("파업 교통망 · 제외 "+strike.excluded_route_ids.length+"개 노선 · "+(shuttle?strike.shuttle_source?.source_kind==="SYNTHETIC_DEMO"?"대체 셔틀 스모크 데모 (실제 운행 아님)":"C팀 셔틀 후보":"대체 셔틀 자료 없음")):
+    (strike?.message||"파업 교통망이 준비되지 않았습니다.");
+  $("mode-note").classList.toggle("error",state.mode==="strike"&&!strike?.available);
+  $("results-title").textContent=state.mode==="normal"?"일반 운행 추천 경로":"파업 운행 추천 경로";
+  $("map-mode-indicator").textContent=state.mode==="normal"?"일반 운행 경로":"파업 운행 경로";
+  $("map-strike-notice").hidden=state.mode!=="strike";
+  $("map-strike-notice-text").textContent=strike?.available&&strike.excluded_route_ids?.length?
+    "일부 시내버스 노선이 운행하지 않습니다. (대상 "+strike.excluded_route_ids.length+"개 노선)":
+    "파업 교통망 자료를 확인해 주세요.";
+  document.body.dataset.routingMode=state.mode;
+}
+for(const button of document.querySelectorAll("[data-mode]"))button.addEventListener("click",()=>{
+  if(state.mode===button.dataset.mode)return;
+  state.mode=button.dataset.mode;
+  updateModeUI();
+  if(state.origin&&state.destination){
+    searchRoutes();
+  }else{
+    state.requestId++;
+    state.routes=[];state.comparison=null;renderResults();renderComparison();drawRoute();
+    $("message").textContent="출발지와 목적지를 지정한 뒤 경로 찾기를 눌러주세요.";
+  }
+});
+$("include-shuttle").addEventListener("change",()=>{
+  if(state.mode==="strike"&&state.hasSearched&&state.origin&&state.destination)searchRoutes();
+});
 async function loadStatus(){
   try{
     const response=await fetch("/api/citizen-routing/status"),data=await response.json();
     if(!response.ok)throw new Error(data.message);
-    const shuttle=!!data.shuttle_stats;
-    $("status").textContent="운행 자료 "+data.service_dates[0]+" ~ "+data.service_dates[1]+" · A 교통망 "+data.existing_stats.routes+"개 노선 · "+(shuttle?"셔틀 "+data.shuttle_stats.routes+"개 노선":"셔틀 자료 없음")+" · 제외 노선 "+data.excluded_route_ids.length+"개 · 버전 "+data.version;
+    state.status=data;
+    $("status").textContent="운행 자료 "+data.service_dates[0]+" ~ "+data.service_dates[1]+" · A 교통망 "+data.existing_stats.routes+"개 노선 · 버전 "+data.version;
     const selectedDate=$("departure").value.slice(0,10);
     if(selectedDate<data.service_dates[0]||selectedDate>data.service_dates[1])$("departure").value=data.service_dates[0]+"T07:00";
-    if(!data.graph_ready){$("status").textContent+=" · OTP 그래프를 아직 구축하지 않았습니다.";$("status").classList.add("error")}
-    if(data.graph_ready&&!data.otp_running){$("status").textContent+=" · OTP 서버가 실행 중이지 않습니다.";$("status").classList.add("error")}
-    if(!data.places_ready)$("status").textContent+=" \u00B7 \uAC74\uBB3C/\uC2DC\uC124 \uAC80\uC0C9 \uC0C9\uC778 \uC5C6\uC74C";
-    $("include-shuttle").checked=shuttle;$("include-shuttle").disabled=!shuttle;
+    if(!data.graph_ready||!data.otp_running){$("status").textContent+=" · 일반 모드 OTP를 확인하세요."; $("status").classList.add("error")}
+    if(!data.places_ready)$("status").textContent+=" · 건물/시설 검색 색인 없음";
+    updateModeUI();
   }catch(error){$("status").textContent=error.message;$("status").classList.add("error")}
+}
+function renderComparison(){
+  const box=$("comparison");box.replaceChildren();
+  if(!state.comparison){box.hidden=true;return}
+  const data=state.comparison;box.hidden=false;
+  const minutes=route=>route?Math.round(route.duration_seconds/60)+"분":"경로 없음";
+  const transfers=route=>route?route.transfers+"회":"-";
+  const delta=data.delta_seconds===null?"비교 불가":(data.delta_seconds>=0?"+":"")+Math.round(data.delta_seconds/60)+"분";
+  const transferDelta=data.normal_best&&data.strike_best?
+    (data.strike_best.transfers-data.normal_best.transfers>=0?"+":"")+(data.strike_best.transfers-data.normal_best.transfers)+"회":"비교 불가";
+  box.append(text("strong","일반 "+minutes(data.normal_best)+" → 파업 "+minutes(data.strike_best)+" · 시간 "+delta));
+  box.append(text("span","환승 "+transfers(data.normal_best)+" → "+transfers(data.strike_best)+" ("+transferDelta+")"));
+  box.append(text("span","파업 영향 일반 경로 "+data.unavailable_normal_routes.length+"개 · 제외된 A 노선 "+data.affected_route_ids.length+"개"));
+  const affected=new Set(data.affected_route_ids.map(id=>"A:"+id));
+  const names=[...new Set(data.unavailable_normal_routes.flatMap(route=>route.legs||[])
+    .filter(leg=>affected.has(leg.route_id)).map(leg=>leg.route_name||leg.route_id))];
+  if(names.length)box.append(text("span","영향 노선: "+names.slice(0,4).join(", ")+(names.length>4?" 외 "+(names.length-4)+"개":"")));
+  if(data.shuttle_source)box.append(text("small",data.shuttle_source.source_kind==="SYNTHETIC_DEMO"?"대체 셔틀은 스모크 데모입니다. 실제 운행 서비스가 아닙니다.":"C팀 셔틀 후보 자료 · 운행 확정 여부는 별도 확인 필요"));
 }
 const mins=seconds=>Math.round(seconds/60)+"분";
 const sortKeys={
@@ -317,21 +368,48 @@ function renderResults(){
 const reducedMotion=window.matchMedia("(prefers-reduced-motion: reduce)");
 let activeSlot=null;
 let fadeTimer=null;
-const layerNames=slot=>["route-"+slot+"-alternatives","route-"+slot+"-casing","route-"+slot+"-verified","route-"+slot+"-schematic"];
+const layerNames=slot=>["route-"+slot+"-alternatives","route-"+slot+"-casing","route-"+slot+"-verified","route-"+slot+"-walk","route-"+slot+"-schematic","route-"+slot+"-arrows"];
 function clearSlot(slot){
   for(const id of layerNames(slot))if(map.getLayer(id))map.removeLayer(id);
   const source="route-lines-"+slot;
   if(map.getSource(source))map.removeSource(source);
 }
 function setSlotOpacity(slot,opacity){
-  const targets=[opacity*.08,opacity*.9,opacity*.97,opacity*.97];
-  layerNames(slot).forEach((id,index)=>{if(map.getLayer(id))map.setPaintProperty(id,"line-opacity",targets[index])});
+  const targets=[opacity*.08,opacity*.9,opacity*.97,opacity*.97,opacity*.97,opacity*.92];
+  layerNames(slot).forEach((id,index)=>{if(map.getLayer(id))map.setPaintProperty(id,index===5?"text-opacity":"line-opacity",targets[index])});
+}
+const comparisonSource="route-comparison-overlay";
+function drawComparisonOverlay(){
+  if(!map.isStyleLoaded())return;
+  const data=state.mode==="strike"?state.comparison:null;
+  const features=[];
+  if(data){
+    const affected=new Set(data.affected_route_ids.map(id=>"A:"+id));
+    const baseline=data.normal_best;
+    for(const leg of baseline?.legs||[]){
+      if(affected.has(leg.route_id)||!leg.geometry||leg.geometry.length<2)continue;
+      features.push({type:"Feature",properties:{kind:"baseline"},geometry:{type:"LineString",coordinates:leg.geometry}});
+    }
+    const representative=data.unavailable_normal_routes.find(route=>route.id===baseline?.id)
+      ||data.unavailable_normal_routes[0];
+    for(const leg of representative?.legs||[]){
+      if(!affected.has(leg.route_id)||!leg.geometry||leg.geometry.length<2)continue;
+      features.push({type:"Feature",properties:{kind:"unavailable"},geometry:{type:"LineString",coordinates:leg.geometry}});
+    }
+  }
+  const collection={type:"FeatureCollection",features};
+  if(!map.getSource(comparisonSource)){
+    map.addSource(comparisonSource,{type:"geojson",data:collection});
+    map.addLayer({id:"comparison-baseline",type:"line",source:comparisonSource,filter:["==",["get","kind"],"baseline"],paint:{"line-color":"#617570","line-width":3,"line-opacity":.35,"line-opacity-transition":{duration:350}},layout:{"line-cap":"round","line-join":"round"}});
+    map.addLayer({id:"comparison-unavailable",type:"line",source:comparisonSource,filter:["==",["get","kind"],"unavailable"],paint:{"line-color":"#e84b60","line-width":3,"line-opacity":.5,"line-opacity-transition":{duration:350},"line-dasharray":[2,2]},layout:{"line-cap":"round","line-join":"round"}});
+  }else map.getSource(comparisonSource).setData(collection);
 }
 function drawRoute(){
   if(!map.isStyleLoaded())return;
+  drawComparisonOverlay();
   if(fadeTimer){clearTimeout(fadeTimer);fadeTimer=null}
   const selected=state.routes[state.selected];
-  if(!selected){clearSlot(0);clearSlot(1);activeSlot=null;state.routeMarkers.forEach(marker=>marker.remove());state.routeMarkers=[];return}
+  if(!selected){clearSlot(0);clearSlot(1);activeSlot=null;state.routeMarkers.forEach(marker=>marker.remove());state.routeMarkers=[];$("map-hint-detail").textContent="장소나 좌표를 클릭해 출발지·목적지로 선택하세요.";return}
   const previous=activeSlot;
   const next=previous===0?1:0;
   clearSlot(next);
@@ -339,7 +417,7 @@ function drawRoute(){
   for(const [index,route] of state.routes.entries()){
     for(const leg of route.legs){
       if(!leg.geometry||leg.geometry.length<2)continue;
-      features.push({type:"Feature",properties:{color:legColor(leg),selected:index===state.selected,schematic:leg.geometry_status==="stop_schematic"},geometry:{type:"LineString",coordinates:leg.geometry}});
+      features.push({type:"Feature",properties:{color:legColor(leg),selected:index===state.selected,schematic:leg.geometry_status==="stop_schematic",walk:leg.kind==="walk"},geometry:{type:"LineString",coordinates:leg.geometry}});
     }
   }
   if(features.length){
@@ -349,8 +427,13 @@ function drawRoute(){
     map.addSource(source,{type:"geojson",data:{type:"FeatureCollection",features}});
     map.addLayer({id:"route-"+next+"-alternatives",type:"line",source,filter:["==",["get","selected"],false],paint:{"line-color":"#52756e","line-width":2.5,"line-opacity":0,"line-opacity-transition":transition},layout:{"line-join":"round","line-cap":"round"}});
     map.addLayer({id:"route-"+next+"-casing",type:"line",source,filter:["==",["get","selected"],true],paint:{"line-color":"#fff","line-width":9,"line-opacity":0,"line-opacity-transition":transition},layout:{"line-join":"round","line-cap":"round"}});
-    map.addLayer({id:"route-"+next+"-verified",type:"line",source,filter:["all",["==",["get","selected"],true],["==",["get","schematic"],false]],paint:{"line-color":["get","color"],"line-width":5,"line-opacity":0,"line-opacity-transition":transition},layout:{"line-join":"round","line-cap":"round"}});
+    map.addLayer({id:"route-"+next+"-verified",type:"line",source,filter:["all",["==",["get","selected"],true],["==",["get","schematic"],false],["==",["get","walk"],false]],paint:{"line-color":["get","color"],"line-width":5,"line-opacity":0,"line-opacity-transition":transition},layout:{"line-join":"round","line-cap":"round"}});
+    map.addLayer({id:"route-"+next+"-walk",type:"line",source,filter:["all",["==",["get","selected"],true],["==",["get","walk"],true],["==",["get","schematic"],false]],paint:{"line-color":["get","color"],"line-width":5,"line-opacity":0,"line-opacity-transition":transition,"line-dasharray":[1.4,1.1]},layout:{"line-join":"round","line-cap":"round"}});
     map.addLayer({id:"route-"+next+"-schematic",type:"line",source,filter:["all",["==",["get","selected"],true],["==",["get","schematic"],true]],paint:{"line-color":["get","color"],"line-width":5,"line-opacity":0,"line-opacity-transition":transition,"line-dasharray":[1.5,1.2]},layout:{"line-join":"round","line-cap":"round"}});
+    map.addLayer({id:"route-"+next+"-arrows",type:"symbol",source,filter:["==",["get","selected"],true],
+      layout:{"symbol-placement":"line","symbol-spacing":380,"text-field":"\u2192","text-size":14,
+        "text-rotation-alignment":"map","text-keep-upright":false,"text-allow-overlap":true},
+      paint:{"text-color":"#fff","text-halo-color":"#173c36","text-halo-width":1,"text-opacity":0,"text-opacity-transition":transition}});
     requestAnimationFrame(()=>{if(activeSlot===next)setSlotOpacity(next,1)});
     const coords=features.filter(feature=>feature.properties.selected).flatMap(feature=>feature.geometry.coordinates);
     if(coords.length)map.fitBounds(coords.reduce((bounds,point)=>bounds.extend(point),new maplibregl.LngLatBounds(coords[0],coords[0])),{padding:75,maxZoom:15,duration:reducedMotion.matches?0:850});
@@ -375,21 +458,46 @@ function drawRoute(){
     }
   }
   const schematic=selected.legs.some(leg=>leg.geometry_status==="stop_schematic");
+  $("map-hint-detail").textContent=schematic?"점선은 정차점을 잇는 개략선입니다. 실제 도로 선형이 아닙니다.":"선택한 경로를 지도에서 확인하세요.";
   $("message").textContent=schematic?"선택한 경로를 지도에 표시했습니다. 점선은 정차점을 연결한 개략선이며 실제 주행 도로와 다를 수 있습니다.":"선택한 경로를 지도에 표시했습니다.";
 }
 map.on("load",drawRoute);
-$("search-form").addEventListener("submit",async event=>{
-  event.preventDefault();
-  if(!state.origin||!state.destination){$("message").textContent="검색 결과를 선택하거나 지도에서 출발지와 목적지를 지정하세요.";return}
+async function searchRoutes(){
+  if(!state.origin||!state.destination){
+    $("message").textContent="검색 결과를 선택하거나 지도에서 출발지와 목적지를 지정하세요.";
+    return;
+  }
+  state.hasSearched=true;
+  const requestId=++state.requestId;
+  const mode=state.mode;
   const selectedEndpoints={origin:{...state.origin},destination:{...state.destination}};
   const params=new URLSearchParams({origin_lat:state.origin.lat,origin_lon:state.origin.lon,destination_lat:state.destination.lat,destination_lon:state.destination.lon,departure_at:$("departure").value+":00+09:00",include_shuttle:$("include-shuttle").checked});
-  $("message").textContent="운행시간표를 확인하고 있습니다.";
+  const canCompare=!!state.status?.modes?.strike?.available;
+  const path=canCompare?"compare":"plan";
+  if(path==="plan")params.set("mode",mode);
+  $("message").textContent=(mode==="normal"?"일반":"파업")+" 운행 경로로 전환하고 있습니다.";
+  $("results").classList.add("pending");
   try{
-    const response=await fetch("/api/citizen-routing/plan?"+params),data=await response.json();
+    const response=await fetch("/api/citizen-routing/"+path+"?"+params),data=await response.json();
+    if(requestId!==state.requestId)return;
     if(!response.ok)throw new Error(data.message||data.code);
-    state.routes=data.routes;state.routeEndpoints=selectedEndpoints;sortRoutes(false);renderResults();
-    $("message").textContent=data.routes.length?"실제 운행시간을 기준으로 계산한 추천 경로입니다.":"해당 시각에 이용 가능한 경로가 없습니다.";
-    drawRoute();
-  }catch(error){state.routes=[];renderResults();drawRoute();$("message").textContent=error.message}
-});
+    state.comparison=path==="compare"?data:null;
+    state.routes=(path==="compare"?data[mode]:data).routes;
+    state.routeEndpoints=selectedEndpoints;
+    sortRoutes(false);renderResults();renderComparison();drawRoute();
+    $("results").classList.remove("pending");
+    $("results").classList.remove("arriving");
+    void $("results").offsetWidth;
+    $("results").classList.add("arriving");
+    $("message").textContent=state.routes.length?
+      (mode==="normal"?"일반 운행":"파업 운행")+" 교통망으로 계산한 추천 경로입니다.":
+      "해당 시각에 이용 가능한 경로가 없습니다.";
+  }catch(error){
+    if(requestId!==state.requestId)return;
+    state.routes=[];state.comparison=null;renderResults();renderComparison();drawRoute();
+    $("results").classList.remove("pending");
+    $("message").textContent=error.message;
+  }
+}
+$("search-form").addEventListener("submit",event=>{event.preventDefault();searchRoutes()});
 loadStatus();
