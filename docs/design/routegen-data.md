@@ -1,5 +1,7 @@
 # 노선 생성기 실행에 필요한 데이터
 
+> 이 데이터를 읽어 2~8단계를 한 번에 돌리는 진입점은 [pipeline.md](pipeline.md)에 있다.
+
 노선 생성기(`experiments/routegen_lab/walk_eval.py`)와 평가(`eval_rules.py`, `strike_eval.py`, `smoke_integrated.py`)가 읽는 데이터를 정리한다. 설계와 결정은 [routegen-design.md](routegen-design.md)에 있다.
 
 **데이터는 Git에 올리지 않는다.** 모두 저장소 밖 작업 폴더(아래 `W`)에 둔다. 경로는 `W` 기준이다(구로 예시이고, 다른 구는 `guro`를 그 구 이름으로 바꾼다). `strike_eval.py`·`smoke_integrated.py`는 환경 변수 `ROUTEGEN_WORK`를 `W`로 쓴다.
