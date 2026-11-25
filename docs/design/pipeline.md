@@ -90,6 +90,7 @@ PYTHONPATH=src python3 -m busstrike.pipeline --gu guro --strike 1.0 --fleet 11 -
 ## 5. 출력 형식
 
 ### 5.1 pareto.json (운영자 대시보드용)
+대시보드에서 그리는 법과 주의점은 [d-pareto-handoff.md](d-pareto-handoff.md).
 ```json
 {"gu": "guro", "fleet": 11, "strike": 1.0, "eval_days": ["20261028"], "demand_total": 9876.0,
  "plans": [{"id": "feeder_lg0_fill0__floor_none", "base": "feeder", "algo_name": "피더 순회", "line_group": false, "fill": false,
