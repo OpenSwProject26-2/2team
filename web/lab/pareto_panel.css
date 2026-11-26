@@ -1,0 +1,27 @@
+/* 충족률·형평성 곡선 패널(pareto_panel.js). 지도 왼쪽 아래, 기본 약 320×240px, 가장자리 여백 12px. */
+.pp-root{--pp-bg:#fffffff2;--pp-ink:#1f2937;--pp-sub:#5b6474;--pp-line:#d9dde4;--pp-grid:#eceef2;--pp-hull:#1f2937;--pp-accent:#1d4ed8;
+  margin:0 0 12px 12px!important;font:12px/1.35 system-ui,-apple-system,"Segoe UI","Noto Sans KR",sans-serif;color:var(--pp-ink);pointer-events:auto;clear:both}
+.pp-root .pp{box-sizing:border-box;width:min(320px,calc(100vw - 24px));padding:8px 10px 8px;border:1px solid var(--pp-line);border-radius:10px;background:var(--pp-bg);box-shadow:0 4px 16px #0f172a24}
+.pp-root .pp[hidden],.pp-root .pp-open[hidden],.pp-root .pp-tip[hidden]{display:none}
+.pp-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.pp-head strong{font-size:12.5px}
+.pp-toggle,.pp-open{font:inherit;font-size:11.5px;border:1px solid var(--pp-line);background:#fff;color:var(--pp-ink);border-radius:7px;padding:3px 8px;cursor:pointer}
+.pp-open{padding:6px 10px;font-weight:600;box-shadow:0 3px 10px #0f172a1f}
+.pp-toggle:focus-visible,.pp-open:focus-visible,.pp-floor input:focus-visible{outline:2px solid var(--pp-accent);outline-offset:2px}
+.pp-meta{margin-top:2px;color:var(--pp-sub);font-size:11px}
+.pp-plot{position:relative;margin-top:4px}
+.pp-svg{display:block;width:100%;height:auto;overflow:visible;touch-action:none}
+.pp-svg text{font-size:9px;fill:var(--pp-sub)}
+.pp-svg .pp-axis-name{font-size:9px;fill:var(--pp-ink);font-weight:600}
+.pp-svg .pp-grid{stroke:var(--pp-grid);stroke-width:1}
+.pp-svg .pp-hull{fill:none;stroke:var(--pp-hull);stroke-width:1.4;stroke-opacity:.75}
+.pp-svg .pp-label{font-size:9.5px;fill:var(--pp-ink);font-weight:600;paint-order:stroke;stroke:#fff;stroke-width:3px}
+.pp-svg .pp-rep{font-size:9px;fill:var(--pp-sub);paint-order:stroke;stroke:#fff;stroke-width:3px}
+.pp-svg .pp-ring{fill:none;stroke:var(--pp-ink);stroke-width:1.8}
+.pp-tip{position:absolute;z-index:2;max-width:220px;padding:5px 7px;border-radius:6px;background:#111827;color:#fff;font-size:11px;pointer-events:none;white-space:nowrap}
+.pp-floor{display:flex;align-items:center;gap:8px;margin-top:4px;font-size:11.5px}
+.pp-floor span{white-space:nowrap;min-width:96px}
+.pp-floor output{font-weight:700}
+.pp-floor input{flex:1;min-width:0;accent-color:var(--pp-accent)}
+.pp-msg{min-height:14px;font-size:11px;color:var(--pp-sub)}
+.pp-msg.pp-err{color:#b42318}

@@ -2,6 +2,7 @@
 <html lang="ko">
 <head>
 <link href="/vendor/maplibre-gl.css" rel="stylesheet">
+<link href="/lab-panel/pareto_panel.css" rel="stylesheet">
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>파업 대응 운영 대시보드 | 실제 지도·합성 데이터</title>
@@ -48,6 +49,18 @@
     .lab-disconnected{margin:12px;padding:11px;border:1px solid #f2d7a6;border-radius:9px;background:#fff9eb;color:#745015;font-size:11px;line-height:1.55}
     .lab-disconnected p{margin:5px 0 0}
     #labPanelToggle{display:none;position:absolute;left:0;top:50%;transform:translateY(-50%);z-index:5;writing-mode:vertical-rl;border:1px solid #d7e0ec;border-left:0;border-radius:0 8px 8px 0;background:#fff;color:#435167;padding:10px 6px;font-size:11px;font-weight:800;box-shadow:0 2px 8px #1c2b3d25}
+    .sim-lab-panel{display:none;border-top:1px solid #e6ebf3;padding:10px 14px 12px;font-size:11.5px;color:#334155}
+    .sim-active .sim-lab-panel:not([hidden]){display:block}
+    .sim-lab-panel h3{font-size:12px;margin:10px 0 6px;color:#172238}
+    .sim-lab-panel .cov-top{display:flex;justify-content:space-between;gap:6px;align-items:baseline}.sim-lab-panel .cov-top span{color:#6b778c;font-size:10.5px}
+    .sim-lab-panel .cov-bar{display:flex;height:12px;border-radius:6px;overflow:hidden;background:#e2e8f0;margin:6px 0}
+    .sim-lab-panel .cov-rows{display:grid;grid-template-columns:1fr auto auto;gap:2px 8px;font-size:11px}.sim-lab-panel .cov-rows i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+    .sim-lab-panel .seg{display:flex;gap:4px;margin:8px 0}.sim-lab-panel .seg button{flex:1;font-size:10.5px;padding:5px 4px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;cursor:pointer}.sim-lab-panel .seg button[aria-pressed="true"]{background:#1e3a8a;color:#fff;border-color:#1e3a8a}
+    .sim-lab-routes{width:100%;border-collapse:collapse;font-size:11px}.sim-lab-routes th{text-align:left;color:#6b778c;font-weight:600;border-bottom:1px solid #e6ebf3;padding:3px 2px}.sim-lab-routes td{padding:4px 2px;border-bottom:1px solid #f1f4f8;cursor:pointer}.sim-lab-routes td.n{text-align:right}
+    .sim-lab-routes td i{display:inline-block;width:10px;height:4px;border-radius:2px;margin-right:5px;vertical-align:2px}.sim-lab-routes tr.sel td,.sim-lab-routes tr.on td{background:#eef4ff}
+    .sim-stopseq{list-style:none;margin:0;padding:0;max-height:260px;overflow:auto}.sim-stopseq button{display:flex;gap:6px;align-items:center;width:100%;text-align:left;border:0;background:none;padding:3px 2px;font-size:11px;cursor:pointer;color:#1e293b}.sim-stopseq button:hover{background:#f1f5f9}
+    .sim-stopseq .seq{flex:none;width:18px;height:18px;border-radius:50%;background:#f59e0b;color:#1e293b;font-weight:700;font-size:10px;display:grid;place-items:center}
+    .lab-active #labSidebar{max-height:calc(100% - 20px);overflow:auto}.sim-flash{position:absolute;left:50%;top:14px;transform:translate(-50%,-8px);z-index:30;max-width:min(560px,70%);padding:9px 14px;border-radius:10px;border:2px solid #17a56c;background:rgba(255,255,255,.97);box-shadow:0 6px 20px rgba(15,23,42,.18);font-size:13px;font-weight:600;color:#1e293b;opacity:0;pointer-events:none;transition:opacity .25s,transform .25s}.sim-flash.show{opacity:1;transform:translate(-50%,0)}.sim-lab-toggles{display:grid;gap:4px;font-size:12.5px}.sim-lab-toggles i{display:inline-block;width:22px;height:0;vertical-align:middle;margin-right:5px}#demandLegend{display:none!important}.sim-pp-actions{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}.sim-pp-actions button{font:inherit;font-size:11.5px;border:1px solid #d5dbe6;background:#fff;border-radius:7px;padding:4px 8px;cursor:pointer}.sim-lab-toggles .lg-muni{border-top:2px dashed #0891b2}.sim-lab-toggles .lg-road{border-top:2px solid rgba(75,85,99,.45)}
     .lab-active .main-grid{display:grid;grid-template-columns:300px minmax(0,1fr);gap:12px;align-items:stretch}
     .lab-active #labSidebar{display:block}
     .lab-active #labSidebar .side,.lab-active #labSidebar .right{display:grid;grid-template-columns:1fr;gap:9px;min-width:0;min-height:0}
