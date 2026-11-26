@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -38,9 +39,10 @@ def main() -> None:
     parser.add_argument("--start", type=int, default=1, help="Metro API row start, inclusive")
     parser.add_argument("--end", type=int, default=1000, help="Metro API row end, inclusive")
     parser.add_argument("--out", type=Path, required=True, help="Local directory outside Git-tracked data")
+    parser.add_argument("--key-stdin", action="store_true", help="Read the API key from standard input without echoing it")
     args = parser.parse_args()
     if args.source == "gyeonggi":
-        key = os.environ.get("DATA_GO_KR_SERVICE_KEY")
+        key = sys.stdin.readline().strip() if args.key_stdin else os.environ.get("DATA_GO_KR_SERVICE_KEY")
         if not key:
             parser.error("Set DATA_GO_KR_SERVICE_KEY after applying for dataset 15080662 access")
         if not args.route_id or not args.route_id.isdecimal():

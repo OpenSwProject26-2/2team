@@ -26,6 +26,7 @@ class NetworkTests(unittest.TestCase):
         codes = {feature["properties"]["sgg"] for feature in collection["features"]}
         self.assertEqual(len(codes), 25)
         self.assertEqual(collection["features"][0]["properties"]["sido"], "11")
+        self.assertEqual(len(districts()), 25)
 
     def test_crossing_route_without_inside_endpoint_is_retained(self):
         square = {
@@ -76,7 +77,11 @@ class NetworkTests(unittest.TestCase):
             warnings=(),
         )
         inside = network_view(snapshot, "guro", "inside")
+        compact = network_view(snapshot, "guro", "inside", include_route_stops=False)
         full = network_view(snapshot, "guro", "full")
+        self.assertIsNone(compact["route_stops"])
+        self.assertEqual(compact["routes"], inside["routes"])
+        self.assertEqual(compact["map"], inside["map"])
         self.assertEqual(inside["routes"][0]["representative_stop_ids"], ["s1", "s2"])
         self.assertEqual(
             sum(f["geometry"]["type"] == "Point" for f in inside["map"]["features"]), 1
@@ -84,10 +89,25 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(
             sum(f["geometry"]["type"] == "Point" for f in full["map"]["features"]), 2
         )
+        self.assertGreater(len(inside["routes"][0]["schematic_segments"]), 0)
+        self.assertTrue(any(segment[0] == point for segment in inside["routes"][0]["schematic_segments"]))
+        self.assertTrue(all(segment[-1] != [126.8, 37.49] for segment in inside["routes"][0]["schematic_segments"]))
 
     def test_missing_dataset_does_not_read_private_tables(self):
         with self.assertRaises(FileNotFoundError):
             TransitData(Path("nonexistent_seoul_transit_data"))
+
+    def test_station_without_rail_route_remains_visible_in_district(self):
+        point = [126.887, 37.495]
+        snapshot = MapSnapshot(
+            snapshot_id="bus-only", source="a_gtfs", service_date="2026-11-02",
+            scenario_id=None, plan_id=None, revision=None, routes=(),
+            stops=({"stop_id": "0231", "name": "역", "kind": "metro", "coordinates": point},),
+            demand=(), fleet=None, warnings=(),
+        )
+        result = network_view(snapshot, "guro", "inside", include_route_stops=False)
+        self.assertEqual([feature["properties"]["stop_id"] for feature in result["map"]["features"]], ["0231"])
+        self.assertEqual(result["routes"], [])
 
 
 if __name__ == "__main__":

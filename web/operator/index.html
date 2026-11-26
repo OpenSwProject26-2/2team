@@ -33,6 +33,8 @@
     @media(max-width:820px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.map-legend{width:132px}}
   #map{width:100%;height:100%}.maplibregl-control-container{font-family:inherit}.maplibregl-ctrl-attrib{font-size:10px!important}.map-wrap{cursor:default}.map-status{bottom:29px}.map-tools{z-index:3}.map-legend{z-index:3}.map-corner{z-index:3}.map-error{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:#eef1f4;color:#40506b;padding:20px;text-align:center;z-index:4}
     .stop-hover-marker{display:flex;align-items:center;gap:5px;pointer-events:none;z-index:5;transform:scale(.75);opacity:0;transform-origin:left center;transition:transform 200ms ease,opacity 200ms ease;white-space:nowrap}.stop-hover-marker.active{transform:scale(1);opacity:1}.stop-hover-marker svg{width:34px;height:34px;filter:drop-shadow(0 2px 3px #20324d66)}.stop-hover-marker .name{font-size:12px;font-weight:800;color:#22314a;background:#fff;border:1px solid #cbd6e5;border-radius:6px;padding:5px 7px;box-shadow:0 3px 8px #22334b33}.maplibregl-marker.stop-hover-marker{z-index:6}
+    .stop-hover-marker .name small{display:block;margin-top:2px;font-size:10px;font-weight:700;color:#536789}
+    .stop-hover-marker .name{max-width:250px;white-space:normal;line-height:1.35}
     .scenario-form{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:10px;border-top:1px solid #e6ebf3;padding-top:9px}.scenario-form>div,.scenario-form>input,.scenario-form>button{grid-column:1/-1}.scenario-form input,.scenario-form select{min-width:0;width:100%;font-size:11px;border:1px solid #d7e0ec;border-radius:6px;padding:6px;background:#fff}.scenario-form label input{width:55px}.scenario-form>button{justify-self:start}
     .route-stops{margin-top:12px;border-top:1px solid #e6ebf3;padding-top:10px}.route-stops summary{cursor:pointer;color:#275c9d;font-size:11px;font-weight:800}.route-stops ol{max-height:220px;overflow-y:auto;margin:9px 0 0;padding-left:23px}.route-stops li{font-size:10px;color:#6e7d91;margin:2px 0}.route-stops button{border:0;background:none;color:#314b70;text-align:left;padding:4px 1px;font-size:10px}.route-stops button:hover{text-decoration:underline}.route-stops small{font-size:9px;color:#8b98a8}
 #simulationControls,#simulationDetails{display:none}.sim-active #simulationControls,.sim-active #simulationDetails{display:block}.sim-active .stats,.sim-active .main-grid>.side,.sim-active .main-grid>.right,.sim-active .bottom,.sim-active .report,.sim-active>.note,.sim-active .map-corner,.sim-active .map-legend,.sim-active .map-footer,.sim-active .map-controls{display:none}.sim-active .main-grid{display:block}.sim-active .map-wrap{height:570px}.sim-active .map-col{width:100%}.sim-controls{display:flex;gap:9px;flex-wrap:wrap;padding:14px;margin-bottom:13px}.sim-controls label{display:grid;gap:5px;color:#596b83;font-size:11px;font-weight:800;flex:1;min-width:120px}.sim-controls select{border:1px solid #d5deeb;border-radius:8px;background:#fff;padding:8px;color:#172238}.sim-metrics{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px;margin-bottom:13px}.sim-metrics div{background:#fff;border:1px solid #e2e8f1;border-radius:11px;padding:13px}.sim-metrics small{display:block;font-size:11px;color:#64748b;margin-bottom:5px}.sim-metrics strong{font-size:19px}.sim-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(280px,1fr);gap:12px;margin-top:13px}.sim-section{padding:16px}.sim-section h2{margin:0 0 10px;font-size:15px}.sim-table{width:100%;border-collapse:collapse;font-size:12px}.sim-table th,.sim-table td{padding:9px;text-align:left;border-bottom:1px solid #e4eaf2}.sim-table th{color:#62728a}.sim-table button{border:1px solid #aac8ec;background:#eff6ff;border-radius:7px;padding:5px 8px;color:#225db7}.sim-table button:disabled{opacity:.45;cursor:not-allowed}.sim-muted{font-size:11px;color:#66758e;line-height:1.5}.sim-district{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;max-height:245px;overflow:auto}.sim-district button{padding:8px;background:#f6f8fc;border:1px solid #e1e7f0;border-radius:7px;font-size:11px;text-align:left}.sim-district button[data-status=report_only]{border-color:#8bc9cb;background:#effafa}.sim-district button:disabled{color:#929db0}.sim-marker{background:white;border:3px solid #0eaaad;border-radius:50%;min-width:62px;min-height:62px;display:grid;place-items:center;box-shadow:0 3px 14px #20304055;font-size:12px;font-weight:900;cursor:pointer}.sim-marker.active{border-color:#ed3d51}.sim-marker span{font-size:10px}.sim-route{display:block;width:100%;text-align:left;padding:9px;margin:5px 0;border:1px solid #dee6ef;background:#fff;border-radius:8px}.sim-route.active{background:#e9f8f8;border-color:#0eaaad}.sim-bars{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}.sim-bar{display:grid;grid-template-columns:105px 1fr 62px;gap:8px;align-items:center;font-size:11px;margin:8px 0}.sim-bar i{height:11px;border-radius:8px;background:#0eaaad;display:block}.sim-bar .track{height:11px;border-radius:8px;background:#eaf0f7}.sim-empty{border:1px dashed #cdd8e6;background:#f8faff;border-radius:8px;padding:12px;font-size:11px;color:#63748e}.sim-active .topnotice{display:none}@media(max-width:900px){.sim-metrics{grid-template-columns:repeat(3,1fr)}.sim-grid,.sim-bars{grid-template-columns:1fr}.sim-district{grid-template-columns:repeat(3,1fr)}}
@@ -92,26 +94,94 @@
     .lab-active.sim-active #dataModeControls{display:inline-flex!important}
     .lab-active.sim-active #labSidebar .right>.panel{display:grid}
     .lab-active.sim-active .map-footer .time-row{display:none}
-    .lab-active.lab-panel-closed .main-grid{grid-template-columns:0 minmax(0,1fr)}
-    .lab-active.lab-panel-closed #labSidebar{width:0;padding:0;border:0;overflow:hidden}
-    .lab-active.lab-panel-closed #labSidebar>*{display:none}
     @media(max-width:1100px){.lab-active .main-grid,.lab-active.sim-active .main-grid{grid-template-columns:250px minmax(0,1fr)}.lab-active .map-wrap,.lab-active.sim-active .map-wrap{height:65vh;min-height:460px}}
     @media(max-width:1050px){.lab-active .top{flex-wrap:wrap}.lab-active #districtControls{order:3;width:100%;padding:3px 0}.lab-active .right-head{margin-left:auto}.lab-active #districtControls .district-note{max-width:none}}
-    @media(max-width:700px){.lab-active .main-grid,.lab-active.sim-active .main-grid{grid-template-columns:1fr}.lab-active #labSidebar{max-height:46vh}.lab-active .map-wrap,.lab-active.sim-active .map-wrap{height:58vh;min-height:380px}.lab-active.lab-panel-closed .main-grid{grid-template-columns:1fr}.lab-active.lab-panel-closed #labSidebar{display:none}}
+    @media(max-width:700px){.lab-active .main-grid,.lab-active.sim-active .main-grid{grid-template-columns:1fr}.lab-active #labSidebar{max-height:46vh}.lab-active .map-wrap,.lab-active.sim-active .map-wrap{height:58vh;min-height:380px}}
+  /* Map-first operator workspace. Existing data panels remain mounted for their event handlers. */
+  .lab-active.app{max-width:none;margin:0;padding:0;background:#f4f7fb;min-height:100vh}
+  .lab-active .top{margin:0;padding:10px 20px;background:#fff;border-bottom:1px solid #e4e9f1;box-shadow:0 2px 12px #17243c0c;gap:14px}
+  .lab-active .brand h1{font-size:17px;color:#202d52}
+  .lab-active #districtControls{margin-right:auto;min-width:0}
+  .lab-active #districtControls .district-field{gap:6px}
+  #districtSearch{width:104px;border:1px solid #d5deeb;border-radius:8px;padding:7px;font:inherit}
+  .lab-active #districtControls .district-note,.lab-active #districtControls .district-extent,.lab-active #districtControls .observed-field,.lab-active #districtControls .district-date{display:none}
+  .lab-active .stats,.lab-active .bottom,.lab-active .report,.lab-active>.note,.lab-active #simulationDetails{display:none!important}
+  .lab-active .main-grid,.lab-active.sim-active .main-grid{display:block;position:relative;margin:0;max-width:none}
+  .lab-active .main-grid>.side,.lab-active .main-grid>.right{display:none!important}
+  .lab-active .main-grid>.map-col,.lab-active.sim-active .main-grid>.map-col{display:block;width:100%;min-width:0}
+  .lab-active .map-col>.panel{border:0;border-radius:0;box-shadow:none}
+  .lab-active .map-wrap,.lab-active.sim-active .map-wrap{height:calc(100vh - 88px);min-height:560px}
+  .lab-active .map-head,.lab-active .map-footer,.lab-active .map-corner,.lab-active .map-legend{display:none!important}
+  .lab-active #labSidebar,.lab-active.sim-active #labSidebar{display:block;position:absolute;left:18px;top:18px;z-index:8;width:282px;max-height:calc(100vh - 126px);overflow:auto;align-self:auto;border:1px solid #e0e6f0;border-radius:15px;background:#ffffffed;box-shadow:0 14px 42px #17243c29;backdrop-filter:blur(12px);transform:translateX(0) scale(1);opacity:1;visibility:visible;transition:transform .28s ease,opacity .28s ease,visibility .28s}
+  .lab-active #labSidebar .panel-head{padding:16px 17px 9px}
+  .lab-active #labSidebar .panel-title{font-size:15px;color:#283052}
+  .lab-active #labSidebar .panel-head .sub{color:#78849a}
+  .lab-active #labControlsSlot,.lab-active #labLayerSlot,.lab-active #labExtrasSlot,.lab-active .lab-disconnected{display:none!important}
+  .float-map-options{padding:4px 16px 14px}
+  .float-map-options h3{font-size:12px;color:#53627b;margin:0 0 8px}
+  #floatLayerList{display:grid;grid-template-columns:1fr 1fr;gap:7px 5px}
+  #floatLayerList label{display:flex;align-items:center;gap:5px;font-size:11px;color:#364765;white-space:nowrap;cursor:pointer}
+  #floatLayerList input{accent-color:#5a52c7;margin:0}
+  .hex-date-control{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:13px;padding-top:10px;border-top:1px solid #e8ecf3;color:#53627b;font-size:11px;font-weight:700}
+  .hex-date-control select{border:1px solid #d5deeb;border-radius:7px;background:white;padding:5px;color:#364765;font-size:11px}
+  #operationAccordion{border-top:1px solid #e8ecf3}
+  #operationToggle{display:flex;justify-content:space-between;align-items:center;width:100%;border:0;background:transparent;cursor:pointer;padding:14px 17px;font-weight:800;color:#313d62;font-size:12px;text-align:left}
+  .operation-arrow{color:#756cc3;font-size:16px;transition:transform .28s ease}
+  #operationAccordion.is-open .operation-arrow{transform:rotate(180deg)}
+  .operation-body-wrap{display:grid;grid-template-rows:0fr;transition:grid-template-rows .28s ease}
+  #operationAccordion.is-open .operation-body-wrap{grid-template-rows:1fr}
+  .operation-body{min-height:0;overflow:hidden;padding:0 12px;opacity:0;transition:opacity .24s ease}
+  #operationAccordion.is-open .operation-body{padding-bottom:12px;opacity:1}
+  .operation-body>.smalltext{margin:0 4px 9px;color:#697993;line-height:1.4}
+  .lab-active #operationSlot #simulationControls{display:none}
+  .lab-active.sim-active #operationSlot #simulationControls{display:block}
+  .lab-active #operationSlot .sim-controls,.lab-active.sim-active #operationSlot .sim-controls{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px;border:0;box-shadow:none;margin:0}
+  .lab-active #operationSlot .sim-controls label{font-size:10px;min-width:0}
+  .lab-active #operationSlot .sim-controls label:first-child,.lab-active #operationSlot .sim-controls label:nth-child(3),.lab-active #operationSlot .sim-controls label:nth-child(5),.lab-active #operationSlot .sim-controls label:nth-child(7),.lab-active #operationSlot #sim-all-regions{display:none}
+  .lab-active #operationSlot .sim-controls select{width:100%;font-size:11px}
+  .lab-active #operationSlot .sim-metrics,.lab-active #operationSlot #sim-result-status,.lab-active #operationSlot #sim-transport-notice{display:none}
+  .lab-active #labRoutesSlot .side{border:0;box-shadow:none;background:transparent;min-height:0;display:block}
+  .lab-active #labRoutesSlot .side .panel-head{padding:10px 5px 4px}
+  .lab-active #labRoutesSlot .route-list{height:170px}
+  .lab-active #labRoutesSlot .side-tools{padding:5px}
+  .lab-active #labPanelToggle{top:18px;left:315px;transform:none;writing-mode:horizontal-tb;border:1px solid #d7e0ec;border-radius:9px;padding:8px 10px;box-shadow:0 4px 14px #17243c22;transition:left .28s ease}
+  .lab-active #labPanelToggle .panel-arrow{display:inline-block;transition:transform .28s ease}
+  .lab-active.lab-panel-closed #labPanelToggle .panel-arrow{transform:rotate(180deg)}
+  .lab-active.lab-panel-closed #labSidebar{transform:translateX(calc(-100% - 28px)) scale(.96);opacity:0;visibility:hidden;pointer-events:none}
+  .lab-active.lab-panel-closed #labPanelToggle{left:18px}
+  .lab-active .map-tools{left:auto;right:17px;top:15px}
+  .lab-active .map-status{bottom:36px;right:18px;max-width:280px;font-size:10px}
+  .circle-legend{position:absolute;left:18px;bottom:38px;z-index:7;width:192px;padding:10px 12px;border:1px solid #e2e2ec;border-radius:11px;background:#fffffff0;box-shadow:0 5px 20px #22335518;color:#35405b;font-size:11px;pointer-events:none}
+  .circle-legend[hidden]{display:none!important}
+  .circle-example{display:flex;align-items:center;gap:8px;margin:8px 0;color:#6b7892;font-size:10px}
+  .circle-example i{display:inline-block;width:20px;height:20px;flex:none;border-radius:50%;background:#766ac357;border:1px solid #6052a8}
+  .circle-legend small{display:block;margin-top:6px;font-size:9px;color:#6b7892;line-height:1.35}
+  .comparison-float{position:absolute;right:18px;bottom:80px;z-index:9;width:min(380px,calc(100vw - 36px));background:#ffffffef;backdrop-filter:blur(12px);border:1px solid #e0e5ef;border-radius:15px;box-shadow:0 14px 42px #17243c30;padding:15px;color:#26344f}
+  .comparison-float[hidden]{display:none!important}
+  .comparison-float.expanded{width:min(560px,calc(100vw - 36px))}
+  .comparison-head{display:flex;justify-content:space-between;align-items:start;gap:8px;cursor:grab;user-select:none;touch-action:none}
+  .comparison-head.dragging{cursor:grabbing}
+  .comparison-head strong{display:block;font-size:14px}
+  .comparison-head small{display:block;font-size:11px;color:#74829b;margin-top:2px}
+  .comparison-head button{border:0;background:#f1f3fa;border-radius:7px;padding:5px 8px;color:#405071;cursor:pointer}
+  .comparison-plot{min-height:190px;display:grid;place-items:center;text-align:center;font-size:12px;color:#66758d;line-height:1.5}
+  .comparison-foot{font-size:10px;color:#8390a4;margin:8px 0 0}
+  @media(prefers-reduced-motion:reduce){.lab-active #labSidebar,.lab-active #labPanelToggle,.panel-arrow,.operation-arrow,.operation-body-wrap,.operation-body{transition-duration:0.01ms!important}}
+  @media(max-width:700px){.lab-active .top{flex-wrap:wrap;padding:8px 12px}.lab-active #districtControls{order:3;width:100%;padding:0}.lab-active .map-wrap,.lab-active.sim-active .map-wrap{height:calc(100vh - 138px);min-height:430px}.lab-active #labSidebar,.lab-active.sim-active #labSidebar{left:10px;top:56px;width:min(260px,calc(100vw - 20px));max-height:52vh}.lab-active #labPanelToggle{left:10px;top:10px}.lab-active.lab-panel-closed #labPanelToggle{left:10px}.comparison-float{right:10px;bottom:58px}.lab-active .map-status{right:10px;bottom:28px}}
 </style>
 </head>
 <body>
-<div class="app">
+<div class="app lab-active">
   <header class="top">
-  <div class="brand"><div class="mark"><svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"><rect x="5" y="3" width="14" height="15" rx="3"/><path d="M5 10h14M8 18v3M16 18v3M8 6h8M8 14h2m4 0h2"/></svg></div><div><h1>시내버스 파업 대응 운영자 대시보드</h1><div class="brand-sub">비상 교통망 모니터링 · 노선 / 수요 / 대체수송 통합 관제</div></div><span class="tag">INTERACTIVE DEMO</span></div>
-  <section class="panel" id="districtControls" aria-label="자치구 교통망 필터"><label class="district-field">자치구<select id="districtSelect"><option value="all">서울 전체</option></select></label><label class="district-field district-extent">지도 범위<select id="districtExtent"><option value="inside">구 내부 구간만 보기</option><option value="full">노선 전체 보기</option></select></label><span class="district-note" id="districtStatus">A GTFS를 선택하면 실제 경계로 교통망을 필터링합니다.</span></section>
-  <div class="right-head"><button class="chip" id="simModeButton" type="button" aria-pressed="false">시뮬레이션 결과 표시</button><span class="topnotice">합성 DEMO · A GTFS · 저장된 시뮬레이션 결과</span><button class="chip" id="resetAll">↻ 초기화</button><span class="chip" id="dataSourceChip">● 합성 DEMO <b>2026.11.13</b></span></div>
+  <div class="brand"><div class="mark"><svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"><rect x="5" y="3" width="14" height="15" rx="3"/><path d="M5 10h14M8 18v3M16 18v3M8 6h8M8 14h2m4 0h2"/></svg></div><div><h1>버스 파업 대응 시뮬레이션</h1><div class="brand-sub">교통 운영 대시보드</div></div></div>
+  <section class="panel" id="districtControls" aria-label="자치구 교통망 필터"><label class="district-field">지역<input id="districtSearch" type="search" placeholder="구 이름 검색" aria-label="자치구 검색"><select id="districtSelect"><option value="all">서울 전체</option></select></label><label class="district-field district-extent">지도 범위<select id="districtExtent"><option value="full">교차 노선 전체 보기</option><option value="inside">구 내부 구간만 보기</option></select></label><span class="district-note" id="districtStatus">A GTFS를 선택하면 실제 경계로 교통망을 필터링합니다.</span></section>
+  <div class="right-head"><button class="chip" id="simModeButton" type="button" aria-pressed="false">시뮬레이션 결과 화면 보기</button><button class="chip" id="compareToggle" type="button" aria-expanded="false" aria-controls="comparisonFloat">설정 변경</button><button class="chip" id="resetAll">↻ 초기화</button><span class="chip" id="dataSourceChip">● 합성 DEMO <b>2026.11.13</b></span></div>
  </header>
   <section id="simulationControls" aria-label="시뮬레이션 조건">
   <div class="panel sim-controls"><label>자치구<select id="sim-region"></select></label><label>투입 차량<select id="sim-fleet"></select></label><label>운행 시간대<select id="sim-hour"><option value="all">전 시간대</option><option value="06">06시</option><option value="07">07시</option><option value="08">08시</option><option value="09">09시</option></select></label><input id="sim-variant" type="hidden" value="affected_maeul_gg"><label>운행안<select id="sim-plan"><option value="ours">우리 안</option><option value="sp">최단경로 피더안</option></select></label><label>평가 기간<select id="sim-period"><option value="exp">실험 10/26~30</option><option value="test">테스트 11/02~06</option></select></label><label>평가 날짜<select id="sim-date"></select></label><button class="chip" id="sim-all-regions" type="button">서울 전체 지도</button></div>
   <div class="sim-metrics"><div><small>잔여 수요</small><strong id="sim-total">—</strong></div><div><small>시간 내 충족</small><strong id="sim-served">—</strong></div><div><small>미충족</small><strong id="sim-unserved">—</strong></div><div><small>충족률</small><strong id="sim-rate">—</strong></div><div><small>배정 차량</small><strong id="sim-vehicles">—</strong></div><div><small>M07</small><strong id="sim-verify">—</strong></div></div>
   <p class="sim-empty" id="sim-result-status" role="status" style="margin:0 0 13px">결과 출처를 확인하는 중…</p>
-  <p class="sim-muted" id="sim-transport-notice" role="status" style="margin:0 4px 13px">교통수단을 끄면 조건별 수요 원을 조회합니다. 저장된 마을·경기 접근 조건은 잔여 수요에 반영합니다. 시내버스·지하철 제외 결과가 없으면 기본 원을 참고값으로 유지합니다.</p>
+  <p class="sim-muted" id="sim-transport-notice" role="status" style="margin:0 4px 13px">운행 조건을 바꾸면 일치하는 저장 수요 원을 조회합니다. 해당 결과가 없으면 기본 원을 참고값으로 유지합니다.</p>
  </section>
  <section class="stats" aria-label="현황 요약">
   <div class="stat red"><div class="symbol">▣</div><div><small>파업 노선</small><strong id="statStrike">—</strong><em>개</em></div></div>
@@ -121,17 +191,20 @@
   <div class="stat unmet"><div class="symbol">◌</div><div><small>모의 미충족 수요</small><strong id="statUnmet">—</strong><em>명</em></div></div>
  </section>
  <section class="main-grid">
-   <aside class="panel" id="labSidebar" aria-label="교통망 노선 실험실">
-    <div class="panel-head"><h2 class="panel-title">교통망 노선 실험실</h2><div class="sub" style="margin-top:4px">현재 데이터 모드의 노선·정류장과 시뮬레이션 결과</div></div>
+   <aside class="panel" id="labSidebar" aria-label="지도 설정">
+    <div class="panel-head"><h2 class="panel-title">지도 설정</h2><div class="sub" style="margin-top:4px">버스 3종 체크만 버스 영향 수요에 반영됩니다</div></div>
+    <section class="float-map-options" aria-label="지도 표시"><h3>지도 표시</h3><div id="floatLayerList">
+      <label><input type="checkbox" data-display="city" checked>시내버스</label><label><input type="checkbox" data-display="gyeonggi" checked>경기버스</label><label><input type="checkbox" data-display="village" checked>마을버스</label><label><input type="checkbox" data-display="metroStops" checked>지하철 표시</label><label><input type="checkbox" data-display="shuttle" checked>대체 셔틀</label><label><input type="checkbox" data-display="observedDemand" checked>운행 버스 승차원</label><label><input type="checkbox" data-display="strike" checked>파업 노선 강조 (노선 지정 필요)</label>
+    </div></section>
+    <section id="operationAccordion"><button id="operationToggle" type="button" aria-expanded="false" aria-controls="operationBody">운행 조건 <span class="operation-arrow" aria-hidden="true">⌄</span></button><div id="operationBody" class="operation-body-wrap" inert><div class="operation-body"><p class="smalltext">관측 07:30~09:00 추정(07시 집계의 절반 + 08시 전체). 저장된 C/B 평가 구간은 결과 출처에 표시합니다.</p><div id="operationSlot"></div><div id="labRoutesSlot"></div></div></div></section>
     <div id="labControlsSlot"></div>
-    <div id="labRoutesSlot"></div>
     <div id="labLayerSlot"></div>
     <div id="labExtrasSlot"></div>
     <section class="lab-disconnected"><b>직접 생성·재실행은 미연결</b><p>합성 DEMO와 A GTFS 지도 기능은 유지됩니다. 시뮬레이션 결과 모드는 연결된 C/B 실행 파일을 조회하며, 노선 생성과 M05/M07 재실행은 수행하지 않습니다.</p><p>개인 실험실의 가정값은 공식 평가 결과로 취급하지 않습니다.</p></section>
    </aside>
   <aside class="panel side">
     <div class="panel-head"><h2 class="panel-title">교통수단별 노선</h2><div class="sub" style="margin-top:4px">유형 선택 → 노선 클릭 → 지도 강조</div></div>
-    <div class="side-tools"><div class="search-wrap"><span class="magnify">⌕</span><input class="search" id="routeSearch" aria-label="노선 또는 회사 검색" placeholder="노선번호 또는 운수회사 검색"/></div><div class="tabs mode-tabs"><button class="pill active" data-listmode="strike">파업</button><button class="pill" data-listmode="city">시내버스</button><button class="pill" data-listmode="village">마을버스</button><button class="pill" data-listmode="gyeonggi">경기버스</button><button class="pill" data-listmode="metro">지하철</button><button class="pill" data-listmode="unknown_bus">미분류</button><button class="pill" data-listmode="shuttle">대체 셔틀</button><button class="pill" data-listmode="all">전체</button></div></div>
+     <div class="side-tools"><div class="search-wrap"><span class="magnify">⌕</span><input class="search" id="routeSearch" aria-label="노선 또는 회사 검색" placeholder="노선번호 또는 운수회사 검색"/></div><div class="tabs mode-tabs"><button class="pill active" data-listmode="strike">파업</button><button class="pill" data-listmode="city">시내버스</button><button class="pill" data-listmode="village">마을버스</button><button class="pill" data-listmode="gyeonggi">경기버스</button><button class="pill" data-listmode="metro">지하철</button><button class="pill" data-listmode="unknown_bus">미분류</button><button class="pill" data-listmode="shuttle">대체 셔틀</button><button class="pill" data-listmode="all">전체</button></div><div id="strikeControls" style="display:none;margin-top:10px"><p id="strikeSearchCount" class="sub"></p><button class="pill" id="strikeSearchApply" type="button">검색 결과 파업 지정</button><button class="pill" id="strikeClear" type="button">지정 해제</button><button class="pill" id="strikeRegistryLoad" type="button">C팀 1월 모델 가정 적용</button><p class="sub">2026-01-13~14 규칙 기반 모델이며 현재 파업 확정 정보가 아닙니다. 파업 표시 체크는 강조만 숨깁니다.</p></div></div>
     <div class="count"><span id="listCount"></span><span>지도와 연동</span></div><div class="route-list" id="routeList"></div>
   </aside>
   <section class="map-col">
@@ -139,8 +212,10 @@
     <div class="map-head"><div><div class="map-head-title">교통망 지도 <span style="color:#9aa6b8;font-size:11px;font-weight:500">· 용산권 가상 배치</span></div><p>노선을 클릭해 강조 · 원에 올려 수요 확인 · 지도를 드래그해 이동</p></div><div class="map-controls"><button id="showAll">전체 보기</button><button id="focusSelected">선택 노선 보기</button></div></div>
     <div class="map-wrap" id="mapWrap">
       <div id="map" aria-label="서울 실제 지도 배경과 합성 교통망"></div>
+      <aside id="demandLegend" class="circle-legend" aria-label="버스 수요 범례" hidden><strong class="circle-metric">버스 승차 추정</strong><div class="circle-example"><i></i><span>원 크기 = 버스 승차 추정 건수</span></div><small class="circle-period">관측일 · 07:30~09:00 시간별 추정</small><small>07시 집계 절반 + 08시 전체입니다. 실제 30분 관측값이나 미충족 인원은 아닙니다.</small></aside>
+      <section id="comparisonFloat" class="comparison-float" aria-label="운행안 비교" hidden><div class="comparison-head" tabindex="0" aria-label="운행안 비교 창 이동"><div><strong>운행안 비교</strong><small>충족률 × 형평성 · 끌어서 이동</small></div><div><button id="compareExpand" type="button" aria-label="그래프 확대">⤢</button><button id="compareClose" type="button" aria-label="그래프 닫기">×</button></div></div><div id="comparisonPlot" class="comparison-plot" role="status">연결된 후보를 확인하는 중…</div><p class="comparison-foot">같은 지역·기간·차량 조건에서 검증된 후보만 표시합니다.</p></section>
        <div class="map-corner"><span>◉ SIMULATION / DEMO</span><span>지도 배경만 실제 · 교통 데이터는 가상</span></div>
-       <button type="button" id="labPanelToggle" aria-expanded="true" aria-controls="labSidebar">◀ 설정 접기</button>
+       <button type="button" id="labPanelToggle" aria-expanded="true" aria-controls="labSidebar"><span class="panel-arrow" aria-hidden="true">◀</span> <span class="panel-toggle-label">설정 접기</span></button>
       <div class="map-tools"><button id="zoomIn" title="확대">+</button><button id="zoomOut" title="축소">−</button><button id="zoomReset" title="원래 위치">⌖</button></div>
       <div class="map-legend"><div class="legend-title">지도 범례</div><div class="leg-row"><i class="leg-line" style="background:var(--red)"></i>파업 노선</div><div class="leg-row"><i class="leg-line" style="background:var(--blue)"></i>정상 시내버스</div><div class="leg-row"><i class="leg-line" style="background:var(--orange)"></i>경기버스</div><div class="leg-row"><i class="leg-line" style="background:var(--green)"></i>마을버스</div><div class="leg-row"><i class="leg-line" style="background:var(--purple)"></i>지하철</div><div class="leg-row"><i class="leg-line" style="background:var(--teal)"></i>대체 셔틀</div><div class="leg-row"><span style="height:17px;width:17px;background:#e878ac66;border:1px solid #d85790;border-radius:50%"></span>거점별 합성 수요 원</div><div class="legend-foot">수요 원의 출처와 계산 범위는 아래 설명을 확인하세요.</div></div>
       <div class="map-status" id="mapStatus">지도·데이터를 불러오는 중…</div><div style="position:absolute;left:8px;bottom:3px;z-index:2;background:#ffffffdc;font-size:9px;padding:2px 5px;border-radius:3px"><a href="https://openfreemap.org/" target="_blank" rel="noopener noreferrer">OpenFreeMap</a> · <a href="https://openmaptiles.org/" target="_blank" rel="noopener noreferrer">© OpenMapTiles</a> · <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a> · <a href="https://project-osrm.org/" target="_blank" rel="noopener noreferrer">OSRM 경로 추정</a></div><div class="hover-tip" id="hoverTip"></div><div class="map-error" id="mapError" role="alert"></div>
@@ -150,8 +225,8 @@
   </section>
   <aside class="right">
    <div class="panel"><div class="panel-head"><h2 class="panel-title">선택 항목 상세</h2><div class="sub">지도·왼쪽 목록과 연동</div></div><div class="content" id="detailPanel"></div></div>
-   <div class="panel"><div class="content"><div class="section-head">모의 운행 조건 <span class="tag" style="font-size:9px">합성 DEMO만 계산</span></div><p class="smalltext" style="margin:6px 0">파업 노선·정상 교통수단·셔틀 정차 순서와 차량 수를 바꾸면 가상 OD 정원 배분을 다시 계산합니다.</p><div id="scenarioControls" class="scenario-list"></div><div class="scenario-summary"><span>가상 수요 충족률</span><strong id="coveragePct">미계산</strong></div><div class="coverage-track"><div id="coverageBar"></div></div><p class="smalltext">정류장·수요 원 표시 체크는 계산에 영향이 없습니다. 교통수단·셔틀안 체크는 합성 운행 조건과 연동됩니다.</p></div></div>
-   <div class="panel" id="layerPanel"><div class="content"><div class="section-head">지도 표시 옵션 <button class="tiny-link" id="allLayers">모두 표시</button></div><p class="smalltext" style="margin:4px 0">시뮬레이션 결과에서는 끈 교통수단 조합의 정류장별 결과 파일이 있으면 수요 원을 바꿉니다. 파일이 없으면 원을 비웁니다. 상단 집계는 기본 조건입니다.</p><div id="layerList" style="margin-top:5px"></div></div></div>
+   <div class="panel"><div class="content"><div class="section-head">셔틀안·파업 상세 <span class="tag" style="font-size:9px">합성 DEMO만 계산</span></div><p class="smalltext" style="margin:6px 0">교통수단 운행 여부는 아래 지도 옵션에서 바꿉니다. 셔틀 정차 순서와 차량 수는 여기서 편집합니다.</p><div id="scenarioControls" class="scenario-list"></div><div class="scenario-summary"><span>가상 수요 충족률</span><strong id="coveragePct">미계산</strong></div><div class="coverage-track"><div id="coverageBar"></div></div></div></div>
+   <div class="panel" id="layerPanel"><div class="content"><div class="section-head">지도 표시 및 운행 조건 <button class="tiny-link" id="allLayers">모두 표시</button></div><p class="smalltext" style="margin:4px 0">시내·마을·경기버스 체크만 버스 수요 계산에 반영됩니다. 지하철·정류장·역·수요원 체크는 표시만 바꿉니다. 합성 DEMO의 셔틀 체크는 가상 평가에 반영됩니다.</p><div id="layerList" style="margin-top:5px"></div></div></div>
    <div class="panel"><div class="content"><div class="section-head">가용 차량 현황 <span class="tag" style="font-size:9px">가상 값</span></div><div class="fleet-data"><div><small>가용</small><strong>—</strong></div><div><small>배정</small><strong>—</strong></div><div><small>미배정</small><strong>—</strong></div></div><div class="fleet-notice">자료를 불러오는 중…</div></div></div>
    <div class="panel"><div class="content"><div class="section-head">대체 셔틀 겹침 표시</div><div style="font-size:10px;color:#77839a;margin-top:5px">합성 지도 선분의 시각 효과</div><div class="meter"><span id="overlapFill" style="width:0%"></span></div><div class="overlap"><span id="overlapRoutes">겹친 셔틀 선 숨김</span><strong id="overlapLabel">지도 효과</strong></div><div class="overlap-list" id="overlapList"></div><p class="smalltext">같은 좌표의 셔틀 선을 투명하게 보여 주며 실제 중복률은 계산하지 않습니다.</p><button class="detail-btn" id="selectShuttle">대체 셔틀 노선 보기 ↗</button></div></div>
   </aside>

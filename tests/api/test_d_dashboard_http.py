@@ -70,6 +70,18 @@ class DashboardHttpTests(unittest.TestCase):
         self.assertEqual(sources["demo"]["status"], "ready")
         self.assertEqual(sources["B"]["status"], "unavailable")
 
+    def test_selected_route_geometry_returns_full_path(self) -> None:
+        selected = self.get_json(
+            "/api/d/route-geometry?mode=demo&district=all&route_id=demo-city-421"
+        )
+        self.assertEqual(selected["route_id"], "demo-city-421")
+        self.assertEqual(selected["geometry"]["type"], "LineString")
+        self.assertGreaterEqual(len(selected["geometry"]["coordinates"]), 2)
+        self.assertEqual(
+            [stop["order"] for stop in selected["ordered_stops"]],
+            list(range(1, len(selected["ordered_stops"]) + 1)),
+        )
+
     def test_transport_demand_without_condition_file_is_explicitly_unavailable(self) -> None:
         result = self.get_json(
             "/api/d/simulation/transport-demand?region=guro&fleet=11&plan=ours"
@@ -177,7 +189,13 @@ class DashboardHttpTests(unittest.TestCase):
         self.assertEqual(payload["code"], "DATA_INCOMPLETE")
 
     def test_map_assets_and_district_api_are_served(self) -> None:
+        for path in ("/", "/simulation"):
+            with self.subTest(path=path), urlopen(self.base + path, timeout=3) as response:
+                page = response.read().decode("utf-8")
+                self.assertIn('class="app lab-active"', page)
+                self.assertIn('.lab-active .main-grid>.side,.lab-active .main-grid>.right{display:none!important}', page)
         expected = {
+            "/demand-circles.js": "text/javascript",
             "/vendor/maplibre-gl.mjs": "text/javascript",
             "/vendor/maplibre-gl-worker.mjs": "text/javascript",
             "/vendor/maplibre-gl.css": "text/css",
@@ -191,12 +209,16 @@ class DashboardHttpTests(unittest.TestCase):
                 self.assertGreater(int(response.headers["Content-Length"]), 100)
 
         districts = self.get_json("/api/d/districts")
-        self.assertEqual([item["id"] for item in districts["districts"]],
-                         ["guro", "dongjak", "gangseo", "gangdong"])
+        self.assertEqual(len(districts["districts"]), 25)
+        self.assertTrue({"guro", "dongjak", "gangseo", "gangdong"}.issubset(
+            {item["id"] for item in districts["districts"]}))
         self.assertIn("OpenStreetMap", districts["source"])
         with urlopen(self.base + "/data/districts_all.geojson", timeout=3) as response:
             boundary_geojson = json.load(response)
         self.assertEqual(len(boundary_geojson["features"]), 25)
+        compact = self.get_json("/api/d/network?mode=demo&district=all&compact=1")
+        self.assertIsNone(compact["route_stops"])
+        self.assertTrue(compact["map"]["features"])
 
     def test_simulation_report_api_and_missing_artifacts(self) -> None:
         options = self.get_json("/api/d/simulation/options")

@@ -26,7 +26,11 @@ from .d_geometry import bus_geometry_view, fetch_rail_gis, load_rail_gis, rail_g
 from .d_scenario import evaluate_demo
 from .d_simulation import SelectionStore, SimulationStore
 from .d_transit_data import TransitData
+from .d_reference import add_reference_metro_stations, load_reference
 from .d_transport_demand import TransportDemandStore
+from .d_strike_registry import strike_registry_view
+from .d_gbis import add_gbis_geometry
+from .d_stop_order import longest_trip_stop_ids
 
 ROOT = Path(__file__).resolve().parents[3]
 DEMO = ROOT / "tests" / "fixtures" / "d_dashboard" / "demo.json"
@@ -43,6 +47,7 @@ class Store:
         rail_gis_live: bool = False,
         bus_geometry_file: Path | None = None,
         transport_demand_file: Path | None = None,
+        gyeonggi_geometry_file: Path | None = None,
     ) -> None:
         self.lock = Lock()
         self.demo = load_demo(DEMO)
@@ -51,6 +56,8 @@ class Store:
         self.rail_gis_file = rail_gis_file
         self.rail_gis_live = rail_gis_live
         self.bus_geometry_file = bus_geometry_file
+        self.gyeonggi_geometry_file = gyeonggi_geometry_file
+        self.gyeonggi_geometry_error: str | None = None
         self.rail_gis_error: str | None = None
         self.bus_geometry_error: str | None = None
         self.real: MapSnapshot | None = None
@@ -60,10 +67,26 @@ class Store:
         self.transport_demand = TransportDemandStore(transport_demand_file)
         if a_gtfs:
             self.refresh()
+        elif transit_data and transit_data.is_dir():
+            self.refresh()
 
     def refresh(self) -> dict:
         if self.a_gtfs is None:
-            raise DataError("DATA_INCOMPLETE", "A GTFS 경로가 설정되지 않았습니다.")
+            if self.transit.root and self.transit.root.is_dir():
+                candidate = load_reference(self.transit.root)
+                if self.bus_geometry_file:
+                    try:
+                        bus_data = json.loads(self.bus_geometry_file.read_text(encoding="utf-8"))
+                        candidate = bus_geometry_view(candidate, bus_data)
+                        self.bus_geometry_error = None
+                    except (OSError, ValueError, DataError) as error:
+                        self.bus_geometry_error = str(error)
+                with self.lock:
+                    self.real = candidate
+                    self.network_cache.clear()
+                return {"snapshot_id": candidate.snapshot_id, "source": candidate.source,
+                        "route_count": len(candidate.routes), "stop_count": len(candidate.stops)}
+            raise DataError("DATA_INCOMPLETE", "서울 참조 자료 또는 A GTFS 경로가 설정되지 않았습니다.")
         try:
             candidate = load_a_gtfs(self.a_gtfs, self.service_date)
             if self.rail_gis_file or self.rail_gis_live:
@@ -80,6 +103,13 @@ class Store:
                     self.bus_geometry_error = None
                 except (OSError, ValueError, DataError) as error:
                     self.bus_geometry_error = str(error)
+            candidate = add_reference_metro_stations(candidate, self.transit.root)
+            if self.gyeonggi_geometry_file:
+                try:
+                    candidate = add_gbis_geometry(candidate, self.gyeonggi_geometry_file)
+                    self.gyeonggi_geometry_error = None
+                except (OSError, ValueError, DataError) as error:
+                    self.gyeonggi_geometry_error = str(error)
         except DataError as error:
             self.last_error = {
                 "code": error.code,
@@ -116,25 +146,45 @@ class Store:
         )
 
     def sources(self) -> dict:
+        candidate_path = (self.transit.root / "derived" / "gyeonggi_2xx" /
+                          "gyeonggi_candidates_manifest.json") if self.transit.root and self.transit.root.is_dir() else None
+        try:
+            candidate_summary = json.loads(candidate_path.read_text(encoding="utf-8")) if candidate_path and candidate_path.is_file() else None
+        except (OSError, ValueError):
+            candidate_summary = None
         return {
             "demo": {"status": "ready", "snapshot_id": self.demo.snapshot_id},
             "A": {
-                "status": "ready" if self.real else "unavailable",
-                "snapshot_id": self.real.snapshot_id if self.real else None,
+                "status": "ready" if self.real and self.real.source.startswith("a_gtfs") else "unavailable",
+                "snapshot_id": self.real.snapshot_id if self.real and self.real.source.startswith("a_gtfs") else None,
                 "last_error": self.last_error,
             },
+            "reference": {"status": "ready" if self.real and self.real.source == "reference" else "unavailable",
+                          "snapshot_id": self.real.snapshot_id if self.real and self.real.source == "reference" else None},
+            "gyeonggi_candidates": {"status": "inventory_only" if candidate_summary else "unavailable",
+                                    "route_count": candidate_summary.get("route_count", 0) if candidate_summary else 0,
+                                    "official_geometry_count": 0,
+                                    "classification": "TPSS 2xx candidates; jurisdiction unverified"},
             "rail_gis": {
                 "status": "ready" if self.real and any(route.get("geometry_status") == "rail_gis_verified_corridor" for route in self.real.routes) else "unavailable",
                 "matched_routes": sum(route.get("geometry_status") == "rail_gis_verified_corridor" for route in self.real.routes) if self.real else 0,
                 "last_error": self.rail_gis_error,
             },
             "bus_geometry": {
-                "status": "ready" if self.real and any(route.get("geometry_status") in {"official", "osm_route", "osrm_estimate"} for route in self.real.routes) else "unavailable",
-                "matched_routes": sum(route.get("geometry_status") in {"official", "osm_route", "osrm_estimate"} for route in self.real.routes) if self.real else 0,
-                "official_routes": sum(route.get("geometry_status") == "official" for route in self.real.routes) if self.real else 0,
-                "osm_routes": sum(route.get("geometry_status") == "osm_route" for route in self.real.routes) if self.real else 0,
-                "osrm_estimates": sum(route.get("geometry_status") == "osrm_estimate" for route in self.real.routes) if self.real else 0,
+                "status": "ready" if self.real and any(route.get("kind") != "gyeonggi" and route.get("geometry_status") in {"official", "osm_route", "osrm_estimate", "roadnet_estimate", "roadnet_partial_estimate", "roadnet_pattern_estimate"} for route in self.real.routes) else "unavailable",
+                "matched_routes": sum(route.get("kind") != "gyeonggi" and route.get("geometry_status") in {"official", "osm_route", "osrm_estimate", "roadnet_estimate", "roadnet_partial_estimate", "roadnet_pattern_estimate"} for route in self.real.routes) if self.real else 0,
+                "official_routes": sum(route.get("kind") != "gyeonggi" and route.get("geometry_status") == "official" for route in self.real.routes) if self.real else 0,
+                "osm_routes": sum(route.get("kind") != "gyeonggi" and route.get("geometry_status") == "osm_route" for route in self.real.routes) if self.real else 0,
+                "osrm_estimates": sum(route.get("kind") != "gyeonggi" and route.get("geometry_status") == "osrm_estimate" for route in self.real.routes) if self.real else 0,
+                "roadnet_estimates": sum(route.get("kind") != "gyeonggi" and route.get("geometry_status") == "roadnet_estimate" for route in self.real.routes) if self.real else 0,
+                "roadnet_partial_estimates": sum(route.get("kind") != "gyeonggi" and route.get("geometry_status") == "roadnet_partial_estimate" for route in self.real.routes) if self.real else 0,
+                "roadnet_pattern_estimates": sum(route.get("kind") != "gyeonggi" and route.get("geometry_status") == "roadnet_pattern_estimate" for route in self.real.routes) if self.real else 0,
                 "last_error": self.bus_geometry_error,
+            },
+            "gyeonggi_geometry": {
+                "status": "ready" if self.real and any(route.get("kind") == "gyeonggi" for route in self.real.routes) else "unavailable",
+                "matched_routes": sum(route.get("kind") == "gyeonggi" for route in self.real.routes) if self.real else 0,
+                "last_error": self.gyeonggi_geometry_error,
             },
             "B": {
                 "status": "unavailable",
@@ -146,15 +196,15 @@ class Store:
                                  "scenario_count": len(self.transport_demand.scenarios)},
         }
 
-    def network(self, snapshot: MapSnapshot, district: str, extent: str) -> dict:
+    def network(self, snapshot: MapSnapshot, district: str, extent: str, compact: bool = False) -> dict:
         if snapshot.source == "synthetic" and district != "all":
             raise DataError("OUT_OF_SCOPE", "자치구 필터에는 A GTFS가 필요합니다.")
-        key = (snapshot.snapshot_id, district, extent)
+        key = (snapshot.snapshot_id, district, extent, compact)
         with self.lock:
             cached = self.network_cache.get(key)
         if cached is not None:
             return cached
-        view = network_view(snapshot, district, extent)
+        view = network_view(snapshot, district, extent, include_route_stops=not compact)
         with self.lock:
             self.network_cache[key] = view
         return view
@@ -247,6 +297,10 @@ def make_handler(store: Store, simulation: SimulationStore | None = None, lab=No
                 )
             if parts.path == "/app.js":
                 return self._asset(WEB / "app.js", "text/javascript; charset=utf-8")
+            if parts.path == "/demand-circles.js":
+                return self._asset(WEB / "demand-circles.js", "text/javascript; charset=utf-8")
+            if parts.path == "/overlap-layout.js":
+                return self._asset(WEB / "overlap-layout.js", "text/javascript; charset=utf-8")
             vendor_assets = {
                 "/vendor/maplibre-gl.mjs": "text/javascript; charset=utf-8",
                 "/vendor/maplibre-gl-worker.mjs": "text/javascript; charset=utf-8",
@@ -272,6 +326,39 @@ def make_handler(store: Store, simulation: SimulationStore | None = None, lab=No
             query = parse_qs(parts.query)
             mode = query.get("mode", ["demo"])[0]
             try:
+                if parts.path == "/api/d/strike-registry":
+                    snapshot = store.get("real")
+                    return self._json(strike_registry_view(
+                        store.transit.root, snapshot, query.get("district", ["all"])[0]
+                    ))
+                if parts.path == "/api/d/route-geometry":
+                    snapshot = store.get(mode)
+                    route_id = query.get("route_id", [""])[0]
+                    district = query.get("district", ["all"])[0]
+                    if not route_id:
+                        raise DataError("INPUT_INVALID", "route_id is required")
+                    scoped_ids = {route["route_id"] for route in store.network(snapshot, district, "inside", compact=True)["routes"]}
+                    route = next((item for item in snapshot.routes if item["route_id"] == route_id and route_id in scoped_ids), None)
+                    if route is None:
+                        raise DataError("INPUT_INVALID", "Route is not available in the selected district")
+                    coordinates = route.get("coordinates")
+                    geometry = ({"type": route.get("geometry_type") or "LineString", "coordinates": coordinates}
+                                if coordinates else None)
+                    stops_by_id = {stop["stop_id"]: stop for stop in snapshot.stops}
+                    ordered_ids = (longest_trip_stop_ids(store.a_gtfs, store.service_date, route_id)
+                                   if mode == "real" and store.a_gtfs and not route_id.startswith("gbis:") else ())
+                    if not ordered_ids:
+                        ordered_ids = tuple(route.get("all_stop_ids") or []) if store.a_gtfs is None else tuple(route.get("representative_stop_ids") or route.get("stop_ids") or [])
+                    ordered_stops = [
+                        {"stop_id": stop_id, "name": stops_by_id[stop_id]["name"],
+                         "coordinates": stops_by_id[stop_id]["coordinates"], "order": order}
+                        for order, stop_id in enumerate(ordered_ids, 1)
+                        if stop_id in stops_by_id
+                    ]
+                    return self._json({"snapshot_id": snapshot.snapshot_id, "route_id": route_id,
+                                       "geometry": geometry, "geometry_status": route.get("geometry_status"),
+                                        "pattern_indices": route.get("pattern_indices"),
+                                        "kind": route["kind"], "ordered_stops": ordered_stops})
                 if parts.path == "/api/d/simulation/options":
                     return self._json(simulation.options())
                 if parts.path == "/api/d/simulation/runs":
@@ -335,10 +422,23 @@ def make_handler(store: Store, simulation: SimulationStore | None = None, lab=No
                             query.get("hour", ["07"])[0],
                         )
                     )
+                if parts.path == "/api/d/transit/real-demand":
+                    snapshot = store.get("real")
+                    route_ids = tuple(filter(None, query.get("strike_route_ids", [""])[0].split(",")))
+                    if len(route_ids) > 250:
+                        raise DataError("INPUT_INVALID", "파업 노선을 250개 이하로 선택하세요.")
+                    return self._json(store.transit.real_demand(
+                        snapshot,
+                        query.get("district", ["all"])[0],
+                        query.get("date", ["2026-10-26"])[0],
+                        query.get("hour", ["07"])[0],
+                        route_ids,
+                        tuple(filter(None, query.get("disabled_modes", [""])[0].split(","))),
+                    ))
                 snapshot = store.get(mode)
                 district = query.get("district", ["all"])[0]
                 extent = query.get("extent", ["inside"])[0]
-                view = store.network(snapshot, district, extent)
+                view = store.network(snapshot, district, extent, compact=query.get("compact", ["0"])[0] == "1")
                 if parts.path == "/api/d/network":
                     return self._json({"snapshot_id": snapshot.snapshot_id, **view})
                 if parts.path == "/api/d/dashboard":
@@ -472,9 +572,11 @@ def main() -> None:
         "--service-date", default="2026-11-02", help="A GTFS 서비스일 YYYY-MM-DD"
     )
     parser.add_argument("--port", type=int, default=8766)
+    parser.add_argument("--gyeonggi-geometry-file", type=Path,
+                        help="Validated official GBIS GeoJSON outside the repository")
     parser.add_argument("--rail-gis-file", type=Path, help="외부 로컬 Esri 철도 선형 GeoJSON")
     parser.add_argument("--rail-gis-live", action="store_true", help="시작할 때 공식 철도 GIS API를 조회")
-    parser.add_argument("--bus-geometry-file", type=Path, help="A GTFS ID 검증이 포함된 외부 버스 선형 GeoJSON")
+    parser.add_argument("--bus-geometry-file", type=Path, help="현재 A GTFS 또는 서울 참조 노선 ID 검증이 포함된 외부 버스 선형 GeoJSON")
     parser.add_argument(
         "--transit-data", type=Path, help="seoul_transit_data 폴더 또는 ZIP"
     )
@@ -493,7 +595,8 @@ def main() -> None:
     parser.add_argument("--lab-all", type=Path, help="구별 실험실 폴더들의 부모(<slug>/layers/meta.json, build_lab_data --sweep 출력)")
     args = parser.parse_args()
     store = Store(args.a_gtfs, args.service_date, args.transit_data, args.rail_gis_file,
-                  args.rail_gis_live, args.bus_geometry_file, args.transport_demand)
+                  args.rail_gis_live, args.bus_geometry_file, args.transport_demand,
+                  args.gyeonggi_geometry_file)
     lab = None
     if args.lab_all:
         from .routegen_lab import LabSet
