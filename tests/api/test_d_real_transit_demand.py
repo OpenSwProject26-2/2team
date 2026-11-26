@@ -79,5 +79,36 @@ class RealTransitDemandTests(unittest.TestCase):
             transit.real_demand(snapshot, "all", "2026-10-26", "07", ("not-a-route",))
 
 
+    def test_mean_is_weekday_average_of_experiment_week(self):
+        """date=mean: 실험 주간 월~금 관측일만 평균(테스트 주간 11/02는 빼고, 없는 날은 건너뜀)."""
+        class DayTransit(TransitData):
+            def __init__(self):
+                self.root = Path("fixture")
+                self.manifest = {"days": {"20261026": {}, "20261027": {}, "20261102": {}}}
+                self._observed_cache, self._real_base_cache = {}, {}
+                self._reference_cache = {"stops": {"B1": {"lon": "126.9", "lat": "37.55", "BSST_NM": "Bus stop"}},
+                                         "routes": {"R1": {}}, "gu": {"guro": {}}}
+
+            def _exists(self, name):
+                return True
+
+            def _csv(self, name):
+                if name.endswith("subway_stations.csv"):
+                    return iter([])
+                if name.endswith("stop_route_hourly.csv"):
+                    board = {"20261026": "10", "20261027": "20", "20261102": "999"}[name.split("/")[2]]
+                    return iter([{"BSST_ID": "B1", "ROUTE_ID": "R1", "H": "07", "BOARD": board, "ALIGHT": "0"}])
+                return iter([])
+
+        snapshot = MapSnapshot(
+            snapshot_id="a", source="a_gtfs_approximate_schedule", service_date="2026-11-02", scenario_id=None,
+            plan_id=None, revision=None, routes=({"route_id": "R1", "kind": "city"},), stops=(), demand=(),
+            fleet=None, warnings=())
+        mean = DayTransit().real_demand(snapshot, "all", "mean", "07", ("R1",))
+        self.assertEqual(mean["mean_days"], ["20261026", "20261027"])
+        self.assertEqual(mean["totals"]["bus_board"], 15)
+        self.assertEqual(mean["totals"]["affected_board"], 15)
+
+
 if __name__ == "__main__":
     unittest.main()
