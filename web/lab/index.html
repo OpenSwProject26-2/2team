@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>노선 실험실 · 충족률·형평성 곡선</title>
+<link rel="stylesheet" href="/vendor/maplibre-gl.css">
+<link rel="stylesheet" href="/lab/pareto_panel.css">
+<style>
+  html,body{margin:0;height:100%;font:13px/1.45 system-ui,-apple-system,"Segoe UI","Noto Sans KR",sans-serif;color:#1f2937}
+  #map{position:fixed;inset:0;background:#eef1f4}
+  .card{position:fixed;top:12px;right:12px;z-index:3;box-sizing:border-box;width:min(400px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;padding:10px 12px;border:1px solid #d9dde4;border-radius:10px;background:#fffffff2;box-shadow:0 4px 16px #0f172a24}
+  .card h2{margin:0 0 2px;font-size:14px}.card .sub{color:#5b6474;font-size:11.5px}
+  .card dl{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;margin:8px 0}.card dt{color:#5b6474}.card dd{margin:0;font-weight:600}
+  .card table{width:100%;border-collapse:collapse;font-size:11.5px}.card th,.card td{text-align:left;padding:3px 4px;border-top:1px solid #eceef2;vertical-align:top}
+  .card th{color:#5b6474;font-weight:600;white-space:nowrap}.card td.n{white-space:nowrap;text-align:right}.card i.sw{display:inline-block;width:10px;height:3px;border-radius:2px;vertical-align:middle;margin-right:4px}
+  .card button{font:inherit;font-size:12px;border:1px solid #d9dde4;background:#fff;border-radius:7px;padding:4px 9px;cursor:pointer}
+  .card .err{color:#b42318}
+  /* 좁은 화면: 정보 카드는 위(확대 버튼 오른쪽), 패널은 왼쪽 아래 → 서로 겹치지 않게 */
+  @media (max-width:767px){.card{top:12px;left:52px;right:12px;width:auto;max-height:32vh}}
+  .maplibregl-ctrl-bottom-right .maplibregl-ctrl-scale{margin-right:12px}
+</style>
+</head>
+<body>
+<div id="map" role="region" aria-label="노선 지도"></div>
+<aside class="card" id="info" aria-live="polite"><h2>안을 고르세요</h2><div class="sub">왼쪽 아래 곡선에서 점을 누르거나 형평성 기준을 움직입니다.</div></aside>
+<script type="module">
+import {mountParetoPanel, BASE_NAME} from '/lab/pareto_panel.js';
+import {showPlan, routeColor} from '/lab/plan_layer.js';
+
+const q = new URLSearchParams(location.search);
+const paretoUrl = q.get('pareto') || '/run/pareto.json';
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const pct = (v) => (Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : '—');
+const mins = (v) => (v == null || !Number.isFinite(Number(v)) ? '—' : `${Number(v).toFixed(1)}분`);
+const hashId = () => decodeURIComponent((/(?:^#|&)plan=([^&]+)/.exec(location.hash) || [])[1] || '') || null;
+
+let maplibregl;
+try { maplibregl = await import('/vendor/maplibre-gl.mjs'); } catch (e) { document.getElementById('info').innerHTML = `<p class="err">지도 라이브러리를 읽지 못했습니다: ${esc(e.message)}</p>`; throw e; }
+const map = new maplibregl.Map({container: 'map', style: '/vendor/openfreemap-liberty.json', center: [126.98, 37.55], zoom: 11, attributionControl: {compact: true}});
+map.addControl(new maplibregl.NavigationControl({showCompass: false}), 'top-left');
+// 축척·저작권은 패널(왼쪽 아래)과 겹치지 않게: 넓은 화면은 오른쪽 아래, 좁은 화면은 축척을 확대 버튼 아래로 옮기고 저작권은 접은 채로 시작
+const narrow = innerWidth < 768;
+map.addControl(new maplibregl.ScaleControl({maxWidth: narrow ? 40 : 90}), narrow ? 'top-left' : 'bottom-right');
+if (narrow) {   // MapLibre가 처음에 저작권 글을 펼쳐 두므로, 사용자가 ⓘ를 누르기 전까지는 접어 둔다
+  const a = document.querySelector('.maplibregl-ctrl-attrib');
+  if (a) {
+    let user = false;
+    a.addEventListener('click', () => { user = true; }, {capture: true});
+    const fold = () => { if (!user && a.classList.contains('maplibregl-compact-show')) a.classList.remove('maplibregl-compact-show'); };
+    new MutationObserver(fold).observe(a, {attributes: true, attributeFilter: ['class']}); fold();
+  }
+}
+
+const cache = new Map();   // export_url → export JSON (같은 안 다시 누르면 다시 읽지 않음)
+let fitted = false, current = null, drawn = null, req = 0;
+const info = document.getElementById('info');
+// 노선에 맞출 때 패널·정보 카드에 가리지 않게(넓은 화면만, 좁으면 기본 여백)
+function fitPadding() {
+  const W = innerWidth, H = innerHeight, pad = {top: 40, bottom: 40, left: 40, right: 40};
+  if (W < 768) return pad;
+  const pp = document.querySelector('.pp-root')?.getBoundingClientRect(), card = info.getBoundingClientRect();
+  if (pp && pp.width) pad.left = Math.min(W * 0.35, pp.right + 20);
+  if (card.width) pad.right = Math.min(W * 0.4, W - card.left + 20);
+  return pad;
+}
+
+async function onSelect(plan) {
+  if (hashId() !== plan.id) location.hash = `plan=${encodeURIComponent(plan.id)}`;
+  const my = ++req;
+  if (!plan.export_url) { panel.error('이 안은 지도용 운행안이 없습니다'); return; }
+  let ex = cache.get(plan.export_url);
+  if (!ex) {
+    try { const r = await fetch(plan.export_url); if (!r.ok) throw new Error(r.status); ex = await r.json(); cache.set(plan.export_url, ex); }
+    catch (e) { if (my === req) panel.error(`운행안을 읽지 못했습니다(${e.message}) · 지도는 이전 안 그대로`); return; }
+  }
+  if (my !== req) return;
+  current = {plan, ex};
+  drawn = showPlan(map, ex, {fit: !fitted, padding: fitPadding()});   // 화면 범위는 처음 한 번만 맞춘다
+  fitted = true;
+  renderInfo(plan, ex);
+}
+
+function renderInfo(p, ex) {
+  const rows = (ex.routes || []).map((r, i) => {
+    const st = [...new Set((r.stops || []).filter((s) => s.kind === 'station').map((s) => s.name))];
+    return `<tr><td><i class="sw" style="background:${routeColor(r, i)}"></i>${esc(r.name || r.route_id)}</td><td class="n">${r.vehicles ?? '—'}대</td><td class="n">${mins(r.headway_min)}</td><td class="n">${mins(r.cycle_min)}</td><td>${esc(st.join('·') || '—')}</td></tr>`;
+  }).join('');
+  info.innerHTML = `<h2>${esc(p.algo_name || p.id)}</h2>
+    <div class="sub">${p.is_muni ? '지자체 셔틀안(비교용)' : `${BASE_NAME[p.base] && BASE_NAME[p.base] !== p.algo_name ? esc(BASE_NAME[p.base]) + ' · ' : ''}형평 기준 ${esc((p.floors || []).join(', '))}${p.rep ? ` · ${esc(p.rep)}` : ''}`}</div>
+    <dl><dt>충족률</dt><dd>${pct(p.served_rate)}</dd><dt>형평성(역 800m 밖)</dt><dd>${pct(p.equity_far)}</dd><dt>소외율</dt><dd>${pct(p.isolation)}</dd>
+      <dt>이동시간(원래 버스 대비)</dt><dd>${Number.isFinite(p.time_ratio_rode) ? p.time_ratio_rode.toFixed(2) + '배' : '—'}</dd><dt>검증(M07)</dt><dd>${esc(p.m07 || '—')}</dd></dl>
+    <table><thead><tr><th>노선</th><th>대수</th><th>배차</th><th>순환</th><th>거치는 역</th></tr></thead><tbody>${rows}</tbody></table>
+    <p><button type="button" id="fit">노선에 맞추기</button></p>`;
+  info.querySelector('#fit').onclick = () => { if (drawn?.bounds) map.fitBounds(drawn.bounds, {padding: fitPadding(), duration: 300}); };
+}
+
+const popup = new maplibregl.Popup({closeButton: false, closeOnClick: false});
+for (const id of ['plan-lines', 'plan-stops', 'plan-stations']) {
+  map.on('mousemove', id, (e) => { const p = e.features[0].properties; popup.setLngLat(e.lngLat).setHTML(p.stop_name ? `${esc(p.stop_name)}${p.kind === 'station' ? ' (역)' : ''}<br><span style="color:#5b6474">${esc(p.route_id)} · ${p.seq}번째</span>` : `<b style="color:${p.color}">${esc(p.name)}</b><br>${p.vehicles}대 · 배차 ${mins(p.headway_min)}`).addTo(map); });
+  map.on('mouseleave', id, () => popup.remove());
+}
+
+// 지자체안 운행안: pareto.json muni.export_path가 없으면 같은 폴더의 export/muni.json(없으면 고를 때 오류 한 줄)
+const panel = mountParetoPanel(map, {paretoUrl, onSelect, initialPlanId: hashId(), muniExportPath: q.get('muni') || 'export/muni.json'});
+window.addEventListener('hashchange', () => { const id = hashId(); if (id && id !== panel.getSelected()?.id) panel.select(id); });
+window.__lab = {map, panel, get current() { return current; }};
+</script>
+</body>
+</html>
