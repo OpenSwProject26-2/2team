@@ -204,6 +204,8 @@ async function loadStatus(){
     if(!data.graph_ready||!data.otp_running){$("status").textContent+=" · 일반 모드 OTP를 확인하세요."; $("status").classList.add("error")}
     if(!data.places_ready)$("status").textContent+=" · 건물/시설 검색 색인 없음";
     updateModeUI();
+    renderConfirmBanner();
+    loadPresets();
   }catch(error){$("status").textContent=error.message;$("status").classList.add("error")}
 }
 function renderComparison(){
@@ -350,7 +352,7 @@ function renderResults(){
       row.append(text("span",info.icon,"step-icon"));
       const copy=text("div","","step-copy");
       copy.append(text("strong",legLabel(leg)+(leg.route_name?" "+leg.route_name:"")+" \u00b7 "+mins(leg.duration_seconds)),
-                  text("small",fromName+" \u2192 "+toName));
+                  text("small",fromName+" \u2192 "+toName+(leg.route_long_name?" \u00b7 "+leg.route_long_name:"")));
       row.append(copy);
       steps.append(row);
     }
@@ -417,7 +419,7 @@ function drawRoute(){
   for(const [index,route] of state.routes.entries()){
     for(const leg of route.legs){
       if(!leg.geometry||leg.geometry.length<2)continue;
-      features.push({type:"Feature",properties:{color:legColor(leg),selected:index===state.selected,schematic:leg.geometry_status==="stop_schematic",walk:leg.kind==="walk"},geometry:{type:"LineString",coordinates:leg.geometry}});
+      features.push({type:"Feature",properties:{color:legColor(leg),selected:index===state.selected,schematic:leg.geometry_status==="stop_schematic",walk:leg.kind==="walk",shuttle:leg.kind==="shuttle"},geometry:{type:"LineString",coordinates:leg.geometry}});
     }
   }
   if(features.length){
@@ -427,9 +429,9 @@ function drawRoute(){
     map.addSource(source,{type:"geojson",data:{type:"FeatureCollection",features}});
     map.addLayer({id:"route-"+next+"-alternatives",type:"line",source,filter:["==",["get","selected"],false],paint:{"line-color":"#52756e","line-width":2.5,"line-opacity":0,"line-opacity-transition":transition},layout:{"line-join":"round","line-cap":"round"}});
     map.addLayer({id:"route-"+next+"-casing",type:"line",source,filter:["==",["get","selected"],true],paint:{"line-color":"#fff","line-width":9,"line-opacity":0,"line-opacity-transition":transition},layout:{"line-join":"round","line-cap":"round"}});
-    map.addLayer({id:"route-"+next+"-verified",type:"line",source,filter:["all",["==",["get","selected"],true],["==",["get","schematic"],false],["==",["get","walk"],false]],paint:{"line-color":["get","color"],"line-width":5,"line-opacity":0,"line-opacity-transition":transition},layout:{"line-join":"round","line-cap":"round"}});
+    map.addLayer({id:"route-"+next+"-verified",type:"line",source,filter:["all",["==",["get","selected"],true],["==",["get","schematic"],false],["==",["get","walk"],false]],paint:{"line-color":["get","color"],"line-width":["case",["get","shuttle"],8,5],"line-opacity":0,"line-opacity-transition":transition},layout:{"line-join":"round","line-cap":"round"}});
     map.addLayer({id:"route-"+next+"-walk",type:"line",source,filter:["all",["==",["get","selected"],true],["==",["get","walk"],true],["==",["get","schematic"],false]],paint:{"line-color":["get","color"],"line-width":5,"line-opacity":0,"line-opacity-transition":transition,"line-dasharray":[1.4,1.1]},layout:{"line-join":"round","line-cap":"round"}});
-    map.addLayer({id:"route-"+next+"-schematic",type:"line",source,filter:["all",["==",["get","selected"],true],["==",["get","schematic"],true]],paint:{"line-color":["get","color"],"line-width":5,"line-opacity":0,"line-opacity-transition":transition,"line-dasharray":[1.5,1.2]},layout:{"line-join":"round","line-cap":"round"}});
+    map.addLayer({id:"route-"+next+"-schematic",type:"line",source,filter:["all",["==",["get","selected"],true],["==",["get","schematic"],true]],paint:{"line-color":["get","color"],"line-width":["case",["get","shuttle"],8,5],"line-opacity":0,"line-opacity-transition":transition,"line-dasharray":[1.5,1.2]},layout:{"line-join":"round","line-cap":"round"}});
     map.addLayer({id:"route-"+next+"-arrows",type:"symbol",source,filter:["==",["get","selected"],true],
       layout:{"symbol-placement":"line","symbol-spacing":380,"text-field":"\u2192","text-size":14,
         "text-rotation-alignment":"map","text-keep-upright":false,"text-allow-overlap":true},
@@ -499,5 +501,123 @@ async function searchRoutes(){
     $("message").textContent=error.message;
   }
 }
-$("search-form").addEventListener("submit",event=>{event.preventDefault();searchRoutes()});
+$("search-form").addEventListener("submit",event=>{event.preventDefault();state.three=null;state.threeKey=null;renderThree();searchRoutes()});
+// ---- 운영자 확정 반영 표시 · 세 결과 비교 · 시연 출발지 (feat/e2e-citizen) ----
+const threeKeys=["normal","strike_no_shuttle","strike_shuttle"];
+const threeLabels={normal:"평소",strike_no_shuttle:"파업 · 셔틀 없음",strike_shuttle:"파업 + 셔틀"};
+state.three=null;state.threeKey=null;state.presets=[];
+function renderConfirmBanner(){
+  const box=$("confirm-banner");box.replaceChildren();
+  const confirm=state.status?.confirm,apply=state.status?.apply,source=state.status?.modes?.strike?.shuttle_source;
+  if(!confirm&&!source){box.hidden=true;return}
+  box.hidden=false;
+  if(source?.source_kind==="SYNTHETIC_DEMO"){box.append(text("strong","대체 셔틀: 데모"),text("span","스모크 데모 셔틀입니다. 실제 운행 서비스가 아닙니다.","demo"));return}
+  if(!confirm){box.append(text("strong","대체 셔틀: C팀 후보"),text("span","운영자 확정 기록 없음"));return}
+  const when=confirm.confirmed_at?new Date(confirm.confirmed_at).toLocaleString("ko-KR",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}):"-";
+  box.append(text("strong","적용된 운영자 확정 · "+(confirm.algo_name||confirm.confirm_id)));
+  box.append(text("span","확정 "+when+" · "+confirm.shuttle_version+" · 그래프 "+confirm.graph_version));
+  const m07=confirm.m07||{};
+  box.append(text("span","M07 "+(m07.pass?"통과":"미통과")+(m07.fully_verified?"":" (일부 항목 검증 안 됨 · 운행 승인 아님)"),m07.pass?"":"warn"));
+  const day=confirm.service_date;
+  if(day&&day.simulated!==day.gtfs)box.append(text("span","시뮬레이션 "+day.simulated+" 시간표를 GTFS 운행일 "+day.gtfs+"에 맞춰 표시"));
+  if(apply&&apply.state==="running")box.append(text("span","새 확정 반영 중("+apply.step+") · 끝날 때까지 지금 그래프로 안내합니다.","warn"));
+}
+async function loadPresets(){
+  try{
+    const response=await fetch("/api/citizen-routing/presets"),data=await response.json();
+    const select=$("preset");select.replaceChildren(new Option("직접 고르기",""));
+    const items=[...(data.presets||[]).map(p=>({...p,meets:true})),...(data.near_misses||[]).map(p=>({...p,meets:false}))];
+    state.presets=items;state.presetDeparture=data.departure_at;
+    items.forEach((item,index)=>{
+      const gain=item.gain_s===null?"셔틀 없이는 경로 없음":"셔틀로 "+Math.round(item.gain_s/60)+"분 단축";
+      select.append(new Option((item.meets?"":"(기준 미달) ")+item.origin.name+" → "+item.destination.name+" · "+gain,String(index)));
+    });
+    $("preset-group").hidden=!items.length;
+    $("preset-note").textContent=data.presets?.length?"역 800m 밖 · 파업+셔틀이 셔틀 없음보다 15분 이상 빠른 곳":
+      items.length?"이 확정안에는 15분 이상 빨라지는 곳이 없어 가장 가까운 후보를 참고로 보여 줍니다.":"";
+    const query=new URLSearchParams(location.search);
+    if(query.has("preset")&&items[Number(query.get("preset"))]){select.value=query.get("preset");applyPreset()}
+  }catch{$("preset-group").hidden=true}
+}
+function applyPreset(){
+  const item=state.presets[Number($("preset").value)];
+  if(!item)return;
+  setPlace("origin",{name:item.origin.name,lat:item.origin.lat,lon:item.origin.lon,address:"시연 출발지 · 정류장 "+item.origin.stop_id});
+  setPlace("destination",{name:item.destination.name,lat:item.destination.lat,lon:item.destination.lon,address:"시연 도착지"});
+  if(state.presetDeparture)$("departure").value=state.presetDeparture.slice(0,16);
+  searchThree();
+}
+$("preset").addEventListener("change",applyPreset);
+$("three-button").addEventListener("click",()=>searchThree());
+const walkMeters=route=>route.legs.filter(leg=>leg.kind==="walk").reduce((sum,leg)=>sum+leg.distance_meters,0);
+function renderThree(){
+  const box=$("three");box.replaceChildren();
+  const data=state.three;if(!data){box.hidden=true;return}
+  box.hidden=false;
+  for(const key of threeKeys){
+    const result=data.results[key],best=data.best[key];
+    const card=document.createElement("button");card.type="button";card.className="three-card";card.dataset.three=key;
+    card.setAttribute("aria-pressed",state.threeKey===key?"true":"false");
+    card.append(text("h3",threeLabels[key]));
+    if(!best){
+      card.append(text("div",result.code==="SHUTTLE_DATA_MISSING"?"셔틀 자료 없음":"경로 없음","none"));
+    }else{
+      const big=text("div",String(Math.round(best.duration_seconds/60)),"big");big.append(text("small","분"));card.append(big);
+      const dl=document.createElement("dl");
+      for(const [k,v] of [["도보",Math.round(walkMeters(best))+"m"],["환승",best.transfers+"회"],["대기",mins(best.wait_seconds)]])dl.append(text("dt",k),text("dd",v));
+      card.append(dl);
+      const legs=text("div","","legs");
+      for(const leg of best.legs.filter(leg=>leg.kind!=="walk"))legs.append(text("span",legLabel(leg)+(leg.route_name?" "+leg.route_name:""),"chip "+leg.kind));
+      if(!legs.childNodes.length)legs.append(text("span","도보만","chip"));
+      card.append(legs);
+      if(key!=="normal"&&data.delta_seconds[key]!==null){const d=data.delta_seconds[key];card.append(text("div","평소보다 "+(d>=0?"+":"")+Math.round(d/60)+"분","delta"))}
+      if(key==="strike_shuttle"&&data.shuttle_gain_seconds!==null){const g=data.shuttle_gain_seconds;card.append(text("div","셔틀 없음보다 "+(g>=0?Math.round(g/60)+"분 빠름":Math.round(-g/60)+"분 느림"),"delta"+(g>0?" good":"")))}
+    }
+    card.addEventListener("click",()=>selectThree(key));
+    box.append(card);
+  }
+  box.append(text("p","같은 출발·도착·시각으로 세 교통망을 계산했습니다. 셔틀 시간은 시뮬레이터 도로 소요시간 기준이며, 셔틀 만차·지하철 혼잡은 반영되지 않습니다.","three-note"));
+}
+function selectThree(key){
+  const data=state.three;if(!data)return;
+  state.threeKey=key;
+  state.mode=key==="normal"?"normal":"strike";
+  updateModeUI();
+  $("include-shuttle").checked=key==="strike_shuttle";
+  state.routes=[...(data.results[key].routes||[])];
+  state.comparison=key==="normal"?null:{affected_route_ids:data.affected_route_ids,normal_best:data.best.normal,strike_best:data.best[key],
+    unavailable_normal_routes:data.unavailable_normal_routes,delta_seconds:data.delta_seconds[key],shuttle_source:data.shuttle_source};
+  sortRoutes(false);
+  const bestId=data.best[key]?.id;state.selected=Math.max(0,state.routes.findIndex(route=>route.id===bestId));
+  renderResults();renderComparison();drawRoute();renderThree();
+  $("message").textContent=threeLabels[key]+" 결과를 지도에 표시했습니다."+(key==="strike_shuttle"?" 굵은 청록 선이 대체 셔틀 구간입니다.":"");
+}
+async function searchThree(){
+  if(!state.origin||!state.destination){$("message").textContent="출발지와 목적지를 먼저 지정하세요.";return}
+  const requestId=++state.requestId;
+  state.routeEndpoints={origin:{...state.origin},destination:{...state.destination}};
+  const params=new URLSearchParams({origin_lat:state.origin.lat,origin_lon:state.origin.lon,destination_lat:state.destination.lat,destination_lon:state.destination.lon,departure_at:$("departure").value+":00+09:00"});
+  $("message").textContent="세 교통망으로 계산하고 있습니다.";
+  try{
+    const response=await fetch("/api/citizen-routing/compare3?"+params),data=await response.json();
+    if(requestId!==state.requestId)return;
+    if(!response.ok)throw new Error(data.message||data.code);
+    for(const result of Object.values(data.results))for(const route of result.routes||[])for(const leg of route.legs)
+      if(leg.kind==="shuttle"&&leg.route_name)leg.route_name=leg.route_name.replace(/^셔틀\s*/,"");
+    for(const route of Object.values(data.best))for(const leg of route?.legs||[])
+      if(leg.kind==="shuttle"&&leg.route_name)leg.route_name=leg.route_name.replace(/^셔틀\s*/,"");
+    state.three=data;state.hasSearched=true;
+    selectThree(data.best.strike_shuttle?"strike_shuttle":"strike_no_shuttle");
+    document.body.dataset.threeReady="true";
+  }catch(error){
+    if(requestId!==state.requestId)return;
+    state.three=null;renderThree();$("message").textContent=error.message;
+  }
+}
+setInterval(async()=>{
+  try{const r=await fetch("/api/citizen-routing/apply/status");if(!r.ok)return;const s=await r.json();
+    const before=state.status?.confirm?.build_id;
+    if(state.status){state.status.apply={state:s.state,step:s.step};if(s.active&&s.active.build_id!==before){loadStatus();return}renderConfirmBanner()}}catch{}
+},15000);
+
 loadStatus();

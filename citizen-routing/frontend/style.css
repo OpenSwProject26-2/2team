@@ -149,3 +149,20 @@ body[data-routing-mode="strike"] .comparison{border-color:#aad8c8}
 @media(max-width:1180px){.map-strike-notice{top:108px;left:20px;width:max-content;max-width:calc(100% - 100px)}}
 @media(max-width:780px){.map-hint{top:48px;left:10px;width:calc(100% - 20px)}.map-strike-notice{top:134px;left:10px;width:max-content;max-width:calc(100% - 20px)}}
 @media(prefers-reduced-motion:reduce){.map-strike-notice{animation:none}}
+/* 운영자 확정 반영 · 세 결과 비교 (feat/e2e-citizen) */
+.confirm-banner{display:grid;gap:3px;background:#eef1fb;border:1px solid #d3d9f2;border-radius:10px;padding:10px 12px;margin:10px 0 14px;color:#2f3a7a;font-size:12px;line-height:1.45}
+.confirm-banner strong{font-size:13px}.confirm-banner .warn{color:#a6412f}.confirm-banner .demo{color:#96552c;font-weight:700}
+.preset-group select{width:100%;border:1px solid #d7dfdc;border-radius:8px;padding:11px 12px;background:#fff;font:inherit;font-size:13px}
+.secondary{width:100%;margin-top:9px;border:1px solid #b9d9cd;border-radius:9px;background:#f3faf7;color:#0f5e4c;padding:11px 14px;font:inherit;font-weight:700;cursor:pointer}
+.secondary:hover{background:#e4f4ed}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:16px}
+.three-card{border:1px solid #dae4df;border-radius:12px;background:#fff;padding:10px 9px;text-align:left;font:inherit;color:inherit;cursor:pointer;min-width:0}
+.three-card[aria-pressed=true]{border-color:#118866;box-shadow:0 0 0 2px #11886630}
+.three-card h3{margin:0 0 6px;font-size:12px;letter-spacing:-.02em}.three-card .big{font-size:24px;font-weight:800;letter-spacing:-.05em}
+.three-card .big small{font-size:12px;font-weight:600;margin-left:2px}.three-card dl{margin:6px 0 0;display:grid;grid-template-columns:auto 1fr;gap:2px 6px;font-size:11px}
+.three-card dt{color:#7a8985}.three-card dd{margin:0}.three-card .legs{display:flex;flex-wrap:wrap;gap:3px;margin-top:7px}
+.three-card .chip{font-size:10px;border-radius:999px;padding:2px 6px;background:#eef2f0;color:#33504a}
+.three-card .chip.shuttle{background:#0f9b87;color:#fff;font-weight:700}.three-card .chip.bus{background:#e3ebfd;color:#1f4fc4}
+.three-card .chip.subway{background:#efe6fb;color:#6a35b5}.three-card .delta{font-size:11px;color:#a6412f;margin-top:4px}
+.three-card .delta.good{color:#117a5f}.three-card .none{color:#a6412f;font-size:12px;margin-top:6px}
+.three-note{grid-column:1/-1;font-size:11px;color:#6b7a77;line-height:1.5}

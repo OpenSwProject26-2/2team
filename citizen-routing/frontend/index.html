@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>서울 대체 셔틀 길찾기</title>
   <link rel="stylesheet" href="/vendor/maplibre-gl.css">
-  <link rel="stylesheet" href="/style.css?v=20261123-13">
+  <link rel="stylesheet" href="/style.css?v=20261127-1">
 </head>
 <body>
   <main class="layout">
@@ -17,6 +17,12 @@
       <p class="intro">&#48260;&#49828; &#183; &#51648;&#54616;&#52384; &#183; &#45824;&#52404; &#49492;&#53952; &#50868;&#54665;&#49884;&#44036;&#51012; &#54632;&#44760; &#54869;&#51064;&#54633;&#45768;&#45796;.</p>
       <div class="mode-switch" role="group" aria-label="운행 모드"><button type="button" data-mode="normal" aria-pressed="true">일반 운행</button><button type="button" data-mode="strike" aria-pressed="false">파업 운행</button></div>
       <div id="mode-note" class="mode-note" role="status">일반 운행 교통망으로 검색합니다.</div>
+      <div id="confirm-banner" class="confirm-banner" role="status" hidden></div>
+      <div class="field-group preset-group" id="preset-group" hidden>
+        <label for="preset">시연 출발지</label>
+        <select id="preset"><option value="">직접 고르기</option></select>
+        <small id="preset-note" class="choice"></small>
+      </div>
       <form id="search-form">
         <div class="field-group">
           <label for="origin">출발지</label>
@@ -37,7 +43,9 @@
         </div>
         <label class="check"><input id="include-shuttle" type="checkbox" checked><span>대체 셔틀 포함</span></label>
         <button class="primary" type="submit">경로 찾기 <span>→</span></button>
+        <button id="three-button" class="secondary" type="button">평소 · 파업 · 파업+셔틀 나란히 보기</button>
       </form>
+      <div id="three" class="three" hidden aria-live="polite"></div>
       <div id="comparison" class="comparison" hidden></div>
       <div class="results-heading"><h2 id="results-title">일반 운행 추천 경로</h2><span id="result-count"></span></div>
       <div class="sort-dropdown" id="sort-dropdown">
@@ -68,6 +76,6 @@
       <div class="attribution">지도 © OpenStreetMap 기여자 · OpenFreeMap</div>
     </section>
   </main>
-  <script type="module" src="/app.js?v=20261123-6"></script>
+  <script type="module" src="/app.js?v=20261127-1"></script>
 </body>
 </html>
