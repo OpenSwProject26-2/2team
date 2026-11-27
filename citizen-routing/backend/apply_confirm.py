@@ -130,6 +130,17 @@ def load_confirm(confirm_root: Path, gu: str, confirm_id: str | None = None) -> 
     return {"confirm": confirm, "dir": directory, "paths": paths, "plan": plan}
 
 
+def plan_key(confirm: dict) -> str:
+    """안 식별 표시. 실제 파이프라인 안들은 plan_id@revision이 모두 같아(plan-eqmc07-f11@1)
+    plan_sha256 앞 8자를 붙여야 안끼리 구별된다."""
+    return f"{confirm.get('plan_id')}@{confirm.get('revision')}#{(confirm.get('plan_sha256') or '')[:8]}"
+
+
+def bundle_hashes(confirm: dict) -> dict[str, str]:
+    """확정 묶음 다섯 파일의 sha256(confirm.json files). 그래프 셔틀 입력과 대조한다."""
+    return {name: _file_entry(name, confirm["files"][name])[1].lower() for name in FILES}
+
+
 def check_loops(bundle: dict, max_closing_s: int = MAX_CLOSING_S) -> dict:
     """모든 셔틀 노선이 순환인지 본다. 편도(닫히지 않음·닫는 공차가 김)는 거부한다."""
     plan = bundle["plan"]
@@ -442,7 +453,7 @@ class Applier:
             entry["message"] = f"노선 {len(loops)}개 모두 순환, 해시 일치"
             self.status.update(confirm_id=confirm["confirm_id"], plan_id=confirm["plan_id"],
                                revision=confirm["revision"], plan_sha256=confirm.get("plan_sha256"),
-                               algo_name=confirm.get("algo_name"))
+                               plan_key=plan_key(confirm), algo_name=confirm.get("algo_name"))
         staging = graphs / f"_staging-{os.getpid()}-{int(time.time() * 1000)}"
         try:
             with self._step("export") as entry:
@@ -484,8 +495,8 @@ class Applier:
                                     f"{manifest['existing_stats']['routes']}개 + 셔틀 "
                                     f"{len(manifest['shuttle_route_ids'])}개")
             # 실제 안들은 plan_id@revision이 같을 수 있어(plan-eqmc07-f11@1) plan_sha256까지 묶는다.
-            plan_key = confirm["plan_sha256"][:12]
-            build_dir = graphs / f"g-{manifest['version']}-{plan_key}"
+            plan_short = confirm["plan_sha256"][:12]
+            build_dir = graphs / f"g-{manifest['version']}-{plan_short}"
             with self._step("build") as entry:
                 if graph_ready(build_dir):
                     self.status["cache_hit"] = True
@@ -507,6 +518,7 @@ class Applier:
                 info = {"build_id": build_dir.name, "version": manifest["version"],
                         "confirm_id": confirm["confirm_id"], "plan_id": confirm["plan_id"],
                         "revision": confirm["revision"], "plan_sha256": confirm.get("plan_sha256"),
+                        "plan_key": plan_key(confirm), "bundle_sha256": bundle_hashes(confirm),
                         "algo_name": confirm.get("algo_name"), "confirmed_at": confirm.get("confirmed_at"),
                         "m07": confirm.get("m07"), "service_date": self.status["service_date"],
                         "last_used_at": now()}
@@ -529,6 +541,7 @@ class Applier:
                     entry["message"] = f"프리셋 생략: {error}"
                     entry["nonfatal_error"] = True
         self.status.update(state="done", step="done", graph_version=manifest["version"],
+                           applied_confirm_id=active.get("confirm_id"),
                            build_id=build_dir.name, finished_at=now())
         self._save()
         return {"graph_version": manifest["version"], "build_id": build_dir.name, "active": active}
@@ -542,6 +555,15 @@ class Applier:
         if f"{source.get('plan_id')}@{source.get('revision')}" != expected or \
                 (source.get("confirm") or {}).get("plan_sha256") != info.get("plan_sha256"):
             raise ConfirmError("GRAPH_VERSION_MISMATCH", "그래프의 셔틀 버전이 확정 plan_id@revision과 다릅니다.")
+        # plan_id@revision은 안끼리 같을 수 있다. 그래프 셔틀 입력 해시가 이 확정 묶음 파일과 같아야 한다
+        # (bundle_sha256이 없는 예전 build-info는 위 검사만).
+        expected_files = info.get("bundle_sha256")
+        if expected_files:
+            got_files = source.get("input_sha256") or {}
+            bad = sorted(k for k, v in expected_files.items() if got_files.get(k) != v)
+            if bad:
+                raise ConfirmError("GRAPH_VERSION_MISMATCH",
+                                   f"그래프의 셔틀 입력이 확정 묶음과 다릅니다({', '.join(bad)}). 이전 그래프를 유지합니다.")
         previous = read_active(self.runtime)
         ports = list(self.config.ports)
         slot = "b" if previous and previous.get("slot") == "a" else "a"
@@ -555,7 +577,7 @@ class Applier:
                 raise ConfirmError("OTP_START_TIMEOUT", "새 파업 OTP가 제시간에 응답하지 않았습니다. 이전 그래프를 유지합니다.")
             time.sleep(2)
         active = {**{k: info.get(k) for k in ("build_id", "version", "confirm_id", "plan_id", "revision",
-                                              "plan_sha256", "algo_name", "confirmed_at", "m07",
+                                              "plan_sha256", "plan_key", "algo_name", "confirmed_at", "m07",
                                               "service_date")},
                   "dir": str(build_dir), "url": url, "port": port, "slot": slot, "handle": handle,
                   "graph_version": manifest["version"], "shuttle_version": expected,

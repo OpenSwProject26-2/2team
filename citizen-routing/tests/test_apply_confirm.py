@@ -253,6 +253,40 @@ class ApplyStateTests(unittest.TestCase):
         self.assertEqual(ac.read_active(self.env.runtime)["build_id"], first)
         self.assertEqual(ac.read_active(self.env.runtime)["confirm_id"], "c1")
 
+    def test_same_plan_id_revision_confirms_are_told_apart(self):
+        # 실제 파이프라인 안들은 plan_id@revision이 모두 같다(plan-eqmc07-f11@1).
+        # 그래프·상태·활성 표시가 confirm_id와 plan_sha256으로 안을 구별해야 한다.
+        runner = FakeRunner()
+        first = write_bundle(self.env.confirm_root, "c1")
+        ac.Applier(self.env.config(), runner).run()
+        a1 = ac.read_active(self.env.runtime)
+        second = write_bundle(self.env.confirm_root, "c2", plan_extra={"note": "다른 안"})
+        ac.Applier(self.env.config(), runner).run()
+        a2 = ac.read_active(self.env.runtime)
+        sha1 = json.loads((first / "confirm.json").read_text(encoding="utf-8"))["plan_sha256"]
+        sha2 = json.loads((second / "confirm.json").read_text(encoding="utf-8"))["plan_sha256"]
+        self.assertEqual(a1["shuttle_version"], a2["shuttle_version"])  # 둘 다 plan-test@1
+        self.assertEqual(a1["plan_key"], f"plan-test@1#{sha1[:8]}")
+        self.assertEqual(a2["plan_key"], f"plan-test@1#{sha2[:8]}")
+        self.assertNotEqual(a1["build_id"], a2["build_id"])
+        status = self.status()
+        self.assertEqual((status["confirm_id"], status["plan_key"]), ("c2", a2["plan_key"]))
+
+    def test_cached_graph_built_from_other_bundle_is_not_swapped_in(self):
+        # 같은 build 폴더라도 셔틀 입력 해시가 이 확정 묶음 파일과 다르면 교체하지 않는다.
+        write_bundle(self.env.confirm_root, "c1")
+        runner = FakeRunner()
+        ac.Applier(self.env.config(), runner).run()
+        before = ac.read_active(self.env.runtime)
+        manifest_path = Path(before["dir"]) / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["shuttle_source"]["input_sha256"]["timetable"] = "0" * 64
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(ac.ConfirmError) as caught:
+            ac.Applier(self.env.config(), runner).run()
+        self.assertEqual(caught.exception.code, "GRAPH_VERSION_MISMATCH")
+        self.assertEqual(ac.read_active(self.env.runtime), before)
+
     def test_status_never_contains_passenger_fields(self):
         write_bundle(self.env.confirm_root, "c1")
         ac.Applier(self.env.config(), FakeRunner()).run()

@@ -515,7 +515,8 @@ function renderConfirmBanner(){
   if(!confirm){box.append(text("strong","대체 셔틀: C팀 후보"),text("span","운영자 확정 기록 없음"));return}
   const when=confirm.confirmed_at?new Date(confirm.confirmed_at).toLocaleString("ko-KR",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}):"-";
   box.append(text("strong","적용된 운영자 확정 · "+(confirm.algo_name||confirm.confirm_id)));
-  box.append(text("span","확정 "+when+" · "+confirm.shuttle_version+" · 그래프 "+confirm.graph_version));
+  // 안끼리 plan_id@revision이 같을 수 있어(plan-eqmc07-f11@1) 확정 ID와 plan 해시 앞자리를 함께 보인다
+  box.append(text("span","확정 "+when+" · "+(confirm.plan_key||confirm.shuttle_version)+" · 확정 ID "+confirm.confirm_id+" · 그래프 "+confirm.graph_version));
   const m07=confirm.m07||{};
   box.append(text("span","M07 "+(m07.pass?"통과":"미통과")+(m07.fully_verified?"":" (일부 항목 검증 안 됨 · 운행 승인 아님)"),m07.pass?"":"warn"));
   const day=confirm.service_date;

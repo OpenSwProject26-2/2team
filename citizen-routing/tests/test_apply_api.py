@@ -102,6 +102,14 @@ class ApplyApiTests(unittest.TestCase):
         self.assertEqual(body["active"]["confirm_id"], "c1")
         self.assertEqual(body["active"]["shuttle_version"], "plan-test@1")
 
+    def test_apply_status_tells_whether_a_given_confirm_is_applied(self):
+        self.write_active(plan_sha256="a" * 64, plan_key="plan-test@1#aaaaaaaa")
+        _, body = self.fx.call("/api/citizen-routing/apply/status?confirm_id=c1")
+        self.assertIs(body["applied"], True)
+        _, body = self.fx.call("/api/citizen-routing/apply/status?confirm_id=c9")
+        self.assertIs(body["applied"], False)
+        self.assertEqual(body["active"]["plan_key"], "plan-test@1#aaaaaaaa")
+
     def test_status_shows_applied_confirm_and_uses_active_strike_graph(self):
         self.write_active()
         with patch("backend.mode_service.healthy", return_value=True):

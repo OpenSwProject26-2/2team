@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "frontend"
 RUNTIME = ROOT / "runtime"
 MAX_BODY = 4096
-CONFIRM_FIELDS = ("confirm_id", "algo_name", "confirmed_at", "plan_id", "revision", "plan_sha256",
+CONFIRM_FIELDS = ("confirm_id", "algo_name", "confirmed_at", "plan_id", "revision", "plan_sha256", "plan_key",
                   "shuttle_version", "graph_version", "m07", "service_date", "build_id", "activated_at")
 
 
@@ -164,7 +164,11 @@ def handler(otp_dir: Path, endpoint: str, strike_dir: Path = STRIKE_DIR,
         def do_GET(self) -> None:
             parsed = urlsplit(self.path)
             if parsed.path == "/api/citizen-routing/apply/status":
-                self._json(200, {**apply_state(), "active": confirm_summary(),
+                active = confirm_summary()
+                asked = parse_qs(parsed.query).get("confirm_id", [""])[0]
+                # 안끼리 plan_id@revision이 같을 수 있어 "적용됨"은 confirm_id로만 판정한다.
+                applied = {"applied": bool(active and active.get("confirm_id") == asked)} if asked else {}
+                self._json(200, {**apply_state(), **applied, "active": active,
                                  "builds": apply_confirm.list_builds(runtime) if runtime else [],
                                  "configured": bool(apply_config and Path(apply_config).is_file())})
                 return
