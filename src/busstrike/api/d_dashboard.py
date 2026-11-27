@@ -215,12 +215,14 @@ LAB_PANEL_FILES = {"pareto_panel.js": "text/javascript; charset=utf-8", "pareto_
                    "plan_layer.js": "text/javascript; charset=utf-8"}
 
 
-def make_handler(store: Store, simulation: SimulationStore | None = None, lab=None, pareto=None):
+def make_handler(store: Store, simulation: SimulationStore | None = None, lab=None, pareto=None, runs=None,
+                 confirms=None, selections=None, local_paths=None):
     """`lab`(routegen_lab.Lab/LabSet)을 주면 /lab, /api/lab/* 를 함께 처리한다.
-    `pareto`(d_pareto.ParetoStore)를 주면 충족률·형평성 곡선 패널 자료(/api/d/simulation/pareto*)를 준다."""
+    `pareto`(d_pareto.ParetoStore)를 주면 충족률·형평성 곡선 패널 자료(/api/d/simulation/pareto*)를 준다.
+    `runs`(d_runs.RunManager)·`confirms`(d_confirm.ConfirmStore)를 주면 실행 버튼(/api/d/runs*)과 확정(/api/d/confirm*)을 준다."""
     simulation = simulation or SimulationStore()
     pareto = pareto or ParetoStore(None)
-    selections = SelectionStore()
+    selections = selections or SelectionStore()
 
     class Handler(BaseHTTPRequestHandler):
         def _json(self, data: dict | list, status: int = HTTPStatus.OK) -> None:
@@ -399,9 +401,27 @@ def make_handler(store: Store, simulation: SimulationStore | None = None, lab=No
                 if parts.path == "/api/d/simulation/transit-routes":
                     return self._json(simulation.transit_routes(query))
                 if parts.path == "/api/d/simulation/pareto":
-                    return self._json(pareto.pareto(query.get("region", [""])[0]))
+                    return self._json(pareto.pareto(query.get("region", [""])[0], query.get("run", [""])[0] or None))
                 if parts.path == "/api/d/simulation/pareto-export":
-                    return self._json(pareto.export(query.get("region", [""])[0], query.get("id", [""])[0]))
+                    return self._json(pareto.export(query.get("region", [""])[0], query.get("id", [""])[0],
+                                                    query.get("run", [""])[0] or None))
+                if parts.path == "/api/d/runs/config":
+                    return self._json(_runs_config(runs, confirms, local_paths))
+                if parts.path == "/api/d/runs":
+                    if runs is None:
+                        return self._json({"status": "unavailable", "runs": []})
+                    return self._json(runs.list(query.get("gu", [""])[0] or None))
+                if parts.path.startswith("/api/d/runs/"):
+                    if runs is None:
+                        raise DataError("DATA_INCOMPLETE", "실행 결과 폴더가 설정되지 않았습니다(config/local_paths.toml).")
+                    return self._json(runs.get_any(parts.path.rsplit("/", 1)[-1]))
+                if parts.path in ("/api/d/confirm/preview", "/api/d/confirm/current"):
+                    if confirms is None:
+                        raise DataError("DATA_INCOMPLETE", "확정 묶음 폴더가 설정되지 않았습니다(config/local_paths.toml).")
+                    region = query.get("region", [""])[0]
+                    if parts.path.endswith("current"):
+                        return self._json(confirms.current(region))
+                    return self._json(confirms.preview(region, query.get("run", [""])[0] or None, query.get("id", [""])[0]))
                 if parts.path == "/api/d/simulation/transport-demand":
                     return self._json(store.transport_demand.get(query))
                 if parts.path.startswith("/api/d/simulation/"):
@@ -530,11 +550,13 @@ def make_handler(store: Store, simulation: SimulationStore | None = None, lab=No
         def do_POST(self) -> None:
             path = urlsplit(self.path).path
             is_lab = path in {"/api/lab/generate", "/api/lab/simulate"}
+            is_run = path == "/api/d/runs" or (path.startswith("/api/d/runs/") and path.endswith("/cancel"))
             if path not in {
                 "/api/d/sources/refresh",
                 "/api/d/demo/scenario/evaluate",
                 "/api/d/simulation/selection",
-            } and not is_lab:
+                "/api/d/confirm",
+            } and not is_lab and not is_run:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             if self.headers.get("Origin") not in {
@@ -550,6 +572,10 @@ def make_handler(store: Store, simulation: SimulationStore | None = None, lab=No
             try:
                 if path == "/api/d/sources/refresh":
                     return self._json(store.refresh())
+                if is_run and path.endswith("/cancel"):
+                    if runs is None:
+                        raise DataError("DATA_INCOMPLETE", "실행 결과 폴더가 설정되지 않았습니다.")
+                    return self._json(runs.cancel(path.split("/")[-2]))
                 try:
                     size = int(self.headers.get("Content-Length", "0"))
                 except ValueError as error:
@@ -568,6 +594,15 @@ def make_handler(store: Store, simulation: SimulationStore | None = None, lab=No
                     raise DataError("INPUT_INVALID", "JSON 객체가 필요합니다.")
                 if path == "/api/d/simulation/selection":
                     return self._json(selections.choose(simulation, request))
+                if path == "/api/d/runs":
+                    if runs is None:
+                        raise DataError("DATA_INCOMPLETE", "실행 결과 폴더가 설정되지 않았습니다(config/local_paths.toml).")
+                    return self._json(runs.submit(request))
+                if path == "/api/d/confirm":
+                    if confirms is None:
+                        raise DataError("DATA_INCOMPLETE", "확정 묶음 폴더가 설정되지 않았습니다(config/local_paths.toml).")
+                    return self._json(confirms.confirm(str(request.get("region", "")), request.get("run") or None,
+                                                       str(request.get("id", ""))))
                 if is_lab:
                     from .routegen_lab import LabError, handle_post
                     if lab is None:
@@ -581,6 +616,26 @@ def make_handler(store: Store, simulation: SimulationStore | None = None, lab=No
                 self._error(error)
 
     return Handler
+
+
+def _runs_config(runs, confirms, local_paths) -> dict:
+    """입력 화면이 쓰는 고정 값: 구 목록(실행 가능 여부), 기본 대수, 날짜 범위, 미리 계산된 결과, 시민 화면 주소."""
+    from .d_runs import ENABLED_GU, EXP_WEEK
+    from busstrike.data.assemble import muni_fleet
+    gus = ["dobong", "dongdaemun", "dongjak", "eunpyeong", "gangbuk", "gangdong", "gangnam", "gangseo", "geumcheon", "guro",
+           "gwanak", "gwangjin", "jongno", "jung", "jungnang", "mapo", "nowon", "seocho", "seodaemun", "seongbuk",
+           "seongdong", "songpa", "yangcheon", "yeongdeungpo", "yongsan"]
+    lp = local_paths
+    pre = (lp.precomputed_root if lp else None)
+    return {"status": "available" if runs is not None and runs.available() else "unavailable",
+            "config": getattr(lp, "source", "") or None,
+            "gus": [{"id": g, "enabled": g in ENABLED_GU,
+                     "default_fleet": muni_fleet(g, lp) if (lp and g in ENABLED_GU) else None,
+                     "precomputed": bool(pre and (pre / g / "pareto.json").is_file())} for g in gus],
+            "demand_days": list(EXP_WEEK), "eval_choices": list(EXP_WEEK), "quick_eval_days": ["20261028"],
+            "test_week": ["20261102", "20261103", "20261104", "20261105", "20261106"],
+            "strike_seed": 20261121, "confirm": confirms is not None and confirms.root is not None,
+            "citizen_ui": (lp.citizen_ui or None) if lp else None, "citizen_api": bool(lp and lp.citizen_api)}
 
 
 def main() -> None:
@@ -617,6 +672,9 @@ def main() -> None:
     parser.add_argument("--lab-dir", type=Path, help="routegen 실험실 데이터 폴더(build_lab_data.py 출력)")
     parser.add_argument("--lab-region", type=Path, help="구 묶음을 푼 region 폴더(<구>_0610_v4가 들어 있음)")
     parser.add_argument("--lab-all", type=Path, help="구별 실험실 폴더들의 부모(<slug>/layers/meta.json, build_lab_data --sweep 출력)")
+    parser.add_argument("--local-paths", type=Path,
+                        help="운영자 실행·확정 경로 설정(기본 config/local_paths.toml, 있으면). 없으면 실행 버튼·확정은 '연결 안 됨'")
+    parser.add_argument("--no-runs", action="store_true", help="실행 버튼 작업 실행기를 켜지 않는다(보기 전용)")
     args = parser.parse_args()
     store = Store(args.a_gtfs, args.service_date, args.transit_data, args.rail_gis_file,
                   args.rail_gis_live, args.bus_geometry_file, args.transport_demand,
@@ -630,13 +688,23 @@ def main() -> None:
         if not args.lab_region:
             parser.error("--lab-dir에는 --lab-region이 필요하다")
         lab = Lab(args.lab_dir, args.lab_region)
+    from busstrike.data.paths import DEFAULT_CONFIG, load_paths
+    from .d_confirm import ConfirmStore
+    from .d_runs import RunManager
+    local = load_paths(args.local_paths) if (args.local_paths or DEFAULT_CONFIG.is_file()) else None
+    runs = RunManager(local, start_worker=not args.no_runs) if local and local.pareto_root else None
+    pareto = ParetoStore(args.pareto_root or (local.pareto_root if local else None), runs=runs)
+    selections = SelectionStore()
+    confirms = ConfirmStore(local, pareto, runs, selections) if local and local.confirm_root else None
     server = ThreadingHTTPServer(
         ("127.0.0.1", args.port),
         make_handler(
             store, SimulationStore(args.simulation_results, args.simulation_inputs, args.lab_layers), lab=lab,
-            pareto=ParetoStore(args.pareto_root),
+            pareto=pareto, runs=runs, confirms=confirms, selections=selections, local_paths=local,
         ),
     )
+    if runs:
+        print(f"실행 버튼: 결과 {local.pareto_root} · 확정 {local.confirm_root}")
     print(f"D 대시보드: http://127.0.0.1:{args.port}/")
     if lab:
         print(f"노선 실험실: http://127.0.0.1:{args.port}/lab")
