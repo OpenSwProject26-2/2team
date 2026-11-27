@@ -86,6 +86,7 @@ def _itinerary(raw: dict, index: int, manifest: dict, bus_categories: dict[str, 
         legs.append({
             "kind": kind, "mode": mode, "route_id": gtfs_id or None,
             "route_name": route.get("shortName") or route.get("longName"),
+            "route_long_name": route.get("longName") if kind == "shuttle" else None,
             "bus_category": bus_categories.get(gtfs_id, "unclassified") if kind == "bus" else None,
             "from": _place(leg.get("from") or {}),
             "to": _place(leg.get("to") or {}),
