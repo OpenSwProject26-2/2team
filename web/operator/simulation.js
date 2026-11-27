@@ -373,21 +373,27 @@ function flashAbsorb(detail,before){
 
 // ── 충족률·형평성 곡선 패널(파이프라인 pareto.json) ── 지도 왼쪽 아래. 점을 누르면 그 안의 노선을 지도에 그린다.
 // 패널(web/lab/pareto_panel.js)과 지도 그리기(web/lab/plan_layer.js)는 onSelect로만 잇는다.
-sim.pp={region:null,panel:null,cache:new Map(),current:null,drawn:null,fitted:false,seq:0};
+sim.pp={region:null,run:'',panel:null,cache:new Map(),current:null,drawn:null,fitted:false,seq:0};
+// 운영자 실행(e2e.js)과 잇는 이벤트: window.ppRun = 고른 실행 작업 ID(없으면 기본 곡선), 'pp:reload'로 다시 읽기,
+// 곡선 자료가 바뀌면 'pp:data', 안을 고르거나 내리면 'pp:select'(detail.plan = null이면 내림)
+const ppEmit=(name,detail)=>window.dispatchEvent(new CustomEvent(name,{detail}));
+window.addEventListener('pp:reload',()=>{sim.pp.region=null;void syncPareto();});
 async function syncPareto(){
-  const region=sim.active?byId('sim-region').value:'all';
-  if(sim.pp.region===region&&(sim.pp.panel||region==='all'))return;
+  const region=sim.active?byId('sim-region').value:'all',run=window.ppRun||'';
+  if(sim.pp.region===region&&sim.pp.run===run&&(sim.pp.panel||region==='all'))return;
   const seq=++sim.pp.seq;
-  sim.pp.panel?.destroy();sim.pp.panel=null;sim.pp.drawn?.remove();sim.pp.drawn=null;sim.pp.current=null;sim.pp.fitted=false;sim.pp.cache=new Map();sim.pp.region=region;
-  if(region==='all'||!sim.map){renderSimLab();return;}
-  const data=await read(`/api/d/simulation/pareto?region=${encodeURIComponent(region)}`).catch(()=>null);
+  sim.pp.panel?.destroy();sim.pp.panel=null;sim.pp.drawn?.remove();sim.pp.drawn=null;sim.pp.current=null;sim.pp.fitted=false;sim.pp.cache=new Map();sim.pp.region=region;sim.pp.run=run;
+  if(region==='all'||!sim.map){renderSimLab();ppEmit('pp:data',{data:null,region,run});ppEmit('pp:select',{plan:null,region,run});return;}
+  const q=`region=${encodeURIComponent(region)}${run?`&run=${encodeURIComponent(run)}`:''}`;
+  const data=await read(`/api/d/simulation/pareto?${q}`).catch(()=>null);
   if(seq!==sim.pp.seq||!sim.active)return;
-  if(data?.status!=='available'){sim.pp.region=region;return;}
+  if(data?.status!=='available'){sim.pp.region=region;sim.pp.data=null;renderSimLab();ppEmit('pp:data',{data:null,region,run});ppEmit('pp:select',{plan:null,region,run});return;}
   sim.pp.data=data;
   sim.pp.panel=mountParetoPanel(sim.map,{paretoData:data,autoSelect:false,storageKey:'d.paretoPanel.open',
-    exportUrl:p=>`/api/d/simulation/pareto-export?region=${encodeURIComponent(region)}&id=${encodeURIComponent(p.id)}`,
+    exportUrl:p=>`/api/d/simulation/pareto-export?${q}&id=${encodeURIComponent(p.id)}`,
     onSelect:plan=>showParetoPlan(plan,region)});
   placePareto();
+  ppEmit('pp:data',{data,region,run});ppEmit('pp:select',{plan:null,data,region,run});
 }
 // 왼쪽 조작 패널이 지도 위에 떠 있으므로, 펼쳐져 있으면 곡선 패널을 그 오른쪽으로 민다
 function ppLeft(){
@@ -407,6 +413,7 @@ async function showParetoPlan(plan,region){
   }
   if(my!==sim.pp.seq||region!==sim.pp.region)return;
   sim.pp.current={plan,ex};
+  ppEmit('pp:select',{plan,ex,data:sim.pp.data,region,run:sim.pp.run});
   sim.pp.drawn=ppShowPlan(sim.map,ex,{prefix:'pp',width:3.4,fit:!sim.pp.fitted,padding:{top:50,bottom:50,left:ppLeft()+40,right:50}});   // 화면 범위는 처음 한 번만 맞춘다
   sim.pp.fitted=true;sim.selectedRoute=null;sim.popup?.remove();
   mapLayers(true);renderSimLab();
@@ -414,6 +421,7 @@ async function showParetoPlan(plan,region){
 function clearParetoPlan(){
   if(!sim.pp.current&&!sim.pp.drawn)return;
   sim.pp.seq++;sim.pp.drawn?.remove();sim.pp.drawn=null;sim.pp.current=null;sim.pp.panel?.clear();
+  ppEmit('pp:select',{plan:null,data:sim.pp.data,region:sim.pp.region,run:sim.pp.run});
   mapLayers(true);renderSimLab();
 }
 function renderParetoInfo(){

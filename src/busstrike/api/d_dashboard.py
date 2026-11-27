@@ -310,6 +310,10 @@ def make_handler(store: Store, simulation: SimulationStore | None = None, lab=No
                 return self._asset(WEB / "demand-circles.js", "text/javascript; charset=utf-8")
             if parts.path == "/overlap-layout.js":
                 return self._asset(WEB / "overlap-layout.js", "text/javascript; charset=utf-8")
+            if parts.path == "/e2e.js":
+                return self._asset(WEB / "e2e.js", "text/javascript; charset=utf-8")
+            if parts.path == "/e2e.css":
+                return self._asset(WEB / "e2e.css", "text/css; charset=utf-8")
             vendor_assets = {
                 "/vendor/maplibre-gl.mjs": "text/javascript; charset=utf-8",
                 "/vendor/maplibre-gl-worker.mjs": "text/javascript; charset=utf-8",
