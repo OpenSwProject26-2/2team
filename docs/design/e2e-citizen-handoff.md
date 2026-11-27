@@ -85,6 +85,7 @@ GET {api}/api/citizen-routing/apply/status?confirm_id=<id>
 - `feat/e2e-full`의 시민 쪽 수정 3개(위 브랜치 + 운영자 브랜치 병합 83ec61a 위):
   - 32f2515 안 구별: 그래프 교체 전 셔틀 입력 해시 = 묶음 파일 해시, 상태·활성 표시에 `plan_key`·`applied_confirm_id`, `status?confirm_id=` → `applied`.
   - 0d29e0f legs 없는 운영자 plan의 순환을 M05 시간표로 검사, 상태에 `requested_confirm_id`.
+- (2026-11-27 갱신) 아래 두 커밋은 #64 브랜치에 이미 얹었다(cherry-pick -x, 5e5fb1d·75c1ba4, citizen unittest 56 OK). 아래는 기록용.
 - **#64(feat/e2e-citizen)만 머지하면 실제 운영자 확정 묶음은 반영 verify 단계에서 "노선 r01에 legs가 없습니다"로 거절된다**(위 주의 3). 32f2515·0d29e0f를 #64 위에 cherry-pick하면 충돌 없이 얹히고 citizen-routing unittest 56개가 통과한다(2026-11-27, 임시 분리 worktree에서 확인, 브랜치는 만들지 않음): `git cherry-pick -x 32f2515 0d29e0f`.
 - 이 조합으로 한 번 끝까지 확인했다(참고): 실제 확정 `20261127T145312-5368a87e` → 반영 382초(빌드 215초, 교체 36초, 프리셋 79초) → 대시보드 "반영 완료" → 시민 화면 세 결과(프리셋 1곳: 평소 15분 / 파업·셔틀 없음 39분 / 파업+셔틀 18분, 셔틀 r05). 기록 `guro_exp_work/e2e_1127/integrate/captures/precheck/`.
 - 남은 빈칸: 지하철 포함 A팀 통합 GTFS가 이 PC에 없어 버스 전용 GTFS(11/02 하루)로만 확인했다.
