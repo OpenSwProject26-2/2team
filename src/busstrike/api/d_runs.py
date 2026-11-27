@@ -85,7 +85,9 @@ def normalize_input(req: dict, paths) -> dict:
         strike = normalize_strike(req.get("strike") or {"mode": "full"})
     except AssembleError as e:
         raise DataError("INPUT_INVALID", str(e)) from e
-    fleet = req.get("fleet") or muni_fleet(gu, paths)
+    fleet = req.get("fleet")
+    if fleet in (None, ""):                            # 비우면 지자체안 대수(0은 기본값으로 바꾸지 않고 거절)
+        fleet = muni_fleet(gu, paths)
     try:
         fleet = int(fleet)
     except (TypeError, ValueError) as e:
@@ -178,7 +180,7 @@ class RunManager:
             d.mkdir(parents=True, exist_ok=False)
             job = {"schema": "busstrike.d_run/1", "run_id": run_id, "gu": inp["gu"], "input": inp,
                    "input_hash": got["input_hash"], "job_hash": job_hash, "manifest_path": got["manifest_path"],
-                   "created_at": now(), "out_dir": str(d), "config": self.paths.source}
+                   "created_at": now(), "seq": time.time_ns(), "out_dir": str(d), "config": self.paths.source}
             write_json(d / "job.json", job)
             write_json(d / "status.json", {"state": "queued", "stage": "queued", "stage_label": "대기", "created_at": now(),
                                            "stages": [{"key": k, "label": lab, "state": "pending", "done": 0, "total": 0}
@@ -339,7 +341,7 @@ class RunManager:
 
     def _next(self) -> tuple[Path, dict] | None:
         q = [(d, j) for d, j in self._jobs() if self._status(d).get("state") == "queued"]
-        q.sort(key=lambda x: x[1].get("created_at") or "")
+        q.sort(key=lambda x: (x[1].get("created_at") or "", x[1].get("seq") or 0))   # 같은 초에 낸 작업도 낸 순서대로
         return q[0] if q else None
 
     def _loop(self) -> None:
