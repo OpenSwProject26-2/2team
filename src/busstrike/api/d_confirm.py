@@ -333,10 +333,12 @@ class ConfirmStore:
         if active.get("confirm_id") == cid and (want is None or active.get("plan_sha256") == want) \
                 and st.get("state") != "running":
             return {"state": "applied", "label": f"시민 경로 반영 완료(파업 그래프 {active.get('graph_version')})", **keep}
-        mine = st.get("confirm_id") in (cid, None)
+        # 시민 쪽은 묶음을 읽은 뒤 confirm_id를, 그 전부터 requested_confirm_id를 상태에 남긴다
+        named = {st.get("confirm_id"), st.get("requested_confirm_id")} - {None}
+        mine = not named or cid in named
         if st.get("state") == "running" and mine:
             return {"state": "applying", "step": st.get("step"), "label": f"시민 경로 반영 중({st.get('step') or '시작'})", **keep}
-        if st.get("state") in ("failed", "interrupted", "cancelled") and st.get("confirm_id") == cid:
+        if st.get("state") in ("failed", "interrupted", "cancelled") and cid in named:
             msg = (st.get("error") or {}).get("message") or st.get("state")
             return {"state": "failed", "label": f"시민 경로 반영 실패: {msg} (이전 그래프로 안내 중)", **keep}
         if active.get("confirm_id"):

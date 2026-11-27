@@ -121,6 +121,16 @@ def test_status_applying_and_failed_follow_this_confirm(env):
     assert got["state"] == "failed" and "빌드 실패" in got["label"]
 
 
+def test_failure_before_bundle_is_read_is_still_failed(env):
+    # 시민 쪽이 묶음을 읽기 전에 실패하면 confirm_id는 없고 requested_confirm_id만 있다
+    cs, citizen = env
+    r, _ = _confirm(cs)
+    citizen.status = {"state": "failed", "step": "verify", "requested_confirm_id": r["confirm_id"], "steps": [],
+                      "active": None, "error": {"code": "CONFIRM_INVALID", "message": "묶음이 잘못됨"}}
+    got = cs.citizen_status("guro", r["confirm_id"])
+    assert got["state"] == "failed" and "묶음이 잘못됨" in got["label"]
+
+
 def test_busy_citizen_reply_is_reported(env):
     cs, citizen = env
     citizen.post_reply = (409, {"code": "APPLY_BUSY", "message": "다른 반영 작업이 진행 중입니다."})
