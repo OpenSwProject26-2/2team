@@ -60,6 +60,26 @@ def cyclic_seq(stops: tuple[str, ...], closure: tuple[str, ...]) -> tuple[str, .
     return tuple(stops) + tuple(closure[1:]) + tail
 
 
+def best_rotation(stops: tuple[str, ...], cover, closure_ok, keep_inside: frozenset = frozenset()) -> int:
+    """순환 시작점 최적화(개선 2026-11-22): 같은 고리를 i번째 정류장에서 시작하게 돌린 열 stops[i:] + stops[:i] 중
+    덮는 수요 cover(열)가 가장 큰 i. 시뮬레이터는 한 영업 구간 안에서만 태우므로 시작점이 "타는 곳이 내리는 곳보다 앞"인
+    OD를 정한다(동네에서 시작해 역을 지나 동네로 돌아오는 고리는 돌아오는 길 승객이 역에 닿지 못한다).
+    - closure_ok(a, b): 새 고리 닫기 a → b(원래 이웃한 두 정류장)를 쓸 수 있나(고리 닫기 상한).
+    - keep_inside: 첫·끝에 오면 안 되는 정류장(필수 정류장은 첫·끝이 아닌 정차여야 한다).
+    더 나은 시작점이 없으면 0. 같은 값이면 작은 i."""
+    best_i, best_v = 0, cover(tuple(stops))
+    for i in range(1, len(stops)):
+        if not closure_ok(stops[i - 1], stops[i]):
+            continue
+        r = tuple(stops[i:]) + tuple(stops[:i])
+        if keep_inside and (r[0] in keep_inside or r[-1] in keep_inside):
+            continue
+        v = cover(r)
+        if v > best_v + 1e-9:
+            best_i, best_v = i, v
+    return best_i
+
+
 def closure_s(g: Graph, closure: tuple[str, ...]) -> int:
     """고리 닫기 공차 시간(초): 구간 06~09시 최댓값 합. 정차는 없다."""
     return sum(g.weight(a, b) for a, b in zip(closure, closure[1:]))

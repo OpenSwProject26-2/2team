@@ -153,6 +153,24 @@ def run(bundles: Path, out: Path, plans: list[str], jobs: int) -> None:
     subprocess.run(cmd, check=False)
 
 
+def apply_far_floor(floor: dict | None, arg: str) -> dict | None:
+    """--far-floor: 형평 하한(floor = {total, far, source})의 역 800m 밖 값만 바꾼 새 dict. 전체 하한은 그대로.
+
+    none = 전체·역 밖 하한 모두 끔(None, 형평 기준 없음), off = 역 밖 하한 없음(0, 부족분이 늘 0이라 하한 없음과 같다),
+    +x = 원래 역 밖 하한 + x, 숫자 = 그 값(절대값, 예: 0.58 = 역 밖 형평 0.58 이상).
+    """
+    if arg.strip() == "none":
+        return None
+    if floor is None:
+        raise SystemExit("--far-floor는 형평 하한(--equity-floor muni 또는 고정값)이 켜져 있을 때만 쓴다")
+    if floor.get("extra"):
+        raise SystemExit("--far-floor는 --floor-combos base에서만 쓴다")
+    ff = arg.strip()
+    base_far = float(floor["far"])
+    far = 0.0 if ff == "off" else (base_far + float(ff[1:]) if ff.startswith("+") else float(ff))
+    return {**floor, "far": far, "far_rule": {"arg": ff, "base_far": base_far}}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--sweep", required=True, type=Path)
@@ -174,6 +192,13 @@ def main() -> int:
     ap.add_argument("--legacy-rule", action="store_true", help="2단계 전 규칙(역 고정, 역 쪽 지정 정류장 걷기)으로 설계·평가")
     ap.add_argument("--service-start", default=None, help="안 만들기 운행 시작 시각(쉼표로 여러 개, 비우면 설정 파일 walk.service_starts)")
     ap.add_argument("--equity-floor", default=None, help='형평 하한: muni / none / "전체,역800m밖"(비율). 비우면 설정 파일 equity.floor')
+    ap.add_argument("--far-floor", default=None,
+                    help='역 800m 밖 하한만 바꾼다(전체 하한은 --equity-floor 그대로, 형평 하한이 켜져 있어야 함): '
+                         'none = 전체·역 밖 하한 모두 끔, off = 역 밖 하한 없음(0), +x = 정해진 역 밖 하한(예: muni 값) + x, '
+                         '숫자 = 그 값(절대값). 비우면 예전 그대로')
+    ap.add_argument("--lean", action="store_true",
+                    help="형평 하한 안(eq…)마다 진단용 배분 두 개(하한 없이, 필수 정류장 끔)를 건너뛴다(안은 같고 기록만 줄어듦). "
+                         "기본 끔")
     ap.add_argument("--floor-combos", default="base", choices=("base", "all"),
                     help="형평 하한을 걸 평가 조합: base = 기본 조합 하나(기본), all = 9개 조합 모두(안 이름 eqa…)")
     ap.add_argument("--route-min", type=float, default=None, help="노선 근사 대당 탑승 하한(비우면 설정 파일 equity.route_min_per_vehicle)")
@@ -196,6 +221,13 @@ def main() -> int:
     ap.add_argument("--must-min-tph", type=float, default=0.0, help="필수 정류장 시간당 최소 운행(기본 0 = 요구 안 함)")
     ap.add_argument("--absolute-rules", action="store_true",
                     help="규칙을 상대 기준(rules.py) 대신 설정 파일 절댓값으로(옛 결과 재현용)")
+    ap.add_argument("--tour", default="", help="닫힌 순회 후보(tour.py): sector,feeder 중 일부(쉼표). 비우면 끔(예전 그대로)")
+    ap.add_argument("--tour-pool", default=None, choices=("ours", "tour_sector", "tour_feeder"),
+                    help="--tour일 때 배분 후보 풀(꼭 줌): ours(tour 아닌 후보 = 편도 노선 생성 후 순회) / 한 순회 생성기만. "
+                         "합집합 풀(tour·all)은 지웠다")
+    # 새 알고리즘(New_Algol.md 3.3, 작업 2026-11-25). 모두 기본 끔(예전 그대로)
+    ap.add_argument("--cand-cache", type=Path, default=None,
+                    help="후보 캐시(pickle): 있으면 생성 대신 읽고(생성 설정이 같아야 함), 없으면 생성 뒤 저장")
     ap.add_argument("--allow-rule-override", action="store_true", help="구별 규칙·정책 상수 덮어쓰기를 경고만(재현용)")
     args = ap.parse_args()
     muni_dirs = {k: Path(v).resolve() for k, v in (x.split("=", 1) for x in args.muni)}
@@ -209,6 +241,8 @@ def main() -> int:
     args.targets = args.targets or ",".join(str(x) for x in wc.get("targets", []))   # 비면 형평 먼저(예전)를 만들지 않는다
     starts = [x for x in (args.service_start or ",".join(wc.get("service_starts", ["06:00"]))).split(",") if x]
     eqc = cfg.equity
+    if args.lean and args.free:
+        raise SystemExit("--lean은 --free(하한 없는 안 내기)와 같이 쓸 수 없다")
     floor_cfg = args.equity_floor if args.equity_floor is not None else eqc["floor"]
     route_min = args.route_min if args.route_min is not None else float(eqc["route_min_per_vehicle"])
     far_m = float(eqc["far_m"])
@@ -280,9 +314,15 @@ def main() -> int:
                     (set() if args.demand_mode == "all_bus_no_absorption" else None))
         must_res = MS.for_bundle(args.facilities, root, info["gu"], MS.MustConfig(), override)
         rule_kw["must_stops"] = tuple(must_res["must_stops"])
+    tour_kinds = tuple(x for x in args.tour.split(",") if x)
+    if tour_kinds and args.tour_pool is None:
+        raise SystemExit("--tour를 주면 --tour-pool(ours, tour_sector, tour_feeder)도 준다")
+    if tour_kinds:
+        rule_kw["tour"] = tour_kinds
+    gen_kw = {k: (tuple(v) if isinstance(v, list) else v) for k, v in (json.loads(args.gen) if args.gen else {}).items()}
     p = cfg.walk_params(home_gu=info["gu"], multi=args.multi,
                         **({} if args.loop is None else {"loop": None if args.loop == "none" else args.loop}),
-                        **rule_kw, **(json.loads(args.gen) if args.gen else {}))
+                        **rule_kw, **gen_kw)
     sfx = "m" if args.multi else ""
     keys = sorted(demand.od)
     reach = None
@@ -294,7 +334,44 @@ def main() -> int:
         if troot.exists():
             ix.add_flows(D.load_flows(troot))
         reach = Reach(ix, rule, nb, keys)
-    gres = G.generate(net, demand, scen, p, reach=reach, jobs=args.gen_jobs)
+    if p.fill and p.fill_start_s is None and starts:   # 소외 삽입 탑승 근사의 시간대 = 안 만들기 운행 시작(06:00이면 None)
+        from dataclasses import replace as _replace
+        st0 = min(starts, key=_hhmm)
+        p = _replace(p, fill_start_s=None if st0 == "06:00" else _hhmm(st0))
+    tour_inputs = None
+    if tour_kinds or p.line_group:                    # 호선 단위 묶기는 꼬리표(station_lines.csv tags)가 필요하다
+        from busstrike.planning.routegen import tour as TR
+        tour_inputs = TR.load_inputs(root, args.lines)
+    far_set = None
+    if p.fill_bonus > 0:                              # 4단계 소외 가산점: 역 지정 정류장 도로 도보 far_m 밖 동네 정류장
+        from busstrike.planning.routegen.equity import far_stops as _far_stops
+        far_set = frozenset(_far_stops(home, nb_near, st_stops, far_m))
+    gen_kwargs = {**({"tour_inputs": tour_inputs} if tour_inputs is not None else {}),
+                  **({"far_stops": far_set} if far_set else {})}
+    if args.cand_cache is not None and args.cand_cache.exists():
+        import pickle
+        from dataclasses import asdict
+        cached = pickle.loads(args.cand_cache.read_bytes())
+        if cached["params"] != asdict(p) or cached.get("far_stops") != (sorted(far_set) if far_set else None):
+            raise SystemExit(f"후보 캐시의 생성 설정이 다르다: {args.cand_cache}")
+        gres = cached["result"]
+        print(f"후보 캐시 읽음: {args.cand_cache}", flush=True)
+    else:
+        gres = G.generate(net, demand, scen, p, reach=reach, jobs=args.gen_jobs, **gen_kwargs)
+        if args.cand_cache is not None:
+            import pickle
+            from dataclasses import asdict
+            args.cand_cache.parent.mkdir(parents=True, exist_ok=True)
+            args.cand_cache.write_bytes(pickle.dumps({"params": asdict(p), "far_stops": sorted(far_set) if far_set else None,
+                                                      "result": gres}, protocol=4))
+    tour_log = None
+    if tour_kinds:                                    # 풀 고르기(tour를 켰을 때만, 중복 제거 전)
+        from collections import Counter
+        tour_log = {"kinds": list(tour_kinds), "pool": args.tour_pool,
+                    "candidates_by_origin": dict(sorted(Counter(c.origin for c in gres.candidates).items())),
+                    "reasons": {k: v for k, v in gres.reasons.items() if k.startswith("tour/")},
+                    "dropped": {k: v for k, v in gres.dropped.items() if k.startswith("tour_")}}
+        gres.candidates = G.select_pool(gres.candidates, args.tour_pool)
     # 후보 풀: 순환 방식마다 따로 중복 제거(방식끼리 서로 지우지 않게). 꼬리표 lsfx는 안 이름에 붙는다
     lsfx_of = {"demand": "c", "deadhead": "cd", None: ""}
     if p.loop == "both":
@@ -332,6 +409,7 @@ def main() -> int:
            "strike": strike_log, "rules": rules_log,
            "must": None if must_res is None else {k: must_res[k] for k in ("must_stops", "counts", "gu_code", "config")},
            "must_candidates": gres.dropped.get("must"),
+           **({"tour": tour_log} if tour_log else {}),
            "plans": {}, "walk_stats": {}, "absorbed": hs["absorbed"], "affected_total": hs["affected_total"],
            "absorbed_test": hs["absorbed_test"], "affected_total_test": hs["affected_total_test"]}
     if only and (out / "walk_eval.json").exists():
@@ -351,7 +429,8 @@ def main() -> int:
                          "loop_variant": c.loop_variant, "turn": c.turn, "cycle_s": c.cycle_s,
                          "closure_s": c.closure_s, "closure_stops": list(c.return_stops),
                          "out_oneway_s": c.out_oneway_s, "ret_oneway_s": c.ret_oneway_s,
-                         "out_n_stops": c.out_n_stops, "ret_n_stops": c.ret_n_stops, "cover": round(c.cover, 1)})
+                         "out_n_stops": c.out_n_stops, "ret_n_stops": c.ret_n_stops, "cover": round(c.cover, 1),
+                         **({"made_by": list(c.made_by), "detour": round(c.detour, 3)} if tour_kinds else {})})
         return out_
 
     def record(label: str, fleet: int, routes: list[tuple[list[str], int]], extra: dict) -> None:
@@ -427,6 +506,8 @@ def main() -> int:
         else:
             ft = floor_cfg if isinstance(floor_cfg, dict) else dict(zip(("total", "far"), map(float, floor_cfg.split(","))))
             floor = {"total": float(ft["total"]), "far": float(ft["far"]), "source": "fixed"}
+    if args.far_floor is not None:                    # 역 밖 하한만 바꾸기(충족률-형평성 곡선 실험, 기본 끔)
+        floor = apply_far_floor(floor, args.far_floor)
     log["equity_floor"] = None if floor is None else {
         **{k: (round(v, 4) if isinstance(v, float) else v) for k, v in floor.items() if k != "extra"},
         **({"extra": {lab: {"total": round(ft, 4), "far": round(ff, 4)} for lab, _, ft, ff in floor["extra"]}}
@@ -448,7 +529,8 @@ def main() -> int:
         if p.must_stops and use_must:                         # 필수 정류장 → 첫·끝이 아닌 정차로 지나는 이 풀의 노선
             ids = {rid for rid, _, _ in cands}
             must_map = {s: tuple(c.route_id for c in pool if c.route_id in ids and s in c.must) for s in p.must_stops}
-        return A.Model([(rid, cyc, wkeys[rid], sp_of[rid]) for rid, _, cyc in cands], demand.od, ap_, groups, equity=ef,
+        routes_ = [(rid, cyc, wkeys[rid], sp_of[rid]) for rid, _, cyc in cands]
+        return A.Model(routes_, demand.od, ap_, groups, equity=ef,
                        must=must_map, must_min_tph=args.must_min_tph)
 
     def alloc_record(a: dict) -> dict:
@@ -485,13 +567,16 @@ def main() -> int:
                 continue
             m = model(st, floor, route_min)
             a = A.allocate(m, f, extra_starts(m, (lsfx, "eq"), f, st))
-            mf = model(st)
-            free = A.allocate(mf, f, extra_starts(mf, (lsfx, "free"), f, st))   # 같은 근사, 하한 없이
+            free = None
+            if not args.lean:                                 # --lean: 진단용 배분 두 개(하한 없이, 필수 정류장 끔)를 건너뛴다
+                mf = model(st)
+                free = A.allocate(mf, f, extra_starts(mf, (lsfx, "free"), f, st))   # 같은 근사, 하한 없이
             solved.setdefault((lsfx, "eq"), {})[(f, st)] = dict(a["n"])
-            solved.setdefault((lsfx, "free"), {})[(f, st)] = dict(free["n"])
-            fe = m.equity_of(free["n"]) if floor is not None else None
+            if free is not None:
+                solved.setdefault((lsfx, "free"), {})[(f, st)] = dict(free["n"])
+            fe = m.equity_of(free["n"]) if floor is not None and free is not None else None
             must_effect = None
-            if p.must_stops:                                  # 필수 정류장을 끈 같은 배분(하한 같음)과 비교
+            if p.must_stops and not args.lean:                # 필수 정류장을 끈 같은 배분(하한 같음)과 비교
                 mn = model(st, floor, route_min, use_must=False)
                 an = A.allocate(mn, f)
                 wn, fn = a["n"], an["n"]
@@ -506,11 +591,11 @@ def main() -> int:
                     "uncovered_without_must": sorted(s_ for s_ in p.must_stops
                                                      if not any(s_ in by[c].must for c in fn))}
             ids = [k for k, _ in sorted(a["n"].items())]
-            fids = [k for k, _ in sorted(free["n"].items())]
+            fids = [k for k, _ in sorted(free["n"].items())] if free is not None else []
             record(label, f, [(list(by[k].stops), v) for k, v in sorted(a["n"].items())],
                    {"approx": round(a["value"], 1), "service_start": st, "alloc": alloc_record(a),
                     "route_ids": ids, "route_info": route_info(ids), "must_effect": must_effect,
-                    "unconstrained": {"n": free["n"], "approx": round(free["value"], 1),
+                    "unconstrained": None if free is None else {"n": free["n"], "approx": round(free["value"], 1),
                                       "per_vehicle": free["per_vehicle"],
                                       "equity": None if fe is None else {"total": round(fe["total"], 4),
                                                                          "far": round(fe["far"], 4)},
@@ -522,7 +607,7 @@ def main() -> int:
                         "equity_floor_check": None if fe is None else {"total": round(fe["total"], 4),
                                                                        "far": round(fe["far"], 4)}})
             print(f"{label}-f{f}: 근사 {a['value']:.1f}, 하한 만족 {a['feasible']}, 형평 {a['equity']}, "
-                  f"하한 없이 {free['value']:.1f} {fe}", flush=True)
+                  + (f"하한 없이 {free['value']:.1f} {fe}" if free is not None else "하한 없이 (--lean: 안 풂)"), flush=True)
             for w in a["warnings"]:
                 print(f"경고 {label}-f{f}: {w}", flush=True)
         for t in [float(x) for x in args.targets.split(",") if x]:

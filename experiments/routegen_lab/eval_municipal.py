@@ -114,6 +114,8 @@ def main() -> int:
     ap.add_argument("--same-road-tol", type=float, default=0.01,
                     help="--links osm: 원 OSM 길이가 버스 도로 경로와 이 비율 안이면 버스 도로 경로 시간(음수면 끔)")
     ap.add_argument("--out-dir", type=Path, default=None, help="결과 폴더(비우면 <sweep>/<name>)")
+    ap.add_argument("--close-return", action="store_true",
+                    help="--links osm: 끝 → 첫 정류장 복귀 길이 망에 없으면 원 OSM 도로로 잇는다(기본 끔 = 예전과 같음)")
     args = ap.parse_args()
     sw = args.sweep.resolve()
     log = json.loads((sw / "hub_sweep.json").read_text(encoding="utf-8"))
@@ -187,6 +189,21 @@ def main() -> int:
             link["time_s"] = {str(t0): t for t0, t in prof}
             rec["links"].append(link)
             added[(a, b)] = {"from_stop_id": a, "to_stop_id": b, "profile": prof, "distance_m": dist}
+        if ok and args.close_return and len(stops) >= 2:
+            # 끝 → 첫 정류장 복귀(변환기 RETURN 검사)도 망에 길이 없으면 같은 규칙(원 OSM 도로)으로 잇는다. 길이 있으면 그대로.
+            a, b = stops[-1], stops[0]
+            adj2 = {u: list(vs) for u, vs in adj.items()}
+            for (x, y), s in added.items():
+                adj2.setdefault(x, []).append((y, s))
+            if (a, b) not in seg and (a, b) not in added and any(shortest(adj2, a, b, i) is None for i in range(nbin)):
+                got = rn.osm_link(a, b) if rn is not None else None
+                if got is None:
+                    rec["unreachable"].append([r["route_id"], a, b, "return"])
+                    ok = False
+                else:
+                    added[(a, b)] = {"from_stop_id": a, "to_stop_id": b, "profile": got["profile"], "distance_m": got["length_m"]}
+                    rec.setdefault("return_links", []).append({"route_id": r["route_id"], "from": a, "to": b,
+                                                               "osm_m": got["length_m"], "time_rule": "osm_speed"})
         if ok and len(stops) >= 2:
             routes.append({"route_id": r["route_id"], "stops": stops, "vehicles": r["vehicles"]})
         else:
