@@ -13,6 +13,7 @@ PYTHONPATH=src python3 -m busstrike.pipeline --gu guro --strike 1.0 --fleet 11 -
 - `<W>` = 저장소 밖 작업 폴더(guro_exp_work). 데이터·결과는 Git에 올리지 않는다.
 - `--stages demand,gen,eval,pareto,export`로 단계를 고를 수 있다. 끝난 단계·조합은 건너뛴다(이어 돌리기). 같은 `--out`에 다른 입력(구·파업·대수·날짜·데이터 경로)을 주면 멈춘다.
 - `--par`(생성·배분 동시 실행 수, 기본 2), `--eval-groups`(평가 묶음 동시 실행 수, 기본 3).
+- `--no-test-flows`: 역 색인(정류장 → 역)에 테스트 주간 묶음 흐름을 넣지 않고 실험 주간 묶음만 연다. 운영자 대시보드 실행 버튼은 이 옵션으로 돈다([e2e-operator.md](e2e-operator.md) 3절). 기본(옵션 없음)은 예전과 같다(아래 2절 '기존 동작').
 
 ## 2. 흐름
 
