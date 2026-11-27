@@ -62,7 +62,10 @@ function renderStrip() {
 function renderHint() {
   const d = st.data, n = d?.excluded_count ?? (d?.excluded || []).length;
   const cur = st.current?.status === 'available' ? `적용 중: ${esc(st.current.algo_name)} (${esc((st.current.confirmed_at || '').slice(5, 16).replace('T', ' '))})` : '';
-  const cz = st.current?.status === 'available' && st.citizen ? `<span class="ms-citizen" data-state="${esc(st.citizen.state)}">${esc(st.citizen.label)}</span>` : '';
+  // 띠 오른쪽 칸은 좁아 짧은 말만(자세한 문구는 마우스를 올리면, 확정 창에는 전체)
+  const SHORT = {applied: '시민 경로 반영 완료', applying: '시민 경로 반영 중', failed: '시민 경로 반영 실패', pending: '시민 경로 반영 대기',
+                 other: '시민 경로엔 다른 확정 적용 중', unconfigured: '시민 경로 반영 대기'};
+  const cz = st.current?.status === 'available' && st.citizen ? `<span class="ms-citizen" data-state="${esc(st.citizen.state)}" title="${esc(st.citizen.label)}">${esc(SHORT[st.citizen.state] || st.citizen.label)}</span>` : '';
   $('msHint').innerHTML = ['점을 누르면 지표가 바뀜', n ? `M07 미통과 제외 ${n}개` : '', cur, cz].filter(Boolean).join('<br>');
 }
 

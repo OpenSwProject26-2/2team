@@ -1,7 +1,7 @@
 /* 운영자 E2E: 지표 띠·새 시뮬레이션·확정 창(e2e.js). 시안 "현재 시뮬레이터 + 지표 띠" 기준. */
 .app:not(.sim-active) #metricStrip,.app:not(.sim-active) #newRunButton{display:none!important}
 .chip-run{border-color:#2f3a7a;color:#2f3a7a}
-.metric-strip{--ms-teal:#2b8f7c;--ms-navy:#2f3a7a;display:grid;grid-template-columns:minmax(230px,1.05fr) repeat(4,minmax(150px,1fr)) minmax(150px,.75fr);gap:14px;align-items:stretch;
+.metric-strip{--ms-teal:#2b8f7c;--ms-navy:#2f3a7a;display:grid;grid-template-columns:minmax(230px,1fr) repeat(2,minmax(170px,1.22fr)) repeat(2,minmax(150px,.97fr)) minmax(190px,.68fr);gap:14px;align-items:stretch;
   padding:12px 20px;background:#eef1f6;border-bottom:1px solid #e1e6ee;position:relative;min-height:108px}
 .ms-pick{max-width:360px;display:flex;flex-direction:column;justify-content:center;gap:5px;min-width:0}
 .ms-pick small{font-size:12px;color:#5b6679;font-weight:600;display:flex;gap:8px;align-items:center}
@@ -10,13 +10,13 @@
 .ms-pick span{font-size:12px;color:#5b6679}
 .ms-card{background:#fff;border:1px solid #e2e7ef;border-radius:12px;padding:11px 18px;display:flex;flex-direction:column;justify-content:center;gap:3px;min-width:0}
 .ms-card .ms-h{font-size:13px;font-weight:700;color:#38445a;display:flex;gap:8px;align-items:center}
-.ms-card b{font-size:34px;line-height:1.1;font-weight:800;color:#141c2e;letter-spacing:-.5px}
+.ms-card b{font-size:38px;line-height:1.1;font-weight:800;color:#141c2e;letter-spacing:-.5px}
 .ms-card span{font-size:12px;color:#4f5b70}
 .ms-card span b{font-size:12px;color:#141c2e}
 .ms-card.ms-main{border-width:2px}
 .ms-served{border-color:var(--ms-teal)!important}
 .ms-equity{border-color:var(--ms-navy)!important}
-.ms-card.ms-aux b{font-size:28px}
+.ms-card.ms-aux b{font-size:31px}
 .ms-chip{font-style:normal;font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;background:#eef0f4;color:#5f6b7e}
 .ms-chip.main{background:#dff3ea;color:#1d7a5a}
 .ms-side{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;text-align:center}
