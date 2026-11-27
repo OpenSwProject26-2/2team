@@ -62,7 +62,8 @@ function renderStrip() {
 function renderHint() {
   const d = st.data, n = d?.excluded_count ?? (d?.excluded || []).length;
   const cur = st.current?.status === 'available' ? `적용 중: ${esc(st.current.algo_name)} (${esc((st.current.confirmed_at || '').slice(5, 16).replace('T', ' '))})` : '';
-  $('msHint').innerHTML = ['점을 누르면 지표가 바뀜', n ? `M07 미통과 제외 ${n}개` : '', cur].filter(Boolean).join('<br>');
+  const cz = st.current?.status === 'available' && st.citizen ? `<span class="ms-citizen" data-state="${esc(st.citizen.state)}">${esc(st.citizen.label)}</span>` : '';
+  $('msHint').innerHTML = ['점을 누르면 지표가 바뀜', n ? `M07 미통과 제외 ${n}개` : '', cur, cz].filter(Boolean).join('<br>');
 }
 
 // ---------------------------------------------------------------- 실행 목록·진행률
@@ -213,17 +214,32 @@ async function openConfirm() {
     try {
       const r = await api('/api/d/confirm', {region: d.gu, run: st.run || null, id: p.id});
       const ui = r.citizen?.ui;
-      $('cfResult').innerHTML = `<p class="cf-ok"><b>확정됨</b> · ${esc(r.confirm_id)}</p><p>${esc(r.citizen?.label || '')}</p>` +
+      $('cfResult').innerHTML = `<p class="cf-ok"><b>확정됨</b> · ${esc(r.confirm_id)}</p><p id="cfCitizen" data-state="${esc(r.citizen?.state || '')}">${esc(r.citizen?.label || '')}</p>` +
         (ui ? `<p><a class="cf-link" href="${esc(ui)}" target="_blank" rel="noopener">시민 경로 화면 열기 ↗</a></p>` : '<p class="cf-note">시민 경로 화면 주소가 설정되지 않았습니다(config [citizen] ui).</p>');
       $('cfGo').hidden = true;
       loadCurrent();
+      if (r.citizen?.state === 'requested') watchCitizen(d.gu, r.confirm_id);
     } catch (e) { $('cfResult').innerHTML = `<p class="cf-bad">확정 실패: ${esc(e.message)}</p>`; $('cfGo').disabled = false; }
   };
 }
 async function loadCurrent() {
   const region = regionNow();
   st.current = region && st.cfg?.confirm ? await api(`/api/d/confirm/current?region=${encodeURIComponent(region)}`).catch(() => null) : null;
+  st.citizen = st.current?.status === 'available' && st.cfg?.citizen_api ?
+    await api(`/api/d/confirm/citizen?region=${encodeURIComponent(region)}&confirm_id=${encodeURIComponent(st.current.confirm_id)}`).catch(() => null) : null;
   renderHint();
+}
+// 확정 뒤 시민 경로 반영(파업 그래프 다시 빌드·교체, 수 분)을 따라간다. 완료 = 시민 쪽 활성 그래프의 확정 ID가 이 확정과 같을 때.
+function watchCitizen(region, cid) {
+  clearTimeout(st.citizenPoll);
+  const tick = async () => {
+    const c = await api(`/api/d/confirm/citizen?region=${encodeURIComponent(region)}&confirm_id=${encodeURIComponent(cid)}`).catch(() => null);
+    const el = $('cfCitizen');
+    if (c && el) { el.textContent = c.label; el.dataset.state = c.state; }
+    if (c && st.current?.confirm_id === cid) { st.citizen = c; renderHint(); }
+    if (!c || ['applying', 'pending'].includes(c.state)) st.citizenPoll = setTimeout(tick, 5000);
+  };
+  tick();
 }
 
 function toast(text) { const t = $('toast'); if (!t) return; t.textContent = text; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 3500); }

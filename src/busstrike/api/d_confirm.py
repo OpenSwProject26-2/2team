@@ -26,6 +26,7 @@ import shutil
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -297,9 +298,50 @@ class ConfirmStore:
         try:
             with urllib.request.urlopen(req, timeout=5) as r:
                 got = json.loads(r.read().decode("utf-8") or "{}")
-            return {"state": "requested", "label": "시민 경로 반영 요청됨", "response": got, "ui": ui}
+            return {"state": "requested", "label": "시민 경로 반영 요청됨(파업 그래프 다시 빌드 중)", "response": got, "ui": ui}
+        except urllib.error.HTTPError as e:            # 시민 서버가 거절(409 다른 반영 진행 중, 503 설정 없음 등)
+            try:
+                why = json.loads(e.read().decode("utf-8") or "{}").get("message") or e.reason
+            except (OSError, ValueError):
+                why = e.reason
+            return {"state": "pending", "label": f"시민 경로 반영 대기(시민 서버 {e.code}: {why})", "ui": ui}
         except (urllib.error.URLError, OSError, ValueError) as e:
             return {"state": "pending", "label": f"시민 경로 반영 대기(apply 응답 없음: {getattr(e, 'reason', e)})", "ui": ui}
+
+    def citizen_status(self, region: str, cid: str) -> dict:
+        """이 확정이 시민 경로에 반영됐는지. 안끼리 plan_id@revision이 같을 수 있어(plan-eqmc07-f11@1)
+        시민 쪽 활성 그래프의 confirm_id·plan_sha256이 이 확정과 같을 때만 '반영 완료'다."""
+        api, ui = self.paths.citizen_api, self.paths.citizen_ui or None
+        if not api:
+            return {"state": "unconfigured", "label": "시민 경로 반영 대기(시민 서버 주소 미설정)", "ui": ui}
+        if not cid or "/" in cid or cid.startswith("."):
+            raise DataError("INPUT_INVALID", "confirm_id가 필요합니다.")
+        want = None
+        if self.root is not None:
+            p = self.root / region / cid / "confirm.json"
+            if p.is_file():
+                want = json.loads(p.read_text(encoding="utf-8")).get("plan_sha256")
+        url = f"{api}/api/citizen-routing/apply/status?confirm_id={urllib.parse.quote(cid)}"
+        try:
+            with urllib.request.urlopen(url, timeout=5) as r:
+                st = json.loads(r.read().decode("utf-8") or "{}")
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            return {"state": "pending", "label": f"시민 경로 반영 대기(상태 응답 없음: {getattr(e, 'reason', e)})", "ui": ui}
+        active = st.get("active") or {}
+        keep = {"graph_version": active.get("graph_version"), "build_id": active.get("build_id"),
+                "plan_key": active.get("plan_key"), "activated_at": active.get("activated_at"), "ui": ui}
+        if active.get("confirm_id") == cid and (want is None or active.get("plan_sha256") == want) \
+                and st.get("state") != "running":
+            return {"state": "applied", "label": f"시민 경로 반영 완료(파업 그래프 {active.get('graph_version')})", **keep}
+        mine = st.get("confirm_id") in (cid, None)
+        if st.get("state") == "running" and mine:
+            return {"state": "applying", "step": st.get("step"), "label": f"시민 경로 반영 중({st.get('step') or '시작'})", **keep}
+        if st.get("state") in ("failed", "interrupted", "cancelled") and st.get("confirm_id") == cid:
+            msg = (st.get("error") or {}).get("message") or st.get("state")
+            return {"state": "failed", "label": f"시민 경로 반영 실패: {msg} (이전 그래프로 안내 중)", **keep}
+        if active.get("confirm_id"):
+            return {"state": "other", "label": f"시민 경로에는 다른 확정({active.get('confirm_id')})이 적용 중", **keep}
+        return {"state": "pending", "label": "시민 경로 반영 대기", **keep}
 
     def current(self, region: str) -> dict:
         if self.root is None:

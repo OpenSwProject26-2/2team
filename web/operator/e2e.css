@@ -75,3 +75,6 @@
 .cf-note{font-size:11px;color:#6b7890}
 .cf-link{display:inline-block;background:#2f3a7a;color:#fff;padding:7px 12px;border-radius:8px;text-decoration:none;font-weight:700}
 @media (max-width:1200px){.metric-strip{grid-template-columns:repeat(3,minmax(0,1fr))}.ms-progress{inset:8px}}
+/* 시민 경로 반영 상태(작업자 C): 완료 초록, 진행·대기 회색, 실패 빨강 */
+.ms-citizen[data-state="applied"], #cfCitizen[data-state="applied"] { color: #1a7f37; font-weight: 600; }
+.ms-citizen[data-state="failed"], #cfCitizen[data-state="failed"] { color: #b42318; }
