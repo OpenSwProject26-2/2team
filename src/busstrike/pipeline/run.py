@@ -58,10 +58,15 @@ class RunConfig:
     service_start: str = "07:00"
     par: int = 2
     eval_groups: int = 3
+    test_flows: bool = True           # True(예전 그대로) = 역 색인(정류장 → 역)에 테스트 주간 묶음의 승객 흐름도 넣는다.
+                                      # False = 실험 주간 묶음만 읽는다(테스트 주간 파일을 열지 않음, 운영자 대시보드 실행 기본)
     created: dict = field(default_factory=dict)
 
     def record(self) -> dict:
-        return asdict(self)
+        rec = asdict(self)
+        if rec["test_flows"]:          # 예전 run_config.json과 같은 모양(이어 돌리기 입력 비교가 그대로 맞게)
+            del rec["test_flows"]
+        return rec
 
 
 def parse_days(s: str) -> list[str]:
@@ -125,6 +130,7 @@ class Pipeline:
         W = Path(cfg.data_root)
         self.W = W
         self.root = W / "region_all" / f"{cfg.gu}_0610_v4"
+        self.test_root = W / "region_all" / f"{cfg.gu}_0610_v4_test" if cfg.test_flows else self.root
         self.sweep = Path(cfg.sweep)
         self.muni = Path(cfg.muni)
         self.osm = W / "osm" / f"{cfg.gu}_roads.json"
@@ -150,6 +156,20 @@ class Pipeline:
             rec["created"] = {"time": time.strftime("%Y-%m-%dT%H:%M:%S"), "code": _git_head()}
         p.write_text(json.dumps(rec, ensure_ascii=False, indent=1), encoding="utf-8")
 
+    def region_dir(self) -> Path:
+        """walk_eval --region. test_flows=False면 실험 주간 묶음 하나만 링크한 폴더(<out>/region_exp)를 준다:
+        walk_eval은 <region>/<구>_0610_v4_test가 있으면 그 흐름을 역 색인에 더하므로, 링크하지 않아 열지 않게 한다."""
+        if self.cfg.test_flows:
+            return self.W / "region_all"
+        d = self.out / "region_exp"
+        link = d / self.root.name
+        if not link.exists():
+            d.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(self.root, target_is_directory=True)
+        if (d / f"{self.cfg.gu}_0610_v4_test").exists():
+            raise SystemExit(f"실험 주간 전용 폴더에 테스트 주간 묶음이 있다: {d}")
+        return d
+
     # ------------------------------------------------------------ 2
     def bundles(self) -> Path:
         bd = self.out / "bundles"
@@ -167,7 +187,7 @@ class Pipeline:
     # ------------------------------------------------------------ 3·4
     def base_cmd(self, out: Path) -> list:
         c = self.cfg
-        return [sys.executable, LAB / "walk_eval.py", "--sweep", self.sweep, "--region", self.W / "region_all",
+        return [sys.executable, LAB / "walk_eval.py", "--sweep", self.sweep, "--region", self.region_dir(),
                 "--osm", self.osm, "--gu", c.gu, "--muni", f"muni07={self.muni}", "--loop", "demand",
                 "--service-start", c.service_start, "--fleets", c.fleet, "--multi", "--facilities", self.fac,
                 "--strike-rate", c.strike, "--strike-draw", "0", "--no-run", "--gen-jobs", "2",
@@ -219,7 +239,7 @@ class Pipeline:
         ev = self.out / "eval"
         sp = self.out / "eval_spec.json"
         spec = json.loads(sp.read_text(encoding="utf-8")) if sp.exists() else {
-            "gu": self.cfg.gu, "root": str(self.root), "test_root": str(self.W / "region_all" / f"{self.cfg.gu}_0610_v4_test"),
+            "gu": self.cfg.gu, "root": str(self.root), "test_root": str(self.test_root),
             "nb": None, "nb_far": None, "osm": str(self.osm), "combos": [{"station_mode": "same_line", "walk_radius_m": 400}],
             "renumber": False, "equity": True, "keep_events": "", "plans": [],
             "strike": {"rate": self.cfg.strike, "draw": 0, "seed": STRIKE_SEED}, "equity_start": self.cfg.service_start,
@@ -437,6 +457,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--stages", default=",".join(STAGES), help=f"돌릴 단계(쉼표): {', '.join(STAGES)}")
     ap.add_argument("--par", type=int, default=2, help="동시에 돌릴 생성·배분 수")
     ap.add_argument("--eval-groups", type=int, default=3)
+    ap.add_argument("--no-test-flows", action="store_true",
+                    help="역 색인에 테스트 주간 흐름을 넣지 않는다(실험 주간 묶음만 연다). eval_rules에는 test_root = 실험 주간 묶음을 준다"
+                         "(같은 흐름을 두 번 더해도 역 고르기는 비율로 정해져 결과가 같다)")
     a = ap.parse_args(argv)
     floors = [x.strip() for x in a.floors.split(",") if x.strip()]
     for f in floors:
@@ -444,7 +467,8 @@ def main(argv: list[str] | None = None) -> int:
     cfg = RunConfig(gu=a.gu, strike=a.strike, fleet=a.fleet, algos=[x.id for x in AL.select(a.algos)], floors=floors,
                     eval_days=parse_days(a.eval_days), demand_period=a.demand_period, data_root=str(a.data_root.resolve()),
                     sweep=str(a.sweep.resolve()), muni=str(a.muni.resolve()),
-                    params=str(a.params.resolve()) if a.params else "", par=a.par, eval_groups=a.eval_groups)
+                    params=str(a.params.resolve()) if a.params else "", par=a.par, eval_groups=a.eval_groups,
+                    test_flows=not a.no_test_flows)
     stages = set(filter(None, a.stages.split(",")))
     bad = stages - set(STAGES)
     if bad:
