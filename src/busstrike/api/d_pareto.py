@@ -5,6 +5,10 @@
   - plans[].rep: demo/representative.json의 대표안 역할(탑승 우선·균형·형평 우선), plan_sha256으로 맞춤
   - muni.export_path: export/muni.json이 있으면(지자체안 점을 눌러 노선을 볼 수 있게)
 - export는 pareto.json에 있는 안(과 지자체안)만 준다.
+- run(실행 버튼 작업 ID)을 주면 <pareto_root>/<구>/runs/<run_id>/job.json의 out_dir에서 읽는다(d_runs). 주지 않으면 예전 그대로
+  <pareto_root>/<구>/pareto.json.
+- 안마다 refused_rate(만차 거절률 = refused_unserved ÷ demand_total, 둘 다 하루 평균 명)를 덧붙인다. 확정 묶음
+  confirm.json metrics와 같은 정의(metrics_of).
 """
 from __future__ import annotations
 
@@ -13,16 +17,38 @@ import re
 from pathlib import Path
 
 REGION = re.compile(r"^[a-z_]+$")
+METRIC_KEYS = ("served_rate", "equity_far", "isolation", "refused_rate", "time_ratio_rode")
+
+
+def refused_rate(plan: dict | None, demand_total) -> float | None:
+    """만차 거절률 = 만차로 끝내 못 탄 승객(하루 평균) ÷ 셔틀 대상 수요(하루 평균). 둘 중 하나라도 없으면 None."""
+    if not plan or plan.get("refused_unserved") is None or not demand_total:
+        return None
+    return round(float(plan["refused_unserved"]) / float(demand_total), 4)
+
+
+def metrics_of(plan: dict, demand_total) -> dict:
+    """확정 묶음·지표 띠가 같이 쓰는 지표 다섯 개."""
+    return {"served_rate": plan.get("served_rate"), "equity_far": plan.get("equity_far"),
+            "isolation": plan.get("isolation"), "refused_rate": refused_rate(plan, demand_total),
+            "time_ratio_rode": plan.get("time_ratio_rode")}
 
 
 class ParetoStore:
-    def __init__(self, root: str | Path | None):
+    def __init__(self, root: str | Path | None, runs=None):
         self.root = Path(root).resolve() if root else None
-        self._cache: dict[str, tuple[float, dict]] = {}
+        self.runs = runs                      # d_runs.RunManager(있으면 run 인자를 받는다)
+        self._cache: dict[tuple, tuple[float, dict]] = {}
 
-    def _dir(self, region: str) -> Path | None:
+    def _dir(self, region: str, run: str | None = None) -> Path | None:
         if not self.root or not REGION.match(region or ""):
             return None
+        if run:
+            hit = self.runs.find(run) if self.runs is not None else None
+            if not hit or hit[1].get("gu") != region:
+                return None
+            d = Path(hit[1].get("out_dir") or hit[0])
+            return d if (d / "pareto.json").is_file() else None
         d = self.root / region
         return d if (d / "pareto.json").is_file() else None
 
@@ -31,12 +57,12 @@ class ParetoStore:
             return []
         return sorted(p.name for p in self.root.iterdir() if REGION.match(p.name) and (p / "pareto.json").is_file())
 
-    def pareto(self, region: str) -> dict:
-        d = self._dir(region)
+    def pareto(self, region: str, run: str | None = None) -> dict:
+        d = self._dir(region, run)
         if d is None:
-            return {"status": "unavailable", "region": region}
+            return {"status": "unavailable", "region": region, "run": run}
         mtime = (d / "pareto.json").stat().st_mtime
-        hit = self._cache.get(region)
+        hit = self._cache.get((region, run))
         if hit and hit[0] == mtime:
             return hit[1]
         doc = json.loads((d / "pareto.json").read_text(encoding="utf-8"))
@@ -51,12 +77,21 @@ class ParetoStore:
                     p["rep"] = "·".join(roles[p["plan_sha256"]])
         if doc.get("muni") and not doc["muni"].get("export_path") and (d / "export" / "muni.json").is_file():
             doc["muni"]["export_path"] = "export/muni.json"
-        out = {"status": "available", "region": region, "source": str(d), **doc}
-        self._cache[region] = (mtime, out)
+        for p in doc.get("plans", []):
+            p["refused_rate"] = refused_rate(p, doc.get("demand_total"))
+        if doc.get("muni"):
+            doc["muni"]["refused_rate"] = refused_rate(doc["muni"], doc.get("demand_total"))
+        n_excl = len(doc.get("excluded") or [])
+        out = {"status": "available", "region": region, "source": str(d), "run": run, "excluded_count": n_excl, **doc}
+        self._cache[(region, run)] = (mtime, out)
         return out
 
-    def export(self, region: str, plan_id: str) -> dict:
-        doc = self.pareto(region)
+    def plan_dir(self, region: str, run: str | None = None) -> Path | None:
+        """확정이 실행 폴더(eval/, gen/, bundles/)를 찾을 때 쓴다."""
+        return self._dir(region, run)
+
+    def export(self, region: str, plan_id: str, run: str | None = None) -> dict:
+        doc = self.pareto(region, run)
         if doc.get("status") != "available":
             return {"status": "unavailable", "region": region}
         paths = {p["id"]: p.get("export_path") for p in doc.get("plans", [])}
@@ -65,7 +100,7 @@ class ParetoStore:
         rel = paths.get(plan_id)
         if not rel:
             return {"status": "unavailable", "region": region, "plan_id": plan_id}
-        base = (self.root / region).resolve()
+        base = self._dir(region, run).resolve()
         f = (base / rel).resolve()
         if base not in f.parents or not f.is_file():
             return {"status": "unavailable", "region": region, "plan_id": plan_id}
