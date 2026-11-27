@@ -26,6 +26,24 @@ def prepare_both(existing: Path, osm: Path, strike_ids: list[str],
                  shuttle_meta: Path | None = None, scenario_source: str | None = None) -> dict:
     if not strike_ids:
         raise FeedError("파업 대상 A GTFS route_id가 비어 있습니다.")
+    meta = checked_shuttle_meta(existing, shuttle, shuttle_meta)
+    strike_dir.mkdir(parents=True, exist_ok=True)
+    strike_json = strike_dir / "affected-routes.json"
+    strike_json.write_text(json.dumps({"affected_route_ids": strike_ids},
+                                      ensure_ascii=False, indent=2), encoding="utf-8")
+    normal = prepare(existing, None, None, osm, normal_dir)
+    strike = prepare(existing, shuttle, strike_json, osm, strike_dir)
+    normal.update(mode="normal")
+    strike.update(mode="strike", baseline_version=normal["version"],
+                  scenario_source=scenario_source, shuttle_source=meta)
+    (normal_dir / "manifest.json").write_text(json.dumps(normal, ensure_ascii=False, indent=2), encoding="utf-8")
+    (strike_dir / "manifest.json").write_text(json.dumps(strike, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"normal": normal, "strike": strike}
+
+
+def checked_shuttle_meta(existing: Path, shuttle: Path | None,
+                         shuttle_meta: Path | None) -> dict | None:
+    """셔틀 GTFS와 메타의 출처·M07·운행일·버전을 검사하고 메타를 돌려준다."""
     meta = None
     if shuttle:
         if not shuttle_meta:
@@ -48,18 +66,27 @@ def prepare_both(existing: Path, osm: Path, strike_ids: list[str],
             raise FeedError("셔틀 GTFS feed_version과 plan_id@revision이 다릅니다.")
     elif shuttle_meta:
         raise FeedError("--shuttle-meta를 쓰려면 --shuttle도 지정하세요.")
+    return meta
+
+
+def prepare_strike(existing: Path, osm: Path, strike_ids: list[str], strike_dir: Path,
+                   baseline_version: str, shuttle: Path | None = None,
+                   shuttle_meta: Path | None = None, scenario_source: str | None = None) -> dict:
+    """일반 그래프는 그대로 두고 파업 입력만 준비한다(운영자 확정 반영용)."""
+    if not strike_ids:
+        raise FeedError("파업 대상 A GTFS route_id가 비어 있습니다.")
+    if not baseline_version:
+        raise FeedError("일반 교통망 manifest 버전이 필요합니다.")
+    meta = checked_shuttle_meta(existing, shuttle, shuttle_meta)
     strike_dir.mkdir(parents=True, exist_ok=True)
     strike_json = strike_dir / "affected-routes.json"
     strike_json.write_text(json.dumps({"affected_route_ids": strike_ids},
                                       ensure_ascii=False, indent=2), encoding="utf-8")
-    normal = prepare(existing, None, None, osm, normal_dir)
     strike = prepare(existing, shuttle, strike_json, osm, strike_dir)
-    normal.update(mode="normal")
-    strike.update(mode="strike", baseline_version=normal["version"],
+    strike.update(mode="strike", baseline_version=baseline_version,
                   scenario_source=scenario_source, shuttle_source=meta)
-    (normal_dir / "manifest.json").write_text(json.dumps(normal, ensure_ascii=False, indent=2), encoding="utf-8")
     (strike_dir / "manifest.json").write_text(json.dumps(strike, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {"normal": normal, "strike": strike}
+    return strike
 
 
 def main() -> None:

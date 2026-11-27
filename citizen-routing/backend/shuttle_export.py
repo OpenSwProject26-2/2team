@@ -45,7 +45,12 @@ def stop_data(path: Path) -> tuple[dict[str, tuple[float, float]], dict[str, str
 
 def export_checked(scenario_path: Path, plan_path: Path, timetable_path: Path,
                    report_path: Path, stops_path: Path, output: Path,
-                   demo: bool = False) -> dict:
+                   demo: bool = False, service_date: str | None = None,
+                   confirm: dict | None = None) -> dict:
+    """confirm이 있으면 운영자 확정 묶음으로 보고 draft 운행안도 받는다(--demo 아님).
+
+    service_date를 주면 GTFS 운행일을 그 날짜로 쓰고 원래 시뮬레이션 날짜는 메타에 남긴다.
+    """
     scenario_raw = json.loads(scenario_path.read_text(encoding="utf-8-sig"))
     plan_raw = json.loads(plan_path.read_text(encoding="utf-8-sig"))
     timetable = sim_io.timetable_from_dict(json.loads(timetable_path.read_text(encoding="utf-8-sig")))
@@ -59,15 +64,18 @@ def export_checked(scenario_path: Path, plan_path: Path, timetable_path: Path,
         raise FeedError("C 운행안과 M05 시나리오 ID가 다릅니다.")
     if scenario_raw.get("network_snapshot_id") != plan_raw.get("network_snapshot_id", scenario_raw.get("network_snapshot_id")):
         raise FeedError("운행안과 시나리오의 network_snapshot_id가 다릅니다.")
-    if plan_raw.get("status") == "draft" and not demo:
+    if plan_raw.get("status") == "draft" and not demo and not confirm:
         raise FeedError("draft 운행안은 --demo를 명시해야 합니다.")
+    if demo and confirm:
+        raise FeedError("운영자 확정 묶음은 --demo로 내보내지 않습니다.")
     coords, names = stop_data(stops_path)
     used = {stop.stop_id for trip in timetable.trips if trip.in_service for stop in trip.stop_times}
     missing = used - coords.keys()
     if missing:
         raise FeedError(f"M05 정차점 좌표가 없습니다: {sorted(missing)[:10]}")
     output.mkdir(parents=True, exist_ok=True)
-    export_gtfs(timetable, scenario.service_date, output, coords)
+    gtfs_date = service_date or scenario.service_date
+    export_gtfs(timetable, gtfs_date, output, coords)
     stops_file = output / "stops.txt"
     with stops_file.open(encoding="utf-8", newline="") as stream:
         stop_rows = list(csv.DictReader(stream))
@@ -85,9 +93,11 @@ def export_checked(scenario_path: Path, plan_path: Path, timetable_path: Path,
     meta = {
         "plan_id": timetable.plan_id, "revision": timetable.plan_revision,
         "network_snapshot_id": scenario_raw["network_snapshot_id"],
-        "scenario_id": scenario.scenario_id, "service_date": scenario.service_date,
+        "scenario_id": scenario.scenario_id, "service_date": gtfs_date,
+        "simulated_service_date": scenario.service_date,
         "source_kind": "SYNTHETIC_DEMO" if demo else "C_TEAM_CANDIDATE",
-        "status": "draft" if demo else "candidate_not_approved",
+        "status": ("draft" if demo else "operator_confirmed_not_approved" if confirm
+                   else "candidate_not_approved"),
         "m07": {"pass": report["pass"], "fully_verified": bool(report.get("fully_verified")),
                 "not_run_checks": report.get("not_run_checks"),
                 "not_verified_checks": report.get("not_verified_checks")},
@@ -96,6 +106,9 @@ def export_checked(scenario_path: Path, plan_path: Path, timetable_path: Path,
             ("scenario", scenario_path), ("plan", plan_path),
             ("timetable", timetable_path), ("m07_report", report_path), ("stops", stops_path))},
     }
+    if confirm:
+        meta["confirm"] = {key: confirm.get(key) for key in (
+            "confirm_id", "confirmed_at", "gu", "plan_sha256", "algo_name", "run_id")}
     (output / "shuttle-meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     return meta
 
