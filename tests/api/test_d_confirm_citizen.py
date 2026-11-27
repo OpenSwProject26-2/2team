@@ -156,3 +156,24 @@ def test_http_route_returns_citizen_status(env):
         assert got["state"] == "applied"
     finally:
         srv.shutdown()
+
+
+def test_unreachable_citizen_server_is_pending_without_error(tmp_path, monkeypatch):
+    # 머지용 브랜치는 시민 길찾기를 포함하지 않는다: 주소가 있어도 응답이 없으면 확정·상태 모두 '반영 대기'
+    paths, ps = _run(tmp_path)
+    object.__setattr__(paths, "citizen_api", "http://127.0.0.1:1")
+    cs = ConfirmStore(paths, ps, None, SelectionStore(tmp_path / "sel.json"))
+    monkeypatch.setattr(cs, "_shuttle_check", lambda d: (True, "", {}))
+    r = cs.confirm("guro", None, "feeder_lg0_fill0__floor_none")
+    assert r["status"] == "confirmed" and r["citizen"]["state"] == "pending"
+    got = cs.citizen_status("guro", r["confirm_id"])
+    assert got["state"] == "pending" and "반영 대기" in got["label"]
+
+
+def test_no_citizen_address_confirm_and_status_are_pending(tmp_path, monkeypatch):
+    paths, ps = _run(tmp_path)
+    cs = ConfirmStore(paths, ps, None, None)
+    monkeypatch.setattr(cs, "_shuttle_check", lambda d: (True, "", {}))
+    r = cs.confirm("guro", None, "feeder_lg0_fill0__floor_none")
+    assert r["citizen"]["state"] == "pending" and "반영 대기" in r["citizen"]["label"]
+    assert "반영 대기" in cs.citizen_status("guro", r["confirm_id"])["label"]
