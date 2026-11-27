@@ -69,6 +69,50 @@ Invoke-RestMethod http://127.0.0.1:8775/api/citizen-routing/status
 
 현재 로컬 검증에서는 일반 A 707개 노선, 파업 A 614개 노선(지정 93개 제외), 구로 데모 셔틀 4개 노선·50 운행편·445 정차시각을 준비했습니다. M07은 `pass=true`이나 `fully_verified=false`이며 확정 B/C 영업 운행안은 연결되지 않았습니다. **이 수치는 로컬 데모 입력의 결과이지 새 clone의 기본 제공 데이터가 아닙니다.**
 
+## 6. 운영자 확정 반영 (자동)
+
+운영자 대시보드에서 파레토 안을 확정하면 확정 묶음이 생깁니다(작업자 A가 쓰고 시민 쪽이 읽는 계약).
+
+```
+<confirm_root>/<gu>/CURRENT                    지금 적용할 confirm_id 한 줄
+<confirm_root>/<gu>/<confirm_id>/confirm.json  files: {scenario|plan|timetable|m07_report|stops: {path, sha256}}
+  scenario.json  plan.json  timetable.json  verifier_report.json  stops.csv
+```
+
+`runtime/apply-config.json`(커밋하지 않음)에 경로를 적습니다.
+
+```json
+{"confirm_root": "C:/path/confirm_root", "gu": "guro",
+ "a_gtfs": "C:/path/gtfs_bus_rail_combined.zip", "osm": "C:/path/seoul.osm.pbf",
+ "normal_dir": "runtime/otp", "runtime": "runtime", "ports": [8811, 8812], "keep": 2,
+ "container_prefix": "citizen-e2e", "build_heap": "6g", "serve_heap": "4g",
+ "presets": {"normal_url": "http://127.0.0.1:8080/otp/gtfs/v1", "stations_csv": "C:/path/network/stations.csv",
+             "origins_csv": "C:/path/factorial_1126/guro/demo/origins.csv"}}
+```
+
+반영은 `POST /api/citizen-routing/apply`(본문 `{}` 또는 `{"confirm_id": "..."}`)나 `py -3 -B -m backend.apply_confirm --config runtime/apply-config.json`으로 시작합니다. 별도 프로세스로 돌고 단계별 상태는 `GET /api/citizen-routing/apply/status`(`runtime/apply/status.json`)에 남습니다.
+
+1. **verify**: CURRENT의 묶음을 읽어 파일 sha256을 confirm.json과 대조하고, M07 pass·실패 0건, 모든 셔틀 노선이 순환(출발 정류장으로 돌아오고 닫는 공차 ≤ 5분)인지 봅니다. 편도가 섞이면 `ONE_WAY_ROUTE`로 거부합니다.
+2. **export**: `shuttle_export`를 `--demo` 없이 확정 모드로 실행합니다. 파이프라인 계획은 `status=draft`이지만 확정 묶음일 때만 받고 상태는 `operator_confirmed_not_approved`로 적습니다(운행 승인 아님). 셔틀 운행일은 A GTFS 운행일 중 같은 날짜 → 같은 요일 → 첫 운행일 순으로 옮기고 원래 시뮬레이션 날짜를 메타에 남깁니다.
+3. **route_map**: 시나리오 `strike_route_ids`를 A GTFS `route_id`와 **정확히 같은 것만** 맞춥니다(`runtime/apply/route_map_<confirm_id>.csv`, 같은 표는 `py -3 -B -m backend.strike_route_map`으로도 만듭니다).
+4. **prepare**: 일반 그래프는 그대로 두고 파업 입력만 새 폴더에 준비합니다(OSM은 하드링크).
+5. **build**: 새 폴더에서 OTP 그래프를 빌드합니다(Docker `--network host`, 힙 6GB). 같은 입력(파업 입력 버전 + plan_sha256)의 그래프가 보관돼 있으면 빌드를 생략합니다.
+6. **swap**: 다른 포트(8811/8812)에 새 파업 OTP를 띄워 응답을 확인한 뒤 `runtime/strike-active.json`을 바꾸고 이전 OTP를 내립니다. 빌드·적재 중이나 실패하면 이전 그래프가 계속 응답합니다.
+7. **presets**(설정 시): 시연 출발지를 고릅니다(아래).
+
+완료 조건은 graph-version.txt = manifest 버전, 그래프의 셔틀 출처 `plan_id@revision`·plan_sha256 = 확정 값입니다. 실제 안들은 `plan_id@revision`이 같을 수 있어(`plan-eqmc07-f11@1`) plan_sha256으로 구별합니다. 그래프 폴더는 최신 2개만 남깁니다. 빌드가 5분을 넘거나 시연 중 빌드할 수 없으면 보관된 그래프로 `POST /api/citizen-routing/apply/switch {"build_id": "g-..."}`, 같은 입력만 허용하려면 `POST /apply {"prebuilt_only": true}`를 씁니다. 취소는 `POST /api/citizen-routing/apply/cancel`.
+
+시민 서버는 `--runtime runtime`(기본)에서 `strike-active.json`을 요청마다 읽어 파업 OTP 주소를 정합니다. 활성 표시가 없으면 기존 `--strike-otp-dir`/`--strike-otp-url`을 씁니다.
+
+### 세 결과 비교와 시연 출발지
+
+- `GET /api/citizen-routing/compare3?origin_lat=..&origin_lon=..&destination_lat=..&destination_lon=..&departure_at=..` → `results.{normal, strike_no_shuttle, strike_shuttle}`(각각 기존 plan 응답 형식), `best`, `delta_seconds`(평소 대비), `shuttle_gain_seconds`(셔틀 없음 대비), `confirm`(지금 적용된 확정). 기존 `/plan`·`/compare`는 그대로입니다.
+- 화면의 "평소 · 파업 · 파업+셔틀 나란히 보기" 버튼이 세 카드(총 소요시간, 도보 거리, 환승, 구간 수단)를 보여 주고, 카드를 누르면 그 결과를 지도에 그립니다. 셔틀 구간은 굵은 청록 선, 파업으로 빠진 노선은 기존처럼 빨간 점선입니다. 화면 위쪽에 적용된 확정(안 이름, 확정 시각, plan_id@revision, M07 상태)이 뜹니다.
+- `GET /api/citizen-routing/presets`: 반영 때 고른 시연 출발지. 후보는 역 800m 밖 셔틀 정류장(요인 실험 `demo/origins.csv`의 정류장 우선), 목적지는 그 노선이 닿는 역과 순환 반대편 정류장. "파업+셔틀"이 셔틀을 쓰고 "셔틀 없음"보다 15분 이상 빠른 곳을 최대 5곳 고르고, 모자라면 기준을 낮추지 않고 `near_misses`(화면에 "기준 미달")로 따로 줍니다. 셔틀 구간 OTP 시간과 M05 시간표 같은 구간의 차이(`m05_checks`)도 함께 남깁니다.
+- 주소 `/?preset=0`은 첫 프리셋으로 세 결과를 바로 엽니다(헤드리스 캡처용).
+
+한계: 셔틀 시간은 시뮬레이터 도로 소요시간 기준입니다. 셔틀 만차·지하철 혼잡은 OTP가 모릅니다. A GTFS·셔틀 GTFS에 shapes가 없으면 버스·셔틀 선은 정차점을 잇는 개략선입니다. 지금 이 PC의 A GTFS는 버스 전용(지하철 없음, 11/02 하루)이어서 지하철 환승 경로는 나오지 않습니다.
+
 ## 화면과 한계
 
 파업 모드에서는 지도 위에 시나리오 기준 안내가 표시되고, 대표 일반 경로에서 제외된 A 노선 구간은 빨간 점선으로 표시됩니다. 선택한 경로는 교통수단별 색으로 강조됩니다. 새 OTP 응답이 올 때까지 이전 선을 유지한 후 교체합니다. 데모 셔틀은 스모크 데모임을 표시합니다. A GTFS와 데모 셔틀에 `shapes.txt`가 없어 차량 선 일부는 정차점 연결 개략선이며 실제 도로 선형이 아닙니다.
