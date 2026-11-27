@@ -253,7 +253,17 @@ class RunManager:
             if s.get("state") in ("done", "failed", "cancelled"):
                 return self._view(d, j, s)
             pid = s.get("pid")
-            if s.get("state") != "queued" and _alive(pid, run_id):
+            proc = self.procs.get(run_id)
+            if proc is not None and proc.poll() is None:   # 이 서버가 띄운 프로세스: 시작 직후(exec 전)라도 확실히 끈다
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)          # start_new_session이라 그룹 ID = pid
+                except OSError:
+                    pass
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+            elif s.get("state") != "queued" and _alive(pid, run_id):   # 서버 재시작 뒤 이어 지켜보던 프로세스
                 try:
                     os.killpg(os.getpgid(int(pid)), signal.SIGTERM)
                 except OSError:
