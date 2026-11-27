@@ -118,18 +118,16 @@ def load_confirm(confirm_root: Path, gu: str, confirm_id: str | None = None) -> 
     if mismatched:
         raise ConfirmError("CONFIRM_HASH_MISMATCH", f"sha256이 confirm.json과 다릅니다: {mismatched}")
     plan = json.loads(paths["plan"].read_text(encoding="utf-8-sig"))
-    if confirm.get("plan_sha256") and confirm["plan_sha256"].lower() != files_sha(files, "plan"):
-        raise ConfirmError("CONFIRM_HASH_MISMATCH", "plan_sha256이 files.plan과 다릅니다.")
+    # plan_sha256은 곡선(pareto.json) 위 안의 식별자다. 묶음 plan.json(M05 입력 형식) 해시와 다를 수 있어
+    # 무결성은 files.plan.sha256으로만 본다.
+    if not isinstance(confirm.get("plan_sha256"), str) or not confirm["plan_sha256"]:
+        raise ConfirmError("CONFIRM_INVALID", "confirm.json에 plan_sha256이 필요합니다.")
     if plan.get("plan_id") != confirm.get("plan_id") or plan.get("revision") != confirm.get("revision"):
         raise ConfirmError("CONFIRM_INVALID", "plan.json의 plan_id/revision이 confirm.json과 다릅니다.")
     m07 = confirm.get("m07") or {}
     if not m07.get("pass") or m07.get("failed_checks"):
         raise ConfirmError("M07_NOT_PASSED", "M07 pass=true, 실패 검사 0건인 확정만 반영합니다.")
     return {"confirm": confirm, "dir": directory, "paths": paths, "plan": plan}
-
-
-def files_sha(files: dict, name: str) -> str:
-    return _file_entry(name, files[name])[1].lower()
 
 
 def check_loops(bundle: dict, max_closing_s: int = MAX_CLOSING_S) -> dict:
@@ -486,7 +484,7 @@ class Applier:
                                     f"{manifest['existing_stats']['routes']}개 + 셔틀 "
                                     f"{len(manifest['shuttle_route_ids'])}개")
             # 실제 안들은 plan_id@revision이 같을 수 있어(plan-eqmc07-f11@1) plan_sha256까지 묶는다.
-            plan_key = (confirm.get("plan_sha256") or sha(bundle["paths"]["plan"]))[:12]
+            plan_key = confirm["plan_sha256"][:12]
             build_dir = graphs / f"g-{manifest['version']}-{plan_key}"
             with self._step("build") as entry:
                 if graph_ready(build_dir):

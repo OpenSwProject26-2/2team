@@ -76,6 +76,16 @@ class ConfirmBundleTests(unittest.TestCase):
         self.assertEqual(bundle["confirm"]["confirm_id"], "c1")
         self.assertTrue(bundle["paths"]["timetable"].is_file())
 
+    def test_operator_style_plan_sha256_is_an_identifier_not_the_bundle_file_hash(self):
+        # 작업자 A 스키마: plan_sha256 = 파이프라인 운행안 파일 해시(pareto.json), 묶음 plan.json 해시와 다를 수 있다.
+        out = write_bundle(self.root, "20261127T130000-0123abcd")
+        confirm = json.loads((out / "confirm.json").read_text(encoding="utf-8"))
+        confirm["plan_sha256"] = "a" * 64
+        confirm["strike"]["seed"] = 0
+        (out / "confirm.json").write_text(json.dumps(confirm), encoding="utf-8")
+        bundle = ac.load_confirm(self.root, "guro")
+        self.assertEqual(bundle["confirm"]["plan_sha256"], "a" * 64)
+
     def test_hash_mismatch_is_rejected(self):
         out = write_bundle(self.root, "c1")
         (out / "plan.json").write_text('{"plan_id": "changed"}', encoding="utf-8")
