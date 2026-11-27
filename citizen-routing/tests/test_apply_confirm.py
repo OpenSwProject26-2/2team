@@ -128,6 +128,18 @@ class ConfirmBundleTests(unittest.TestCase):
         self.assertEqual(summary["r01"]["closing_s"], 120)
 
 
+    def test_operator_plan_without_legs_is_checked_from_timetable(self):
+        # 운영자 확정 묶음 plan.json(routes[].stops, legs 없음)은 M05 시간표 운행 순서로 순환을 본다
+        write_bundle(self.root, "c1", operator_plan=True)
+        summary = ac.check_loops(ac.load_confirm(self.root, "guro"))
+        self.assertEqual(summary["r01"], {"closing_s": 120, "legs": 2})
+
+    def test_operator_plan_one_way_in_timetable_is_rejected(self):
+        write_bundle(self.root, "c1", operator_plan=True, closing=["C", "B"])
+        with self.assertRaises(ac.ConfirmError) as caught:
+            ac.check_loops(ac.load_confirm(self.root, "guro"))
+        self.assertEqual(caught.exception.code, "ONE_WAY_ROUTE")
+
 class DateAndRouteMapTests(unittest.TestCase):
     def test_same_weekday_is_chosen(self):
         days = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"]
@@ -286,6 +298,14 @@ class ApplyStateTests(unittest.TestCase):
             ac.Applier(self.env.config(), runner).run()
         self.assertEqual(caught.exception.code, "GRAPH_VERSION_MISMATCH")
         self.assertEqual(ac.read_active(self.env.runtime), before)
+
+    def test_failure_before_loading_still_names_requested_confirm(self):
+        # 묶음을 읽기 전에 실패해도 상태에 요청한 확정 ID가 남아야 운영자 화면이 실패를 알 수 있다
+        write_bundle(self.env.confirm_root, "c1")
+        with self.assertRaises(ac.ConfirmError):
+            ac.Applier(self.env.config(), FakeRunner()).run("c9")
+        status = self.status()
+        self.assertEqual((status["state"], status["requested_confirm_id"]), ("failed", "c9"))
 
     def test_status_never_contains_passenger_fields(self):
         write_bundle(self.env.confirm_root, "c1")

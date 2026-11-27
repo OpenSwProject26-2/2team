@@ -24,7 +24,10 @@ def trip(trip_id, start, in_service, stops, leg, cycle=0):
 def write_bundle(root: Path, confirm_id: str = "c1", gu: str = "guro", *,
                  service_date: str = "2026-10-28", closing: list[str] | None = None,
                  closing_step_s: int = 120, status: str = "draft", plan_extra: dict | None = None,
-                 strike_ids: list[str] | None = None, current: bool = True) -> Path:
+                 strike_ids: list[str] | None = None, current: bool = True,
+                 operator_plan: bool = False) -> Path:
+    """operator_plan=True면 운영자 대시보드(작업자 A)가 쓰는 파이프라인 형식 plan
+    (routes[].stops·vehicles, legs 없음)으로 쓴다. 순환 여부는 M05 시간표로만 알 수 있다."""
     out = root / gu / confirm_id
     out.mkdir(parents=True, exist_ok=True)
     scenario = {
@@ -48,6 +51,11 @@ def write_bundle(root: Path, confirm_id: str = "c1", gu: str = "guro", *,
                 {"in_service": True, "stop_ids": ["A", "B", "C"]},
                 {"in_service": False, "stop_ids": closing}]}],
             "trips": [], "vehicle_duties": [], **(plan_extra or {})}
+    if operator_plan:
+        plan = {"network_snapshot_id": "net-test", "plan_id": "plan-test", "revision": 1,
+                "routes": [{"route_id": "r01", "stops": ["A", "B", "C"], "vehicles": 1}],
+                "scenario_id": "sc-test", "status": "candidate",
+                "source": {"plan_ref": "x__floor_none", "run_id": "run-test"}, **(plan_extra or {})}
     trips = []
     for cycle in range(2):
         base = 25200 + cycle * 600

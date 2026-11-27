@@ -149,7 +149,12 @@ def check_loops(bundle: dict, max_closing_s: int = MAX_CLOSING_S) -> dict:
     if not isinstance(routes, list) or not routes:
         raise ConfirmError("CONFIRM_INVALID", "plan.json에 노선이 없습니다.")
     closing_by_route: dict[str, int] = {}
+    timetable_legs: dict[str, dict[int, dict]] = {}
     for trip in timetable.get("trips") or []:
+        if trip.get("stop_times"):
+            timetable_legs.setdefault(trip["route_id"], {}).setdefault(int(trip.get("leg_index") or 0), {
+                "in_service": bool(trip.get("in_service")),
+                "stop_ids": [st["stop_id"] for st in trip["stop_times"]]})
         if trip.get("in_service") is False and trip.get("stop_times"):
             times = [st["sched_s"] for st in trip["stop_times"]]
             closing_by_route[trip["route_id"]] = max(closing_by_route.get(trip["route_id"], 0),
@@ -158,8 +163,13 @@ def check_loops(bundle: dict, max_closing_s: int = MAX_CLOSING_S) -> dict:
     for route in routes:
         rid = route.get("route_id")
         legs = route.get("legs")
+        if legs is None and "stops" in route:
+            # 운영자 확정 묶음(파이프라인 형식 plan: routes[].stops, legs 없음)은 M05 시간표가 실제로 돈
+            # 구간 순서(leg_index별 대표 운행)로 고리를 만든다
+            by_index = timetable_legs.get(rid) or {}
+            legs = [by_index[i] for i in sorted(by_index)]
         if not isinstance(legs, list) or not legs:
-            raise ConfirmError("CONFIRM_INVALID", f"노선 {rid}에 legs가 없습니다.")
+            raise ConfirmError("CONFIRM_INVALID", f"노선 {rid}에 legs가 없습니다(plan·시간표 모두).")
         if not any(leg.get("in_service") for leg in legs):
             raise ConfirmError("ONE_WAY_ROUTE", f"노선 {rid}에 영업 구간이 없습니다.")
         for prev, leg in zip(legs, legs[1:]):
@@ -435,7 +445,7 @@ class Applier:
     def run(self, confirm_id: str | None = None, prebuilt_only: bool = False) -> dict:
         lock = self._lock()
         self.status = {"state": "running", "step": None, "steps": [], "started_at": now(),
-                       "pid": os.getpid(), "prebuilt_only": prebuilt_only, "cache_hit": False,
+                       "requested_confirm_id": confirm_id, "pid": os.getpid(), "prebuilt_only": prebuilt_only, "cache_hit": False,
                        "slow": False, "error": None}
         self._save()
         try:
