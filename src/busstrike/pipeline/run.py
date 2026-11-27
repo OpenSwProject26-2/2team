@@ -165,7 +165,12 @@ class Pipeline:
         link = d / self.root.name
         if not link.exists():
             d.mkdir(parents=True, exist_ok=True)
-            link.symlink_to(self.root, target_is_directory=True)
+            try:
+                link.symlink_to(self.root, target_is_directory=True)
+            except FileExistsError:                      # 생성·배분 스레드가 동시에 만들 때
+                pass
+            if link.resolve() != self.root.resolve():
+                raise SystemExit(f"실험 주간 전용 링크가 다른 곳을 가리킨다: {link}")
         if (d / f"{self.cfg.gu}_0610_v4_test").exists():
             raise SystemExit(f"실험 주간 전용 폴더에 테스트 주간 묶음이 있다: {d}")
         return d
@@ -391,6 +396,7 @@ class Pipeline:
         if "demand" in stages:
             self.bundles()
         if "gen" in stages:
+            self.region_dir()                              # 스레드 시작 전에 한 번(실험 주간 전용 링크)
             self.generate()
         rows = self.plan_index()
         if "eval" in stages:

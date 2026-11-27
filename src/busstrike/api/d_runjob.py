@@ -243,6 +243,7 @@ def run(run_dir: Path) -> int:
                     par=paths.par, eval_groups=paths.eval_groups, test_flows=False)
         P = Pipeline(RunConfig(floors=["none", "1.0"], **base), run_dir)
         P.write_config()
+        P.region_dir()                                     # 생성 스레드보다 먼저(동시에 링크를 만들다 실패하지 않게)
         P.bundles()
         st.end("assemble", f"manifest {'재사용' if got['cached'] else '새로'} · 입력 {len(got['manifest']['files'])}개")
         A = P.algos
