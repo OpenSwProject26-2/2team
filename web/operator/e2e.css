@@ -1,22 +1,22 @@
 /* 운영자 E2E: 지표 띠·새 시뮬레이션·확정 창(e2e.js). 시안 "현재 시뮬레이터 + 지표 띠" 기준. */
 .app:not(.sim-active) #metricStrip,.app:not(.sim-active) #newRunButton{display:none!important}
 .chip-run{border-color:#2f3a7a;color:#2f3a7a}
-.metric-strip{--ms-teal:#2b8f7c;--ms-navy:#2f3a7a;display:grid;grid-template-columns:minmax(230px,1.05fr) repeat(4,minmax(150px,1fr)) minmax(150px,.75fr);gap:14px;align-items:stretch;
+.metric-strip{--ms-teal:#2b8f7c;--ms-navy:#2f3a7a;display:grid;grid-template-columns:minmax(285px,1fr) repeat(2,minmax(170px,1.22fr)) repeat(2,minmax(150px,.97fr)) minmax(225px,.7fr);gap:14px;align-items:stretch;
   padding:12px 20px;background:#eef1f6;border-bottom:1px solid #e1e6ee;position:relative;min-height:108px}
 .ms-pick{max-width:360px;display:flex;flex-direction:column;justify-content:center;gap:5px;min-width:0}
-.ms-pick small{font-size:12px;color:#5b6679;font-weight:600;display:flex;gap:8px;align-items:center}
-.ms-pick select{font-size:11px;padding:2px 4px;border:1px solid #d3dae6;border-radius:6px;background:#fff;max-width:220px;color:#47566c}
+.ms-pick small{font-size:12px;color:#5b6679;font-weight:600;display:flex;gap:8px;align-items:center;white-space:nowrap}
+.ms-pick select{font-size:11px;padding:2px 4px;border:1px solid #d3dae6;border-radius:6px;background:#fff;max-width:175px;min-width:0;color:#47566c}
 .ms-pick strong{font-size:24px;font-weight:800;color:#141c2e;letter-spacing:-.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ms-pick span{font-size:12px;color:#5b6679}
 .ms-card{background:#fff;border:1px solid #e2e7ef;border-radius:12px;padding:11px 18px;display:flex;flex-direction:column;justify-content:center;gap:3px;min-width:0}
 .ms-card .ms-h{font-size:13px;font-weight:700;color:#38445a;display:flex;gap:8px;align-items:center}
-.ms-card b{font-size:34px;line-height:1.1;font-weight:800;color:#141c2e;letter-spacing:-.5px}
+.ms-card b{font-size:38px;line-height:1.1;font-weight:800;color:#141c2e;letter-spacing:-.5px}
 .ms-card span{font-size:12px;color:#4f5b70}
 .ms-card span b{font-size:12px;color:#141c2e}
 .ms-card.ms-main{border-width:2px}
 .ms-served{border-color:var(--ms-teal)!important}
 .ms-equity{border-color:var(--ms-navy)!important}
-.ms-card.ms-aux b{font-size:28px}
+.ms-card.ms-aux b{font-size:31px}
 .ms-chip{font-style:normal;font-size:10px;font-weight:700;padding:2px 7px;border-radius:6px;background:#eef0f4;color:#5f6b7e}
 .ms-chip.main{background:#dff3ea;color:#1d7a5a}
 .ms-side{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;text-align:center}
@@ -24,7 +24,7 @@
 .ms-badge.ok{background:#d9f2e6;color:#1d7a5a}
 .ms-badge.bad{background:#fde2e4;color:#b4232f}
 .ms-side small{font-size:11px;color:#5b6679;line-height:1.4}
-#msConfirm{border:0;border-radius:9px;background:var(--ms-navy);color:#fff;font-size:12px;font-weight:700;padding:8px 10px;line-height:1.3}
+#msConfirm{white-space:nowrap;border:0;border-radius:9px;background:var(--ms-navy);color:#fff;font-size:12px;font-weight:700;padding:8px 10px;line-height:1.3}
 #msConfirm:disabled{background:#c6cbd8;cursor:not-allowed}
 .metric-strip.ms-empty .ms-card b{color:#9aa3b5}
 .metric-strip.ms-running>.ms-card,.metric-strip.ms-running>.ms-side{visibility:hidden}
@@ -75,3 +75,8 @@
 .cf-note{font-size:11px;color:#6b7890}
 .cf-link{display:inline-block;background:#2f3a7a;color:#fff;padding:7px 12px;border-radius:8px;text-decoration:none;font-weight:700}
 @media (max-width:1200px){.metric-strip{grid-template-columns:repeat(3,minmax(0,1fr))}.ms-progress{inset:8px}}
+/* 시민 경로 반영 상태(작업자 C): 완료 초록, 진행·대기 회색, 실패 빨강 */
+.ms-citizen[data-state="applied"], #cfCitizen[data-state="applied"] { color: #1a7f37; font-weight: 600; }
+.ms-citizen[data-state="failed"], #cfCitizen[data-state="failed"] { color: #b42318; }
+/* 지도·관측 화면 진입점 없앰(11/27): 관측 전용 머리줄 조작(합성 DEMO ↔ A GTFS 관측 자료 전환)과 돌아가기 단추를 숨긴다. 자료 출처는 오른쪽 칩으로 보인다 */
+.app.lab-active.sim-active #dataModeControls,.app #simModeButton{display:none!important}

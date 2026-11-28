@@ -419,6 +419,11 @@ def make_handler(store: Store, simulation: SimulationStore | None = None, lab=No
                     if runs is None:
                         raise DataError("DATA_INCOMPLETE", "실행 결과 폴더가 설정되지 않았습니다(config/local_paths.toml).")
                     return self._json(runs.get_any(parts.path.rsplit("/", 1)[-1]))
+                if parts.path == "/api/d/confirm/citizen":
+                    if confirms is None:
+                        raise DataError("DATA_INCOMPLETE", "확정 묶음 폴더가 설정되지 않았습니다(config/local_paths.toml).")
+                    return self._json(confirms.citizen_status(query.get("region", [""])[0],
+                                                              query.get("confirm_id", [""])[0]))
                 if parts.path in ("/api/d/confirm/preview", "/api/d/confirm/current"):
                     if confirms is None:
                         raise DataError("DATA_INCOMPLETE", "확정 묶음 폴더가 설정되지 않았습니다(config/local_paths.toml).")

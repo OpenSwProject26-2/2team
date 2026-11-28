@@ -844,10 +844,22 @@ function bindUI() {
   $('#resetAll').onclick=async()=>{state.selectedRouteId=null;state.query='';state.hour='07';state.demandMode='total';$('#routeSearch').value='';if(state.mode==='real') {try {const response=await fetch('/api/d/sources/refresh',{method:'POST'});const result=await response.json();if(!response.ok)throw new Error(result.message);state.sources=null;state.networkCache.clear();state.circleCache.clear();}catch(error){toast('새로고침 실패 · 이전 정상본 유지: '+error.message);}}await loadData();};
 }
 bindUI();
-state.extent='full';$('#districtExtent').value='full';
+// 첫 화면 = 시뮬레이션 화면(지도·관측 화면 진입점 없앰). 기본 구는 주소 ?region= 또는 구로.
+// 서울 전체 관측 자료(/api/d/dashboard·network·real-demand?district=all, 서울 비율 개요)는 기다리지 않는다.
+const startRegion=new URLSearchParams(location.search).get('region')||'guro';
+state.district=startRegion;state.extent=startRegion==='all'?'full':'inside';$('#districtExtent').value=state.extent;
 try {const districtData=await get('/api/d/districts');for(const d of districtData.districts){const option=document.createElement('option');option.value=d.id;option.textContent=d.name;$('#districtSelect').append(option);}}catch(error){$('#districtStatus').textContent=`경계 자료 미연결: ${error.message}`;}
+if([...$('#districtSelect').options].some(o=>o.value===state.district))$('#districtSelect').value=state.district;else{state.district='all';state.extent='full';$('#districtExtent').value='full';}
 try {const sources=await get('/api/d/sources');if(sources.A?.status==='ready'||sources.reference?.status==='ready'){state.mode='real';state.listmode='all';state.observedMode=true;$('#observedToggle').checked=true;}}catch { /* DEMO는 별도로 계속 표시한다. */ }
-await Promise.all([initMap(),loadOverview().catch(error=>{toast('서울 전체 비율 연결 실패: '+error.message);}),loadData().catch(error=>{toast(error.message);$('#mapStatus').textContent='데이터 연결 실패: '+error.message+(location.search.includes('debug')?' · '+error.stack:'');})]);
+await initMap();
+// 고른 구의 기본 교통망(정류장·관측 수요)은 첫 안이 지도에 그려진 뒤(늦어도 8초 뒤) 불러온다 — 처음에는 곡선·노선이 먼저.
+// 서울 전체 비율 개요(loadOverview)는 관측 화면 전용이라 부르지 않는다.
+{
+  let started=false;
+  const startBase=()=>{if(started)return;started=true;void loadData().catch(error=>{toast(error.message);$('#mapStatus').textContent='데이터 연결 실패: '+error.message+(location.search.includes('debug')?' · '+error.stack:'');});};
+  window.addEventListener('pp:select',e=>{if(e.detail?.plan)setTimeout(startBase,0);});
+  setTimeout(startBase,8000);
+}
 try {
   const {initSimulationMode}=await import('/simulation.js');
   await initSimulationMode({

@@ -34,6 +34,47 @@ def metrics_of(plan: dict, demand_total) -> dict:
             "time_ratio_rode": plan.get("time_ratio_rode")}
 
 
+GATE_ID = "oneway_loop_lg0_fill0__floor_muni"   # 요인 실험 v*: 관문 편도 후 순회 (0,0), 하한 = 지자체안 값 점의 형평성
+
+
+def representative_roles(plans: list[dict]) -> dict[str, str]:
+    """경계(충족률·형평성 둘 다 지배되지 않는 점) 위 대표안: 탑승 우선 = 충족률 최대, 형평 우선 = 형평성 v* 이상 중
+    충족률 최대(v* 점이 없는 빠른 설정은 형평성 최대), 균형 = 두 끝(탑승 우선·형평성 최대)을 잇는 선에서 가장 먼 무릎점.
+    요인 실험 scripts/analyze.py reps()와 같은 규칙·같은 동점 처리."""
+    import math
+    pts = {}
+    for p in plans:
+        if p.get("served_rate") is not None and p.get("equity_far") is not None and p.get("id"):
+            pts.setdefault(p.get("plan_sha256") or p["id"], p)
+    U = list(pts.values())
+    dom = lambda p, q: (q["served_rate"] >= p["served_rate"] - 1e-12 and q["equity_far"] >= p["equity_far"] - 1e-12  # noqa: E731
+                        and (q["served_rate"] > p["served_rate"] + 1e-12 or q["equity_far"] > p["equity_far"] + 1e-12))
+    H = [p for p in U if not any(dom(p, q) for q in U if q is not p)]
+    if not H:
+        return {}
+    key = lambda p: (-p["served_rate"], -p["equity_far"], p["id"])  # noqa: E731
+    A = sorted(H, key=key)[0]
+    B = sorted(H, key=lambda p: (-p["equity_far"], -p["served_rate"], p["id"]))[0]
+    gate = next((p for p in plans if p.get("id") == GATE_ID and p.get("equity_far") is not None), None)
+    vstar = gate["equity_far"] if gate else B["equity_far"]
+    eqp = [p for p in H if p["equity_far"] >= vstar - 1e-12]
+    E = sorted(eqp, key=key)[0] if eqp else None
+    K = None
+    if len(H) > 2 and B["equity_far"] > A["equity_far"]:
+        def dist(p):
+            u = (p["equity_far"] - A["equity_far"]) / (B["equity_far"] - A["equity_far"])
+            w = (p["served_rate"] - B["served_rate"]) / (A["served_rate"] - B["served_rate"]) if A["served_rate"] != B["served_rate"] else 0
+            return (u + w - 1) / math.sqrt(2)
+        cands = sorted([p for p in H if p is not A and p is not B], key=lambda p: (-dist(p), -p["equity_far"], p["id"]))
+        cands = [p for p in cands if p is not E]
+        K = cands[0] if cands else None
+    out: dict[str, list[str]] = {}
+    for role, p in (("탑승 우선", A), ("형평 우선", E), ("균형", K)):
+        if p is not None:
+            out.setdefault(p["id"], []).append(role)
+    return {k: "·".join(v) for k, v in out.items()}
+
+
 class ParetoStore:
     def __init__(self, root: str | Path | None, runs=None):
         self.root = Path(root).resolve() if root else None
@@ -75,6 +116,13 @@ class ParetoStore:
             for p in doc.get("plans", []):
                 if p.get("plan_sha256") in roles:
                     p["rep"] = "·".join(roles[p["plan_sha256"]])
+        elif doc.get("plans"):
+            # 새 실행(작업 실행기)에는 대표안 파일이 없다 → 요인 실험 analyze.py reps와 같은 규칙으로 계산
+            roles = representative_roles(doc["plans"])
+            for p in doc["plans"]:
+                if p.get("id") in roles:
+                    p["rep"] = roles[p["id"]]
+            doc["rep_source"] = "계산(요인 실험 analyze.py reps 규칙, 경계 위 점)"
         if doc.get("muni") and not doc["muni"].get("export_path") and (d / "export" / "muni.json").is_file():
             doc["muni"]["export_path"] = "export/muni.json"
         for p in doc.get("plans", []):

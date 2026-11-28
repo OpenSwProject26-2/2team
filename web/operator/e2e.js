@@ -61,8 +61,12 @@ function renderStrip() {
 }
 function renderHint() {
   const d = st.data, n = d?.excluded_count ?? (d?.excluded || []).length;
-  const cur = st.current?.status === 'available' ? `적용 중: ${esc(st.current.algo_name)} (${esc((st.current.confirmed_at || '').slice(5, 16).replace('T', ' '))})` : '';
-  $('msHint').innerHTML = ['점을 누르면 지표가 바뀜', n ? `M07 미통과 제외 ${n}개` : '', cur].filter(Boolean).join('<br>');
+  const cur = st.current?.status === 'available' ? `<span title="확정 ${esc((st.current.confirmed_at || '').slice(5, 16).replace('T', ' '))} · ${esc(st.current.confirm_id)}">적용 중: ${esc(st.current.algo_name)}</span>` : '';
+  // 띠 오른쪽 칸은 좁아 짧은 말만(자세한 문구는 마우스를 올리면, 확정 창에는 전체)
+  const SHORT = {applied: '시민 경로 반영 완료', applying: '시민 경로 반영 중', failed: '시민 경로 반영 실패', pending: '시민 경로 반영 대기',
+                 other: '시민 경로엔 다른 확정 적용 중', unconfigured: '시민 경로 반영 대기'};
+  const cz = st.current?.status === 'available' && st.citizen ? `<span class="ms-citizen" data-state="${esc(st.citizen.state)}" title="${esc(st.citizen.label)}">${esc(SHORT[st.citizen.state] || st.citizen.label)}</span>` : '';
+  $('msHint').innerHTML = ['점을 누르면 지표가 바뀜', n ? `M07 미통과 제외 ${n}개` : '', cur, cz].filter(Boolean).join('<br>');
 }
 
 // ---------------------------------------------------------------- 실행 목록·진행률
@@ -213,17 +217,33 @@ async function openConfirm() {
     try {
       const r = await api('/api/d/confirm', {region: d.gu, run: st.run || null, id: p.id});
       const ui = r.citizen?.ui;
-      $('cfResult').innerHTML = `<p class="cf-ok"><b>확정됨</b> · ${esc(r.confirm_id)}</p><p>${esc(r.citizen?.label || '')}</p>` +
+      $('cfResult').innerHTML = `<p class="cf-ok"><b>확정됨</b> · ${esc(r.confirm_id)}</p><p id="cfCitizen" data-state="${esc(r.citizen?.state || '')}">${esc(r.citizen?.label || '')}</p>` +
         (ui ? `<p><a class="cf-link" href="${esc(ui)}" target="_blank" rel="noopener">시민 경로 화면 열기 ↗</a></p>` : '<p class="cf-note">시민 경로 화면 주소가 설정되지 않았습니다(config [citizen] ui).</p>');
       $('cfGo').hidden = true;
       loadCurrent();
+      if (r.citizen?.state === 'requested') watchCitizen(d.gu, r.confirm_id);
     } catch (e) { $('cfResult').innerHTML = `<p class="cf-bad">확정 실패: ${esc(e.message)}</p>`; $('cfGo').disabled = false; }
   };
 }
 async function loadCurrent() {
   const region = regionNow();
   st.current = region && st.cfg?.confirm ? await api(`/api/d/confirm/current?region=${encodeURIComponent(region)}`).catch(() => null) : null;
+  // 시민 서버 주소가 없어도 묻는다: 서버가 바로 'unconfigured'(시민 경로 반영 대기)를 돌려준다
+  st.citizen = st.current?.status === 'available' ?
+    await api(`/api/d/confirm/citizen?region=${encodeURIComponent(region)}&confirm_id=${encodeURIComponent(st.current.confirm_id)}`).catch(() => null) : null;
   renderHint();
+}
+// 확정 뒤 시민 경로 반영(파업 그래프 다시 빌드·교체, 수 분)을 따라간다. 완료 = 시민 쪽 활성 그래프의 확정 ID가 이 확정과 같을 때.
+function watchCitizen(region, cid) {
+  clearTimeout(st.citizenPoll);
+  const tick = async () => {
+    const c = await api(`/api/d/confirm/citizen?region=${encodeURIComponent(region)}&confirm_id=${encodeURIComponent(cid)}`).catch(() => null);
+    const el = $('cfCitizen');
+    if (c && el) { el.textContent = c.label; el.dataset.state = c.state; }
+    if (c && st.current?.confirm_id === cid) { st.citizen = c; renderHint(); }
+    if (!c || ['applying', 'pending'].includes(c.state)) st.citizenPoll = setTimeout(tick, 5000);
+  };
+  tick();
 }
 
 function toast(text) { const t = $('toast'); if (!t) return; t.textContent = text; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 3500); }
@@ -234,25 +254,31 @@ async function init() {
   $('newRunButton').onclick = openRunDialog;
   $('newRunButton').title = st.cfg?.status === 'available' ? '입력 → 데이터 자동 조립 → 파이프라인 실행' : '실행 결과 폴더 미설정(연결 안 됨)';
   $('msConfirm').onclick = openConfirm;
-  $('msRun').onchange = () => pickRun($('msRun').value);
+  $('msRun').onchange = () => { window.ppRunPinned = true; pickRun($('msRun').value); };   // 사용자가 고른 곡선은 확정 실행으로 되돌리지 않는다
   $('rdCancel').onclick = () => $('runDialog').close();
   $('rdGo').onclick = e => { e.preventDefault(); submitRun(); };
   $('rdGu').onchange = syncSetting;
   for (const el of document.querySelectorAll('input[name=rdSetting]')) el.onchange = syncSetting;
   for (const el of document.querySelectorAll('input[name=rdStrike]')) el.onchange = () => { $('rdRatio').disabled = $('rdSeed').disabled = el.value === 'full' && el.checked; };
   $('cfClose').onclick = () => $('confirmDialog').close();
-  window.addEventListener('pp:data', e => { st.data = e.detail?.data || null; st.region = e.detail?.region; renderStrip(); renderHint(); });
+  window.addEventListener('pp:data', e => {
+    const run = e.detail?.run || '';
+    if (run !== st.run && (!run || st.runs?.some(r => r.run_id === run))) { st.run = run; $('msRun').value = run; }
+    st.data = e.detail?.data || null; st.region = e.detail?.region; renderStrip(); renderHint(); });
   window.addEventListener('pp:select', e => { st.plan = e.detail?.plan || null; if (e.detail?.data) st.data = e.detail.data; renderStrip(); });
   const qs = new URLSearchParams(location.search);
   st.initialRun = qs.get('run') || '';                // 주소 ?run=<작업 ID>로 그 실행의 곡선을 바로 연다
   if (st.initialRun) window.ppRun = st.initialRun;
   const watchRegion = async () => {
     clearTimeout(st.poll); hideProgress();
-    st.run = ''; await loadRuns(); loadCurrent();
+    st.run = ''; await loadRuns(); await loadCurrent();
     const want = st.initialRun;
+    // 곡선 쪽(simulation.js)이 적용 중인 확정(CURRENT)의 실행 곡선을 이미 열었으면 그대로 따른다
+    const opened = window.ppRun && st.runs.some(r => r.run_id === window.ppRun);
     if (want && st.runs.some(r => r.run_id === want)) {       // ?run=은 그 작업의 구를 고른 뒤에 한 번만 쓴다
-      st.initialRun = ''; $('msRun').value = want; pickRun(want);
-    } else if (window.ppRun && !want) { window.ppRun = ''; window.dispatchEvent(new CustomEvent('pp:reload')); }
+      st.initialRun = ''; window.ppRunPinned = true; $('msRun').value = want; pickRun(want);
+    } else if (opened && !want) { st.run = window.ppRun; $('msRun').value = st.run; }
+    else if (window.ppRun && !want) { window.ppRun = ''; window.dispatchEvent(new CustomEvent('pp:reload')); }
   };
   $('sim-region')?.addEventListener('change', watchRegion);
   document.addEventListener('d-district-selected', () => setTimeout(watchRegion, 50));

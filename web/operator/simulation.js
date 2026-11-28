@@ -1,5 +1,5 @@
 /* 합성 DEMO·A GTFS·저장된 C/B 결과가 공유하는 D 노선 실험실 화면. */
-import {mountParetoPanel, BASE_NAME as PP_BASE_NAME, daysLabel as ppDays} from '/lab-panel/pareto_panel.js';
+import {mountParetoPanel, BASE_NAME as PP_BASE_NAME, daysLabel as ppDays, pickByFloor as ppPickByFloor, usable as ppUsable} from '/lab-panel/pareto_panel.js';
 import {showPlan as ppShowPlan, routeColor as ppRouteColor} from '/lab-panel/plan_layer.js';
 const byId = id => document.getElementById(id);
 const safe = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -379,21 +379,47 @@ sim.pp={region:null,run:'',panel:null,cache:new Map(),current:null,drawn:null,fi
 const ppEmit=(name,detail)=>window.dispatchEvent(new CustomEvent(name,{detail}));
 window.addEventListener('pp:reload',()=>{sim.pp.region=null;void syncPareto();});
 async function syncPareto(){
-  const region=sim.active?byId('sim-region').value:'all',run=window.ppRun||'';
+  const region=sim.active?byId('sim-region').value:'all';let run=window.ppRun||'';
   if(sim.pp.region===region&&sim.pp.run===run&&(sim.pp.panel||region==='all'))return;
   const seq=++sim.pp.seq;
   sim.pp.panel?.destroy();sim.pp.panel=null;sim.pp.drawn?.remove();sim.pp.drawn=null;sim.pp.current=null;sim.pp.fitted=false;sim.pp.cache=new Map();sim.pp.region=region;sim.pp.run=run;
   if(region==='all'||!sim.map){renderSimLab();ppEmit('pp:data',{data:null,region,run});ppEmit('pp:select',{plan:null,region,run});return;}
+  // 실행을 따로 고르지 않았으면 이 구에 적용 중인 확정(CURRENT)이 나온 실행의 곡선을 바로 연다(기본 곡선을 거치지 않음)
+  let data=null;
+  if(!run&&!window.ppRunPinned&&region!=='all'){
+    const cur=await read(`/api/d/confirm/current?region=${encodeURIComponent(region)}`).catch(()=>null);
+    if(cur?.status==='available'&&cur.run_id){
+      const d2=await read(`/api/d/simulation/pareto?region=${encodeURIComponent(region)}&run=${encodeURIComponent(cur.run_id)}`).catch(()=>null);
+      if(seq!==sim.pp.seq)return;
+      if(d2?.status==='available'){run=cur.run_id;window.ppRun=run;sim.pp.run=run;data=d2;}
+    }
+  }
   const q=`region=${encodeURIComponent(region)}${run?`&run=${encodeURIComponent(run)}`:''}`;
-  const data=await read(`/api/d/simulation/pareto?${q}`).catch(()=>null);
+  if(!data)data=await read(`/api/d/simulation/pareto?${q}`).catch(()=>null);
   if(seq!==sim.pp.seq||!sim.active)return;
   if(data?.status!=='available'){sim.pp.region=region;sim.pp.data=null;renderSimLab();ppEmit('pp:data',{data:null,region,run});ppEmit('pp:select',{plan:null,region,run});return;}
   sim.pp.data=data;
-  sim.pp.panel=mountParetoPanel(sim.map,{paretoData:data,autoSelect:false,storageKey:'d.paretoPanel.open',
+  const initial=await ppInitialPlan(data,region,run);
+  if(seq!==sim.pp.seq||!sim.active)return;
+  let guided=false;
+  sim.pp.panel=mountParetoPanel(sim.map,{paretoData:data,autoSelect:false,initialPlanId:initial,storageKey:'d.paretoPanel.open',
     exportUrl:p=>`/api/d/simulation/pareto-export?${q}&id=${encodeURIComponent(p.id)}`,
-    onSelect:plan=>showParetoPlan(plan,region)});
+    onSelect:plan=>{
+      void showParetoPlan(plan,region);
+      if(!guided){guided=true;setTimeout(()=>{const m=sim.map?.getContainer().querySelector('.pp-root .pp-msg');if(m&&!m.textContent)m.textContent='곡선의 점을 누르거나 형평성 막대를 움직여 다른 안을 고르세요';},0);}
+    }});
   placePareto();
   ppEmit('pp:data',{data,region,run});ppEmit('pp:select',{plan:null,data,region,run});
+}
+// 처음 고를 안: 이 구에 적용 중인 확정(CURRENT)이 지금 곡선(같은 실행)에 있으면 그것, 아니면 형평성 막대 기본값(맨 왼쪽)
+// 이상 중 충족률 최대(곡선 패널 pickByFloor와 같은 규칙). 확정 API가 없으면 조용히 기본값.
+async function ppInitialPlan(data,region,run){
+  const plans=ppUsable(data.plans);
+  if(!plans.length)return null;
+  const cur=await read(`/api/d/confirm/current?region=${encodeURIComponent(region)}`).catch(()=>null);
+  if(cur?.status==='available'&&(cur.run_id||'')===(run||'')&&plans.some(p=>p.id===cur.plan_ref))return cur.plan_ref;
+  const floor=Math.floor(Math.min(...plans.map(p=>p.equity_far))*200)/200;
+  return ppPickByFloor(plans,floor)?.id||null;
 }
 // 왼쪽 조작 패널이 지도 위에 떠 있으므로, 펼쳐져 있으면 곡선 패널을 그 오른쪽으로 민다
 function ppLeft(){
@@ -436,6 +462,14 @@ function renderParetoInfo(){
     `<div class="sim-pp-actions"><button type="button" id="simPpFit">노선에 맞추기</button><button type="button" id="simPpClear">지도에서 내리기(원래 셔틀안 보기)</button></div>`;
   byId('simPpFit').onclick=()=>{const b=sim.pp.drawn?.bounds;if(b)sim.map.fitBounds(b,{padding:{top:50,bottom:50,left:ppLeft()+40,right:50},duration:300});};
   byId('simPpClear').onclick=clearParetoPlan;
+}
+// 지도 위 '버스 노선·수요 불러오는 중' 표시(레이어가 오면 끔)
+function layerLoading(on){
+  let el=byId('simLayerLoading');
+  if(!el&&on){const wrap=sim.map?.getContainer();if(!wrap)return;el=document.createElement('div');el.id='simLayerLoading';el.setAttribute('role','status');
+    el.style.cssText='position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:6;background:#fffffff2;border:1px solid #d9dfea;border-radius:999px;padding:6px 14px;font-size:12px;font-weight:700;color:#38445a;box-shadow:0 4px 14px #17243c22;pointer-events:none';
+    el.textContent='버스 노선·수요 불러오는 중…';wrap.append(el);}
+  if(el)el.hidden=!on;
 }
 async function loadRegionLayers(region){
   if(!region||region==='all'||sim.absorbRegion===region)return;
@@ -608,6 +642,7 @@ async function choosePlan(plan) {
 async function readPost(path,payload) {const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const data=await response.json();if(!response.ok)throw Error(data.message||response.statusText);return data;}
 function drawSummary() {
   const summary=sim.summary;
+  if(!summary?.districts)return;   // 서울 요약은 늦게 올 수 있다(오면 다시 그림)
   byId('sim-seoul').innerHTML=summary.districts.map(d=>`<button data-region="${d.region||''}" data-status="${d.status}" title="${safe(d.region?`${d.fleet}대 · ${pct(d.metrics?.rate_percent)} · 비교안 대비 ${d.improvement_pp==null?'미연결':d.improvement_pp+'%p'} · ${d.selected?'선택됨':'미선택'}`:'미실행')}" ${d.region?'':'disabled'}>${safe(d.name)} · ${d.status==='report_only'?'보고서':d.status==='run'?'M05 원본':d.status==='data_incomplete'?'데이터 부족':'미실행'}${d.metrics?.rate_percent!=null?' · '+pct(d.metrics.rate_percent):''}${d.selected?' ✓':''}</button>`).join('');
   byId('sim-seoul').querySelectorAll('[data-region]').forEach(b=>b.onclick=()=>{if(!b.dataset.region)return;byId('sim-region').value=b.dataset.region;changeRegion();});
   const agg=summary.aggregate;
@@ -700,12 +735,18 @@ async function refresh() {
       mapLayers(true);
       return;
     }
-    const q=query();const [result,table,comparison,summary,selected,runs,residual]=await Promise.all([
+    const q=query(),layerRegion=byId('sim-region').value;
+    layerLoading(sim.absorbRegion!==layerRegion);
+    void loadRegionLayers(layerRegion).then(()=>{if(seq!==sim.request||!sim.active)return;layerLoading(false);drawRegionLayers();drawAbsorb();renderSimLab();mapLayers(true);});
+    // 서울 전체 요약(약 8초)은 옆 패널 목록용이라 기다리지 않는다
+    void read(`/api/d/simulation/seoul?${q}`).then(summary=>{if(seq!==sim.request||!sim.active)return;sim.summary=summary;drawSummary();}).catch(()=>null);
+    const [result,table,comparison,selected,runs,residual]=await Promise.all([
       read(`/api/d/simulation/result?${q}`),read(`/api/d/simulation/table?${q}`),
-      read(`/api/d/simulation/comparison?${q}`),read(`/api/d/simulation/seoul?${q}`),
+      read(`/api/d/simulation/comparison?${q}`),
       read('/api/d/simulation/selection'),read(`/api/d/simulation/runs?${q}`),
       read(`/api/d/simulation/residual?${q}`).catch(()=>null)]);
     if(seq!==sim.request||!sim.active)return;
+    const summary=sim.summary;
     const old=sim.result,oldSelection=old?.selection,newSelection=result.selection;
     const comparableSpatial=old?.spatial_outcomes?.status==='available'&&result.spatial_outcomes?.status==='available'&&sim.renderedHour===byId('sim-hour').value&&oldSelection.region===newSelection.region&&oldSelection.variant===newSelection.variant&&oldSelection.period===newSelection.period&&oldSelection.date===newSelection.date&&old.network_snapshot_id===result.network_snapshot_id&&old.metrics?.total===result.metrics?.total&&(oldSelection.fleet!==newSelection.fleet||oldSelection.plan!==newSelection.plan);
     sim.beforeResult=comparableSpatial?old:null;
@@ -713,6 +754,7 @@ async function refresh() {
     const region=newSelection.region;
     await loadRegionLayers(region);
     if(seq!==sim.request||!sim.active)return;
+    layerLoading(false);
     sim.result=result;sim.residual=residual;sim.transport=null;sim.table=table;sim.comparison=comparison;sim.summary=summary;sim.selected=selected;sim.runs=runs;sim.selectedRoute=null;
     drawMetrics();drawRoutes();drawTable();drawSummary();drawCharts();drawExecution();drawRegionMarkers([]);drawStops();drawAbsorb();renderSimLab();renderComparisonPlot();await loadTransportDemand();mapLayers(true);
   }catch(error){if(seq===sim.request){byId('mapStatus').textContent=`시뮬레이션 결과 조회 실패: ${error.message}`;simulationNotice(`조건 변경 실패: ${error.message}`);}}
@@ -739,6 +781,7 @@ function clearSimulationRegion(){
   sim.markers.forEach(marker=>marker.remove());sim.markers=[];
 }
 async function changeRegion(){
+  window.ppRun='';window.ppRunPinned=false;   // 다른 구의 실행 곡선은 쓰지 않는다
   syncFleet();const region=byId('sim-region').value;
   clearSimulationRegion();void syncPareto();
   if(region==='all')fitSeoul();
@@ -753,9 +796,11 @@ async function activate() {
   sim.busy=true;
   sim.operating=new Set(['city','village','gyeonggi','metro']);
   sim.active=true;document.querySelector('.app').classList.add('sim-active');
-  fitSeoul();
+  const startRegion=byId('sim-region').value,startBox=sim.districts?.districts.find(d=>d.id===startRegion)?.bbox;
+  if(startRegion!=='all'&&startBox)sim.map?.fitBounds([[startBox[0],startBox[1]],[startBox[2],startBox[3]]],{padding:45,duration:0});else fitSeoul();
   byId('simModeButton').textContent='지도·관측으로 돌아가기';byId('simModeButton').setAttribute('aria-pressed','true');
-  ensureMapSource();updateLabBoundary();await preferAvailableRunDate();await refresh();void syncPareto();
+  // 곡선과 자동으로 고른 안(지표 띠·노선)을 먼저 — 결과 표·버스 레이어는 그다음(브라우저가 큰 자료를 처리하는 동안 곡선이 밀리지 않게)
+  ensureMapSource();updateLabBoundary();await syncPareto();await preferAvailableRunDate();await refresh();
   sim.busy=false;
 }
 async function deactivate() {
@@ -806,12 +851,15 @@ export async function initSimulationMode({map,maplibregl,getBaseMode:mode,setDis
   byId('compareExpand').onclick=()=>{compare.classList.toggle('expanded');if(compare.style.left)placeCompare(parseFloat(compare.style.left),parseFloat(compare.style.top));};
   window.addEventListener('resize',()=>{if(compare.style.left)placeCompare(parseFloat(compare.style.left),parseFloat(compare.style.top));});
   renderComparisonPlot();
-  byId('simModeButton').onclick=()=>sim.active?deactivate():activate();
+  // 지도·관측 화면 진입점을 없앤다(사용자 지시 11/27): 단추를 숨기고 처음부터 시뮬레이션 화면. deactivate()와 관측 API는 지우지 않는다.
+  byId('simModeButton').hidden=true;byId('simModeButton').style.display='none';byId('simModeButton').onclick=null;
   byId('sim-all-regions').onclick=()=>{byId('sim-region').value='all';void changeRegion();};
   byId('sim-region').onchange=changeRegion;
   document.addEventListener('d-district-selected',async event=>{const region=event.detail?.district;if(!sim.active)return;byId('sim-region').value=region;clearSimulationRegion();syncFleet();if(region==='all')fitSeoul();updateLabBoundary();mapLayers(true);await preferAvailableRunDate();await refresh();});
   byId('sim-period').onchange=async()=>{syncDates();await preferAvailableRunDate();refresh();};
   for(const key of ['fleet','plan'])byId(`sim-${key}`).onchange=async()=>{clearParetoPlan();await preferAvailableRunDate();refresh();};
   for(const key of ['hour','date'])byId(`sim-${key}`).onchange=refresh;
-  if(location.pathname.startsWith('/simulation'))await activate();
+  const want=new URLSearchParams(location.search).get('region')||'guro';
+  if([...byId('sim-region').options].some(o=>o.value===want))byId('sim-region').value=want;
+  await activate();
 }
