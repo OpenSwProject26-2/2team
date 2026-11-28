@@ -37,7 +37,7 @@ python3 -m busstrike.planning --input tests/fixtures/planning/synthetic.json
 
 ### D팀 로컬 화면 (개발 미리보기)
 
-현재 worktree의 D팀 코드는 합성 경로 미리보기와 운영자 대시보드다. 실제 A/B/C 자료 연동, 공용 M08 API, 운행 검증은 완료된 기능이 아니다. 실행법과 데이터 제한은 [웹 실행 안내](web/README.md)를 참고한다.
+현재 worktree의 D팀 코드는 합성 DEMO와 운영자 대시보드다. 저장소 밖 A GTFS와 교통 데이터·선형 파일을 지정하면 실제 정류장, 버스 도로 선형, 관측 승차 노출량을 로컬에서 조회할 수 있다. 저장된 C/B/M07 결과 조회는 가능하지만 조건을 바꿀 때 실제 시뮬레이션을 새로 실행하는 공용 M08 API와 검증된 셔틀 투입 후 미충족 수요는 완성되지 않았다. 실행법, 데이터 준비와 한계는 [웹 실행 안내](web/README.md)를 참고한다.
 
 ```powershell
 py -3 web/citizen/serve.py

@@ -12,11 +12,15 @@ from .d_geo import DataError, MapSnapshot, map_geojson
 
 ROOT = Path(__file__).resolve().parents[3]
 BOUNDARIES = ROOT / "web" / "operator" / "data" / "districts_all.geojson"
-DISTRICT_CODES = {
-    "guro": "11530",
-    "dongjak": "11590",
-    "gangseo": "11500",
-    "gangdong": "11740",
+DISTRICT_NAMES = {
+    "jongno": "종로구", "jung": "중구", "yongsan": "용산구", "seongdong": "성동구",
+    "gwangjin": "광진구", "dongdaemun": "동대문구", "jungnang": "중랑구",
+    "seongbuk": "성북구", "gangbuk": "강북구", "dobong": "도봉구",
+    "nowon": "노원구", "eunpyeong": "은평구", "seodaemun": "서대문구",
+    "mapo": "마포구", "yangcheon": "양천구", "gangseo": "강서구",
+    "guro": "구로구", "geumcheon": "금천구", "yeongdeungpo": "영등포구",
+    "dongjak": "동작구", "gwanak": "관악구", "seocho": "서초구",
+    "gangnam": "강남구", "songpa": "송파구", "gangdong": "강동구",
 }
 
 
@@ -28,10 +32,10 @@ def _boundary_collection() -> dict:
 @lru_cache(maxsize=1)
 def districts() -> dict[str, dict]:
     source = _boundary_collection()
-    by_code = {str(f["properties"]["sgg"]): f for f in source["features"]}
-    if not all(code in by_code for code in DISTRICT_CODES.values()):
+    by_name = {f["properties"]["sggnm"]: f for f in source["features"]}
+    if not all(name in by_name for name in DISTRICT_NAMES.values()):
         raise DataError("DATA_INCOMPLETE", "자치구 경계 파일이 불완전합니다.")
-    return {name: by_code[code] for name, code in DISTRICT_CODES.items()}
+    return {slug: by_name[name] for slug, name in DISTRICT_NAMES.items()}
 
 
 def district_options() -> dict:
@@ -143,13 +147,13 @@ def clip_line(
 
 
 def network_view(
-    snapshot: MapSnapshot, district: str | None, extent: str = "inside"
+    snapshot: MapSnapshot, district: str | None, extent: str = "inside", include_route_stops: bool = True
 ) -> dict:
     if district in (None, "", "all"):
         return {
             "routes": list(snapshot.routes),
             "map": map_geojson(snapshot),
-            "route_stops": map_geojson(snapshot),
+            "route_stops": map_geojson(snapshot) if include_route_stops else None,
             "boundary": None,
             "district": "all",
             "extent": "full",
@@ -171,9 +175,19 @@ def network_view(
     used_ids: set[str] = set()
     for route in snapshot.routes:
         ids = route.get("representative_stop_ids") or route.get("stop_ids") or []
-        links = route.get("schematic_stop_links") or list(pairwise(ids))
-        relevant = any(sid in inside_ids for sid in (route.get("all_stop_ids") or ids))
-        if not relevant:
+        links = route.get("schematic_stop_links") or list(pairwise(route.get("all_stop_ids") or ids))
+        route_points = [stop_by_id[sid]["coordinates"] for sid in (route.get("all_stop_ids") or ids) if sid in stop_by_id]
+        if route_points and not route.get("coordinates") and (max(p[0] for p in route_points) < bounds[0]
+                             or min(p[0] for p in route_points) > bounds[2]
+                             or max(p[1] for p in route_points) < bounds[1]
+                             or min(p[1] for p in route_points) > bounds[3]):
+            continue
+        if route.get("coordinates"):
+            geometry_lines = route["coordinates"] if route.get("geometry_type") == "MultiLineString" else [route["coordinates"]]
+            relevant = any(clip_line(line, polygon, bounds) for line in geometry_lines)
+        else:
+            relevant = any(sid in inside_ids for sid in (route.get("all_stop_ids") or ids))
+        if not relevant and not route.get("coordinates"):
             relevant = any(
                 clip_line(
                     [stop_by_id[a]["coordinates"], stop_by_id[b]["coordinates"]],
@@ -182,9 +196,6 @@ def network_view(
                 for a, b in links
                 if a in stop_by_id and b in stop_by_id
             )
-        if not relevant and route.get("coordinates"):
-            geometry_lines = route["coordinates"] if route.get("geometry_type") == "MultiLineString" else [route["coordinates"]]
-            relevant = any(clip_line(line, polygon, bounds) for line in geometry_lines)
         if not relevant:
             continue
         item = route.copy()
@@ -194,34 +205,43 @@ def network_view(
                 segments = [part for line in geometry_lines for part in clip_line(line, polygon, bounds)]
                 item["coordinates"] = segments if segments else None
                 item["geometry_type"] = "MultiLineString" if segments else None
-            item["schematic_stop_links"] = [
-                [a, b]
-                for a, b in links
-                if a in stop_by_id
-                and b in stop_by_id
-                and clip_line(
+                if route.get("pattern_indices") is not None:
+                    item["pattern_indices"] = [route["pattern_indices"][index]
+                                               for index, line in enumerate(geometry_lines)
+                                               for _ in clip_line(line, polygon, bounds)]
+            clipped_links = []
+            schematic_segments = []
+            for a, b in links:
+                if a not in stop_by_id or b not in stop_by_id:
+                    continue
+                segments = clip_line(
                     [stop_by_id[a]["coordinates"], stop_by_id[b]["coordinates"]],
                     polygon, bounds,
                 )
-            ]
+                if segments:
+                    clipped_links.append([a, b])
+                    schematic_segments.extend(segments)
+            item["schematic_stop_links"] = clipped_links
+            item["schematic_segments"] = schematic_segments
         routes.append(item)
         used_ids.update(route.get("all_stop_ids") or ids)
     visible_stops = tuple(
         stop
         for stop in snapshot.stops
         if stop["stop_id"] in (inside_ids if extent == "inside" else used_ids)
+        or (stop.get("kind") == "metro" and stop["stop_id"] in inside_ids)
     )
     scoped = replace(snapshot, routes=tuple(routes), stops=visible_stops)
     route_stop_snapshot = replace(
         snapshot,
         routes=(),
         stops=tuple(stop for stop in snapshot.stops if stop["stop_id"] in used_ids),
-    )
+    ) if include_route_stops else None
     return {
         "routes": routes,
         "map": map_geojson(scoped),
         "boundary": feature,
-        "route_stops": map_geojson(route_stop_snapshot),
+        "route_stops": map_geojson(route_stop_snapshot) if route_stop_snapshot else None,
         "district": district,
         "extent": extent,
     }
