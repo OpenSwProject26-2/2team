@@ -13,3 +13,6 @@ data/raw/
 .browser-smoke*/
 .tmp-tests/
 web/operator/data/districts.geojson
+
+# 운영자 실행 로컬 경로(커밋 안 함, 예시는 config/local_paths.example.toml)
+config/local_paths.toml

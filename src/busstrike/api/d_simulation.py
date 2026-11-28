@@ -1248,9 +1248,25 @@ class SelectionStore:
                 prior = {"selected": None, "history": []}
             history = prior.get("history", [])
             history.append(chosen)
-            payload = {"selected": chosen, "history": history}
+            payload = {**prior, "selected": chosen, "history": history}   # 파레토 확정(pareto_selected) 등 다른 키는 그대로
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.path.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+        return payload
+
+    def record_pareto(self, entry: dict) -> dict:
+        """충족률·형평성 곡선에서 고른 안의 확정(d_confirm)을 같은 기록에 남긴다.
+        기존 v4 선택(selected)은 건드리지 않고 pareto_selected와 history(kind=pareto_confirm)에 더한다."""
+        rec = {"kind": "pareto_confirm", **entry, "approved_for_service": False}
+        with self.lock:
+            try:
+                prior = _read(self.path)
+            except FileNotFoundError:
+                prior = {"selected": None, "history": []}
+            history = prior.get("history", [])
+            history.append(rec)
+            payload = {**prior, "pareto_selected": rec, "history": history}
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return payload

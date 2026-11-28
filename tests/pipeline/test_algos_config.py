@@ -58,3 +58,22 @@ class ConfigTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_region_dir_exp_only_and_thread_safe(tmp_path):
+    """--no-test-flows: walk_eval --region은 실험 주간 묶음만 링크한 폴더, 여러 스레드가 동시에 불러도 실패하지 않는다."""
+    from concurrent.futures import ThreadPoolExecutor
+    from busstrike.pipeline.run import Pipeline, RunConfig
+    W = tmp_path / "w"
+    (W / "region_all" / "guro_0610_v4").mkdir(parents=True)
+    (W / "region_all" / "guro_0610_v4_test").mkdir()
+    P = Pipeline(RunConfig(gu="guro", strike=1.0, fleet=11, algos=["feeder_lg0_fill0"], floors=["none"], eval_days=["20261028"],
+                           data_root=str(W), sweep=str(W), muni=str(W), test_flows=False), tmp_path / "out")
+    with ThreadPoolExecutor(8) as ex:
+        dirs = list(ex.map(lambda _: P.region_dir(), range(16)))
+    d = dirs[0]
+    assert len(set(dirs)) == 1 and [x.name for x in d.iterdir()] == ["guro_0610_v4"]
+    assert P.test_root == P.root and "test_flows" in P.cfg.record()
+    old = Pipeline(RunConfig(gu="guro", strike=1.0, fleet=11, algos=["feeder_lg0_fill0"], floors=["none"], eval_days=["20261028"],
+                             data_root=str(W), sweep=str(W), muni=str(W)), tmp_path / "out2")
+    assert old.region_dir() == W / "region_all" and "test_flows" not in old.cfg.record()   # 기본 동작·run_config 모양 그대로

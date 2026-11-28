@@ -3,6 +3,7 @@
 <head>
 <link href="/vendor/maplibre-gl.css" rel="stylesheet">
 <link href="/lab-panel/pareto_panel.css" rel="stylesheet">
+<link href="/e2e.css" rel="stylesheet">
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>파업 대응 운영 대시보드 | 실제 지도·합성 데이터</title>
@@ -188,8 +189,36 @@
   <header class="top">
   <div class="brand"><div class="mark"><svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"><rect x="5" y="3" width="14" height="15" rx="3"/><path d="M5 10h14M8 18v3M16 18v3M8 6h8M8 14h2m4 0h2"/></svg></div><div><h1>버스 파업 대응 시뮬레이션</h1><div class="brand-sub">교통 운영 대시보드</div></div></div>
   <section class="panel" id="districtControls" aria-label="자치구 교통망 필터"><label class="district-field">지역<input id="districtSearch" type="search" placeholder="구 이름 검색" aria-label="자치구 검색"><select id="districtSelect"><option value="all">서울 전체</option></select></label><label class="district-field district-extent">지도 범위<select id="districtExtent"><option value="full">교차 노선 전체 보기</option><option value="inside">구 내부 구간만 보기</option></select></label><span class="district-note" id="districtStatus">A GTFS를 선택하면 실제 경계로 교통망을 필터링합니다.</span></section>
-  <div class="right-head"><button class="chip" id="simModeButton" type="button" aria-pressed="false">시뮬레이션 결과 화면 보기</button><button class="chip" id="compareToggle" type="button" aria-expanded="false" aria-controls="comparisonFloat">설정 변경</button><button class="chip" id="resetAll">↻ 초기화</button><span class="chip" id="dataSourceChip">● 합성 DEMO <b>2026.11.13</b></span></div>
+  <div class="right-head"><button class="chip" id="simModeButton" type="button" aria-pressed="false">시뮬레이션 결과 화면 보기</button><button class="chip" id="compareToggle" type="button" aria-expanded="false" aria-controls="comparisonFloat">설정 변경</button><button class="chip chip-run" id="newRunButton" type="button">＋ 새 시뮬레이션</button><button class="chip" id="resetAll">↻ 초기화</button><span class="chip" id="dataSourceChip">● 합성 DEMO <b>2026.11.13</b></span></div>
  </header>
+ <section id="metricStrip" class="metric-strip ms-empty" aria-label="곡선에서 고른 안의 주·보조 지표">
+  <div class="ms-pick"><small>곡선에서 고른 안 <select id="msRun" aria-label="곡선 출처(실행 결과)" disabled><option value="">—</option></select></small><strong id="msName">곡선에서 점을 고르세요</strong><span id="msSub">—</span></div>
+  <div class="ms-card ms-main ms-served"><div class="ms-h">충족률 <em class="ms-chip main">주 지표</em></div><b id="msServed">—</b><span id="msServedSub"></span></div>
+  <div class="ms-card ms-main ms-equity"><div class="ms-h">형평성 (역 800m 밖) <em class="ms-chip main">주 지표</em></div><b id="msEquity">—</b><span id="msEquitySub"></span></div>
+  <div class="ms-card ms-aux"><div class="ms-h">만차 거절률 <em class="ms-chip">보조 지표</em></div><b id="msRefused">—</b><span id="msRefusedSub">45석이 차서 끝내 못 탄 비율</span></div>
+  <div class="ms-card ms-aux"><div class="ms-h">이동시간 비 <em class="ms-chip">보조 지표</em></div><b id="msTime">—</b><span>평소 버스 대비 · 중앙값</span></div>
+  <div class="ms-side"><span id="msM07" class="ms-badge">M07 —</span><small id="msHint">점을 누르면 지표가 바뀜</small><button type="button" id="msConfirm" disabled>이 안으로 확정 → 시민 경로에 적용</button></div>
+  <div class="ms-progress" id="msProgress" hidden role="status"><div class="pg-top"><span id="msPgTitle"></span><span><button type="button" id="msPgRetry" hidden>다시 돌리기(이어서)</button><button type="button" id="msPgCancel">실행 취소</button></span></div><div class="pg-stages" id="msPgStages"></div><div class="pg-bar"><span id="msPgBar"></span></div><div class="pg-foot"><span id="msPgEta"></span><pre id="msPgLog"></pre></div></div>
+ </section>
+ <dialog id="runDialog" class="e2e-dialog" aria-label="새 시뮬레이션">
+  <form method="dialog">
+   <h2>새 시뮬레이션</h2><p class="dlg-sub">입력 → 데이터 자동 조립 → 파이프라인(생성·배분·M05·M07·지표) → 곡선. 같은 입력이면 이전 결과를 바로 엽니다.</p>
+   <label class="dlg-row">구<select id="rdGu"></select></label>
+   <fieldset class="dlg-row"><legend>파업 범위</legend><label><input type="radio" name="rdStrike" value="full" checked>전면 파업</label><label><input type="radio" name="rdStrike" value="ratio">노선 비율</label><input id="rdRatio" type="number" min="0.05" max="1" step="0.05" value="0.5" disabled aria-label="파업 노선 비율"><label class="mini">시드<input id="rdSeed" type="number" readonly disabled></label><small>추첨 시드는 파이프라인 고정값</small></fieldset>
+   <label class="dlg-row">가용 대수<input id="rdFleet" type="number" min="1" max="60"><small id="rdFleetNote"></small></label>
+   <div class="dlg-row"><span>생성 수요 기간</span><b id="rdDemand"></b></div>
+   <fieldset class="dlg-row"><legend>실행 설정</legend><label><input type="radio" name="rdSetting" value="quick" checked>빠른</label><label><input type="radio" name="rdSetting" value="full">전체</label><small id="rdSettingNote"></small></fieldset>
+   <fieldset class="dlg-row" id="rdSourceRow" hidden><legend>전체 설정</legend><label><input type="radio" name="rdSource" value="precomputed" checked>미리 계산된 결과 불러오기</label><label><input type="radio" name="rdSource" value="new">새로 돌리기</label></fieldset>
+   <fieldset class="dlg-row"><legend>평가 날짜</legend><div id="rdDays" class="dlg-days"></div><small>테스트 주간(11/02~06)은 고를 수 없습니다</small></fieldset>
+   <div id="rdMsg" class="dlg-msg" role="status"></div>
+   <div class="dlg-actions"><button type="button" id="rdCancel">닫기</button><button type="submit" id="rdGo" class="primary">실행</button></div>
+  </form>
+ </dialog>
+ <dialog id="confirmDialog" class="e2e-dialog" aria-label="이 안으로 확정">
+  <h2>이 안으로 확정 → 시민 경로에 적용</h2>
+  <div id="cfBody"></div><div id="cfResult" role="status"></div>
+  <div class="dlg-actions"><button type="button" id="cfClose">닫기</button><button type="button" id="cfGo" class="primary" disabled>확정</button></div>
+ </dialog>
   <section id="simulationControls" aria-label="시뮬레이션 조건">
   <div class="panel sim-controls"><label>자치구<select id="sim-region"></select></label><label>투입 차량<select id="sim-fleet"></select></label><label>운행 시간대<select id="sim-hour"><option value="all">전 시간대</option><option value="06">06시</option><option value="07">07시</option><option value="08">08시</option><option value="09">09시</option></select></label><input id="sim-variant" type="hidden" value="affected_maeul_gg"><label>운행안<select id="sim-plan"><option value="ours">우리 안</option><option value="sp">최단경로 피더안</option></select></label><label>평가 기간<select id="sim-period"><option value="exp">실험 10/26~30</option><option value="test">테스트 11/02~06</option></select></label><label>평가 날짜<select id="sim-date"></select></label><button class="chip" id="sim-all-regions" type="button">서울 전체 지도</button></div>
   <div class="sim-metrics"><div><small>잔여 수요</small><strong id="sim-total">—</strong></div><div><small>시간 내 충족</small><strong id="sim-served">—</strong></div><div><small>미충족</small><strong id="sim-unserved">—</strong></div><div><small>충족률</small><strong id="sim-rate">—</strong></div><div><small>배정 차량</small><strong id="sim-vehicles">—</strong></div><div><small>M07</small><strong id="sim-verify">—</strong></div></div>
@@ -254,5 +283,6 @@
 </div>
 <div class="toast" id="toast" role="status"></div>
 <script type="module" src="/app.js"></script>
+<script type="module" src="/e2e.js"></script>
 </body>
 </html>
