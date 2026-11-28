@@ -280,6 +280,8 @@
 
 ## 9. 재현
 
+> 참고(2026-11-26): `python -m busstrike.planning.routegen` CLI(`routegen/__main__.py`)는 지웠다. 이 명령으로 재현하려면 커밋 47ed2bd(또는 그 이전)를 체크아웃한다. 지금 실험은 `python -m busstrike.pipeline`([pipeline.md](../../docs/design/pipeline.md)).
+
 ```
 # 이 작업 폴더에서. 결과는 저장소 밖에 쓴다.
 python3 experiments/guro_routegen/run_v1.py --root <guro_0610 폴더> --out <밖>/routegen_v1 --jobs 6 --data-label guro_0610_2.zip

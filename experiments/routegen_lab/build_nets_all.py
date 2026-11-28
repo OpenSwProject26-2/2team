@@ -3,7 +3,7 @@
     python3 experiments/routegen_lab/build_nets_all.py --work <guro_exp_work> --out <work>/review1119/stage1b \
         [--parallel 3] [--only guro,mapo] [--summary-only]
 
-- 구 목록·묶음 찾기는 `run_all_gus.py`와 같다: `<work>/region_all/*_0610_v4`의 구, 묶음은
+- 구 목록·묶음 찾기(예전 `run_all_gus.py`와 같은 규칙, 그 스크립트는 2026-11-25 삭제): `<work>/region_all/*_0610_v4`의 구, 묶음은
   `<work>/region_all/ref/<구>_0610_v4`가 있으면 그것(구로·강서·동작·강동), 없으면 `<work>/region_all/<구>_0610_v4`.
 - OSM: `<work>/osm/<구>_roads.json`(없으면 그 구는 건너뛰고 기록. 이 스크립트는 OSM을 만들지 않는다).
 - 옛 망: `uturn_check.py --snap-mode node`, `<work>/hub_sweep2/<구>/net`이 있으면 `--net`으로 주어 재현 여부를 기록한다.
