@@ -20,6 +20,14 @@ class FarFloorTest(unittest.TestCase):
         self.assertEqual(f["source"], "muni")
         self.assertEqual(f["far_rule"], {"arg": "off", "base_far": 0.3})
 
+    def test_none_turns_both_floors_off(self):
+        self.assertIsNone(apply_far_floor(self.base, "none"))
+        self.assertIsNone(apply_far_floor(None, "none"))
+
+    def test_absolute_value(self):
+        f = apply_far_floor(self.base, "0.58")
+        self.assertEqual((f["far"], f["total"]), (0.58, 0.2808))      # 역 밖 0.58 이상, 전체는 지자체안 값
+
     def test_plus_adds_to_base(self):
         f = apply_far_floor(self.base, "+0.05")
         self.assertAlmostEqual(f["far"], 0.35, places=12)

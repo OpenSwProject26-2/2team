@@ -1,6 +1,6 @@
 # 충족률·형평성 곡선 패널 — 시작 전 확인(0절)
 
-2026-11-27. 처음엔 파이프라인 브랜치(`feat/pipeline-core`, 미푸시) 위에 만들었고, 패널은 파이프라인 코드에 기대지 않아 main에서 따로 `feat/lab-pareto-panel`로 올린다.
+2026-11-27. 처음엔 파이프라인 브랜치(`feat/pipeline-core`) 위에 만들었고, 패널은 파이프라인 코드에 기대지 않아 main에서 따로 `feat/lab-pareto-panel`로 올렸다(두 PR 모두 main에 머지됨).
 
 ## 1. lab 화면 코드
 
@@ -24,9 +24,9 @@
 
 ## 3. 입력 데이터
 
-- `pareto.json`, `export/<plan id>.json`(파이프라인 출력 형식, [docs/design/lab-pareto-panel.md](../../docs/design/lab-pareto-panel.md) 첫머리)이 있다 → 변환 스크립트를 만들지 않았다.
+- `pareto.json`, `export/<plan id>.json`(pipeline.md 5절 형식)이 있다 → 변환 스크립트를 만들지 않았다.
   - 개발·확인: `guro_exp_work/routegen_integrated/factorial_1126/guro/`(안 75개, 경계 위 15개, 지자체안, 평가 10/27~30, 11대). 다른 구(강서·마포·노원·강북·종로·영등포)도 같은 형식.
-  - 저장소 안 예시는 파이프라인 PR의 `tests/fixtures/pipeline/`(아직 main에 없음). 이 PR의 테스트는 합성 예제만 쓴다.
+  - 저장소 안 작은 예시: `tests/fixtures/pipeline/pareto_guro_smoke.json`, `export_guro_smoke.json`(이미 있음, 카드 ID 없음).
 - `pareto.json`에는 지자체안 `export_path`가 없다(파이프라인은 지자체안 운행안을 내보내지 않음). factorial_1126에는 `export/muni.json`이 따로 있다 → 패널 옵션 `muniExportPath`(lab 화면 기본 `export/muni.json`)로 지자체안 점도 누를 수 있게 했다. 파일이 없으면 고를 때 패널에 오류 한 줄, 지도는 이전 안 그대로.
 - `rep`(대표안 역할)는 pareto.json에 없다 → lab 화면에서는 표시하지 않는다. 운영자 대시보드 연결 예시(로컬)는 서버가 `demo/representative.json`의 역할을 `rep`로 덧붙여 준다.
 
