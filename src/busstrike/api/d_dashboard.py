@@ -22,6 +22,7 @@ from .d_geo import (
     map_geojson,
 )
 from .d_network import district_options, network_view
+from .d_pareto import ParetoStore
 from .d_geometry import bus_geometry_view, fetch_rail_gis, load_rail_gis, rail_geometry_view
 from .d_scenario import evaluate_demo
 from .d_simulation import SelectionStore, SimulationStore
@@ -210,9 +211,15 @@ class Store:
         return view
 
 
-def make_handler(store: Store, simulation: SimulationStore | None = None, lab=None):
-    """`lab`(routegen_lab.Lab/LabSet)을 주면 /lab, /api/lab/* 를 함께 처리한다."""
+LAB_PANEL_FILES = {"pareto_panel.js": "text/javascript; charset=utf-8", "pareto_panel.css": "text/css; charset=utf-8",
+                   "plan_layer.js": "text/javascript; charset=utf-8"}
+
+
+def make_handler(store: Store, simulation: SimulationStore | None = None, lab=None, pareto=None):
+    """`lab`(routegen_lab.Lab/LabSet)을 주면 /lab, /api/lab/* 를 함께 처리한다.
+    `pareto`(d_pareto.ParetoStore)를 주면 충족률·형평성 곡선 패널 자료(/api/d/simulation/pareto*)를 준다."""
     simulation = simulation or SimulationStore()
+    pareto = pareto or ParetoStore(None)
     selections = SelectionStore()
 
     class Handler(BaseHTTPRequestHandler):
@@ -317,6 +324,9 @@ def make_handler(store: Store, simulation: SimulationStore | None = None, lab=No
                 return self._asset(
                     asset, vendor_assets[parts.path]
                 )
+            if parts.path.startswith("/lab-panel/") and parts.path[11:] in LAB_PANEL_FILES:
+                name = parts.path[11:]
+                return self._asset(WEB.parent / "lab" / name, LAB_PANEL_FILES[name])
             if parts.path == "/favicon.ico":
                 self.send_response(HTTPStatus.NO_CONTENT)
                 self.end_headers()
@@ -382,6 +392,16 @@ def make_handler(store: Store, simulation: SimulationStore | None = None, lab=No
                             query.get("date", ["mean"])[0],
                         )
                     )
+                if parts.path == "/api/d/simulation/absorb-demand":
+                    return self._json(simulation.absorb_demand(query))
+                if parts.path == "/api/d/simulation/bus-roads":
+                    return self._json(simulation.bus_roads(query))
+                if parts.path == "/api/d/simulation/transit-routes":
+                    return self._json(simulation.transit_routes(query))
+                if parts.path == "/api/d/simulation/pareto":
+                    return self._json(pareto.pareto(query.get("region", [""])[0]))
+                if parts.path == "/api/d/simulation/pareto-export":
+                    return self._json(pareto.export(query.get("region", [""])[0], query.get("id", [""])[0]))
                 if parts.path == "/api/d/simulation/transport-demand":
                     return self._json(store.transport_demand.get(query))
                 if parts.path.startswith("/api/d/simulation/"):
@@ -590,6 +610,10 @@ def main() -> None:
     )
     parser.add_argument("--transport-demand", type=Path,
                         help="교통수단 제외 조건별 정류장 수요 JSON(d-transport-demand/1), 저장소 밖 파일")
+    parser.add_argument("--lab-layers", type=Path,
+                        help="노선 실험실 구별 레이어 폴더(<구>/layers). 시뮬레이션 화면이 결과 없는 구도 lab 지도(흡수 수요·마을/경기/파업 노선·버스 도로)로 그린다")
+    parser.add_argument("--pareto-root", type=Path,
+                        help="구별 파이프라인 출력 폴더들의 부모(<구>/pareto.json, <구>/export/*.json). 시뮬레이션 화면 왼쪽 아래 충족률·형평성 곡선")
     parser.add_argument("--lab-dir", type=Path, help="routegen 실험실 데이터 폴더(build_lab_data.py 출력)")
     parser.add_argument("--lab-region", type=Path, help="구 묶음을 푼 region 폴더(<구>_0610_v4가 들어 있음)")
     parser.add_argument("--lab-all", type=Path, help="구별 실험실 폴더들의 부모(<slug>/layers/meta.json, build_lab_data --sweep 출력)")
@@ -609,7 +633,8 @@ def main() -> None:
     server = ThreadingHTTPServer(
         ("127.0.0.1", args.port),
         make_handler(
-            store, SimulationStore(args.simulation_results, args.simulation_inputs), lab=lab
+            store, SimulationStore(args.simulation_results, args.simulation_inputs, args.lab_layers), lab=lab,
+            pareto=ParetoStore(args.pareto_root),
         ),
     )
     print(f"D 대시보드: http://127.0.0.1:{args.port}/")

@@ -9,7 +9,7 @@ const demoNormalKinds = new Set(['city','gyeonggi','village','metro']);
 const observedBusKinds = new Set(['city','gyeonggi','village']);
 function syncObservedDemandMode(){state.demandMode='total';}
 const SEOUL_BOUNDS=[[126.764433,37.428542],[127.18377,37.701479]]; // districts_all.geojson의 25개 구 범위
-const state = {mode:'demo', district:'all', extent:'inside', boundary:null, routeStops:null, observedDate:'2026-10-26', observedMode:false, listmode:'strike', selectedRouteId:null, hoveredStopId:null, hoverMarker:null, query:'', hour:'07', demoDate:'2026-11-13', demandMode:'total', visible:new Set(['strike','city','gyeonggi','village','metro','shuttle','shuttleStops','unknown_bus','unknown','busStops','metroStops','districtBoundary','observedDemand','unmetDemand']), operatingKinds:new Set(['city','gyeonggi','village','metro']), strikeRouteIds:new Set(), demoStrikeRouteIds:new Set(), demoStrikeInitialized:false, summary:null, routes:[], geo:null, demand:null, demandRequestSeq:0, loadRequestSeq:0, scenarioRoutes:null, scenarioResult:null, scenarioBefore:null, unmetValues:null, unmetAnimation:0, impactValues:new Map(), impactAnimation:0, sources:null, map:null, maplibregl:null, popup:null, overviewBoundary:null, overviewRates:null, overviewBound:false};
+const state = {mode:'demo', district:'all', extent:'inside', boundary:null, routeStops:null, observedDate:'mean', observedMode:false, listmode:'strike', selectedRouteId:null, hoveredStopId:null, hoverMarker:null, query:'', hour:'07', demoDate:'2026-11-13', demandMode:'total', visible:new Set(['strike','city','gyeonggi','village','metro','shuttle','shuttleStops','unknown_bus','unknown','busStops','metroStops','districtBoundary','observedDemand','unmetDemand']), operatingKinds:new Set(['city','gyeonggi','village','metro']), strikeRouteIds:new Set(), demoStrikeRouteIds:new Set(), demoStrikeInitialized:false, summary:null, routes:[], geo:null, demand:null, demandRequestSeq:0, loadRequestSeq:0, scenarioRoutes:null, scenarioResult:null, scenarioBefore:null, unmetValues:null, unmetAnimation:0, impactValues:new Map(), impactAnimation:0, sources:null, map:null, maplibregl:null, popup:null, overviewBoundary:null, overviewRates:null, overviewBound:false};
 state.circleCache=new Map();state.circleKey=null;
 state.networkCache=new Map();
 state.selectedRouteStops=null;
@@ -160,7 +160,7 @@ async function loadDemand() {
     if (mode==='demo') throw error;
     state.demand=null;
     state.scenarioResult=null;
-    toast(`실제 수요 조회 실패 (${state.observedDate} ${state.hour}시): ${error.message}`);
+    toast(`실제 수요 조회 실패 (${state.observedDate==='mean'?'월~금 평균':state.observedDate} ${state.hour}시): ${error.message}`);
   }
 }
 function restoreCustomRoutes() {
@@ -367,7 +367,7 @@ function renderDisruptionControls(){
   };
 }
 function renderLayers() {
-  const options=[['districtBoundary','자치구 경계','#334155'],['strike','파업','#ed3d51'],['city','시내버스','#2563eb'],['gyeonggi','경기버스','#f39b28'],['village','마을버스','#17a56c'],['metro','지하철 표시만','#864ad7'],['shuttle','셔틀안 노선','#0eaaad'],['shuttleStops','셔틀 정차 정류장','#0eaaad'],['unknown_bus','미분류 버스','#64748b'],['busStops','버스 정류장','#546a80'],['metroStops','지하철역','#864ad7'],['observedDemand','버스 관측·운행 중단 영향 수요 원','#d43161'],['unmetDemand','합성 미충족 수요 원','#d43161'],['walk400Demand','걸어서 400m 밖 수요 (셔틀안 기준) · 미연결','#d43161'],['municipalShuttle','지자체 셔틀안 (1월 실운행) · 노선자료 미연결','#148f9c']];
+  const options=[['districtBoundary','자치구 경계','#111111'],['strike','파업','#ed3d51'],['city','시내버스','#2563eb'],['gyeonggi','경기버스','#f39b28'],['village','마을버스','#17a56c'],['metro','지하철 표시만','#864ad7'],['shuttle','셔틀안 노선','#0eaaad'],['shuttleStops','셔틀 정차 정류장','#0eaaad'],['unknown_bus','미분류 버스','#64748b'],['busStops','버스 정류장','#546a80'],['metroStops','지하철역','#864ad7'],['observedDemand','버스 관측·운행 중단 영향 수요 원','#d43161'],['unmetDemand','합성 미충족 수요 원','#d43161'],['walk400Demand','걸어서 400m 밖 수요 (셔틀안 기준) · 미연결','#d43161'],['municipalShuttle','지자체 셔틀안 (1월 실운행) · 노선자료 미연결','#148f9c']];
   const list=$('#layerList'); list.replaceChildren();
   for(const [id,name,color] of options) {
     const label=document.createElement('label'); label.dataset.layer=id; label.style.cssText='display:flex;align-items:center;gap:7px;margin:7px 0;font-size:11px;color:#4d5c72;cursor:pointer';
@@ -475,7 +475,7 @@ function updateObservedCircles() {
   legend.querySelector('.circle-metric').textContent=metric==='alight'?'버스 하차 추정':'운행 중인 버스의 승차 추정';
   legend.querySelector('.circle-example span').textContent='원 크기 = 격자 안의 버스 승차 추정 건수';
   legend.querySelector('small:last-child').textContent='07시 집계의 절반과 08시 전체를 합친 시간별 추정입니다. 시내·마을·미분류 버스만 한 원에 합산하며 경기버스 매칭 승차는 0건입니다. 실제 미충족 수요는 아닙니다.';
-  legend.querySelector('.circle-period').textContent=`${state.demand.date} · 07:30~09:00 추정(07시 절반+08시 전체) · 운행 노선 ${fmt(state.demand.totals.bus_board-state.demand.totals.affected_board)}건 · 제외 노선 ${fmt(state.demand.totals.affected_board)}건`;
+  legend.querySelector('.circle-period').textContent=`${state.demand.date==='mean'?'월~금(10/26~30) 하루 평균':state.demand.date} · 07:30~09:00 추정(07시 절반+08시 전체) · 운행 노선 ${fmt(state.demand.totals.bus_board-state.demand.totals.affected_board)}건 · 제외 노선 ${fmt(state.demand.totals.affected_board)}건`;
 }
 // A GTFS stop_times의 인접 정차 관계만 한 번 준비한다. 실제 도로·철로 선형이나 거리로 사용하지 않는다.
 function buildSchematicBase() {
@@ -720,10 +720,10 @@ function addSourcesAndLayers(map) {
   map.addSource('d-district',{type:'geojson',data:featureCollection([])});
   map.addLayer({id:'district-fill',type:'fill',source:'d-district',paint:{'fill-color':'#466b97','fill-opacity':.035}});
   map.addLayer({id:'district-boundary-glow',type:'line',source:'d-district',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':'#e7f2ff','line-width':7,'line-opacity':.9}});
-  map.addLayer({id:'district-boundary',type:'line',source:'d-district',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':'#34577c','line-width':2.4,'line-opacity':.9}});
+  map.addLayer({id:'district-boundary',type:'line',source:'d-district',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':'#111111','line-width':2.2,'line-opacity':.9}});
   map.addSource('d-overview-boundary',{type:'geojson',data:featureCollection([])});
   map.addSource('d-overview-percent',{type:'geojson',data:featureCollection([])});
-  map.addLayer({id:'overview-boundary',type:'line',source:'d-overview-boundary',paint:{'line-color':'#334155','line-width':2.3,'line-opacity':.82}});
+  map.addLayer({id:'overview-boundary',type:'line',source:'d-overview-boundary',paint:{'line-color':'#111111','line-width':2,'line-opacity':.85}});
   map.addSource('d-routes',{type:'geojson',data:featureCollection([])});
   map.addSource('d-selected-route',{type:'geojson',data:featureCollection([])});
   map.moveLayer('district-boundary');
@@ -757,7 +757,7 @@ function addSourcesAndLayers(map) {
   map.addLayer({id:'demand-unmet',type:'circle',source:'d-unmet',paint:{'circle-color':'#d43161','circle-opacity':['interpolate',['linear'],['get','passenger_count'],0,0,20,.24,50,.4,100,.58,170,.74,250,.88],'circle-stroke-color':'#a21b4c','circle-stroke-opacity':['interpolate',['linear'],['get','passenger_count'],0,0,20,.28,100,.65,250,.9],'circle-stroke-width':1,'circle-radius':['interpolate',['linear'],['get','passenger_count'],0,0,20,5,50,9,100,15,170,22,250,28]}});
   map.addLayer({id:'overview-percent-bg',type:'circle',source:'d-overview-percent',paint:{'circle-color':'#ffffff','circle-opacity':.96,'circle-radius':27,'circle-stroke-color':'#334155','circle-stroke-width':2}});
   map.addLayer({id:'overview-percent-label',type:'symbol',source:'d-overview-percent',layout:{'text-field':['get','label'],'text-size':13,'text-font':['Noto Sans Bold'],'text-allow-overlap':true},paint:{'text-color':'#18324d'}});
-  map.addLayer({id:'bus-stops',type:'symbol',source:'d-stops',filter:['!=',['get','kind'],'metro'],minzoom:10,layout:{'icon-image':['concat','d-',['get','stop_kind'],'-icon'],'icon-size':['interpolate',['linear'],['zoom'],10,.40,12,.54,15,.72],'icon-offset':['get','icon_offset'],'icon-allow-overlap':true,'icon-ignore-placement':true}});
+  map.addLayer({id:'bus-stops',type:'symbol',source:'d-stops',filter:['!=',['get','kind'],'metro'],minzoom:14,layout:{'icon-image':['concat','d-',['get','stop_kind'],'-icon'],'icon-size':['interpolate',['linear'],['zoom'],10,.40,12,.54,15,.72],'icon-offset':['get','icon_offset'],'icon-allow-overlap':true,'icon-ignore-placement':true}});
   map.addLayer({id:'metro-stops',type:'symbol',source:'d-stops',filter:['==',['get','kind'],'metro'],minzoom:9,layout:{'icon-image':'d-metro-icon','icon-size':['interpolate',['linear'],['zoom'],9,.48,12,.67,15,.84],'icon-offset':['get','icon_offset'],'icon-allow-overlap':true,'icon-ignore-placement':true}});
   map.addLayer({id:'metro-stop-labels',type:'symbol',source:'d-stops',filter:['==',['get','kind'],'metro'],minzoom:9,layout:{'text-field':['coalesce',['get','name'],['get','stop_id']],'text-size':['interpolate',['linear'],['zoom'],9,9,13,12,16,14],'text-offset':[0,1.55],'text-anchor':'top','text-allow-overlap':true,'text-ignore-placement':true},paint:{'text-color':'#28334a','text-halo-color':'#fff','text-halo-width':2.5}});
   map.addLayer({id:'selected-route-stops',type:'circle',source:'d-selected-stops',minzoom:10,paint:{'circle-color':'#ffda4b','circle-stroke-color':'#263852','circle-stroke-width':1.5,'circle-radius':['case',['>', ['length',['get','orders']],3],16,12]}});
@@ -813,9 +813,8 @@ function bindUI() {
   $('#districtSelect').onchange=async event=>{state.district=event.target.value;state.extent=state.district==='all'?'full':'inside';$('#districtExtent').value=state.extent;state.selectedRouteId=null;if(state.district!=='all'&&state.mode!=='real'){state.mode='real';state.listmode='all';}state.observedMode=state.mode==='real';$('#observedToggle').checked=state.observedMode;$('#districtStatus').textContent=`${event.target.selectedOptions[0].textContent} · 교통망 갱신 중…`;for(const id of ['d-routes','d-district','d-schematic','d-stops','d-demand','d-metro-demand','d-impact','d-unmet','d-selected-stops'])state.map?.getSource(id)?.setData(featureCollection([]));state.circleKey=null;state.impactValues=new Map();++state.impactAnimation;document.dispatchEvent(new CustomEvent('d-district-selected',{detail:{district:state.district}}));const requested=state.district;await loadData();if(requested===state.district)$('#districtStatus').textContent=state.district==='all'?'서울 전체 교통망':`${$('#districtSelect').selectedOptions[0].textContent} · 공간 교차 노선 ${state.routes.length}개 · ${state.extent==='inside'?'구 내부 구간':'노선 전체'}`;};
   $('#districtExtent').onchange=async event=>{state.extent=event.target.value;state.selectedRouteId=null;await loadData();};
   const observed=document.createElement('label');observed.className='district-field observed-field';observed.innerHTML='<input id="observedToggle" type="checkbox"> 버스 관측(k5)';$('#districtStatus').before(observed);
-  const date=document.createElement('select');date.id='observedDate';date.className='district-date';for(const day of ['2026-10-26','2026-10-27','2026-10-28','2026-10-29','2026-10-30','2026-11-02']){const option=document.createElement('option');option.value=day;option.textContent=day;date.append(option);}const dateLabel=document.createElement('label');dateLabel.className='hex-date-control';dateLabel.textContent='관측일';dateLabel.append(date);$('.float-map-options').append(dateLabel);
+  const date=document.createElement('span');date.id='observedDate';date.textContent='월~금 평균 (10/26~30)';const dateLabel=document.createElement('div');dateLabel.className='hex-date-control';dateLabel.textContent='관측 수요';dateLabel.append(date);$('.float-map-options').append(dateLabel);   // 하루를 고르지 않고 실험 주간 평일 평균
   $('#observedToggle').onchange=async event=>{state.observedMode=event.target.checked;await loadDemand();renderAll();updateDemand();};
-  date.onchange=async event=>{state.observedDate=event.target.value;if(await loadDemand()){renderObservedCounts();updateDemand();}};
   $('#routeSearch').addEventListener('input',event=>{state.query=event.target.value;renderRoutes();});
   $('#districtSearch').addEventListener('input',event=>{const q=event.target.value.trim();for(const option of $('#districtSelect').options)option.hidden=Boolean(q)&&option.value!=='all'&&!option.textContent.includes(q);});
   $$('[data-display]').forEach(input=>input.onchange=async()=>{

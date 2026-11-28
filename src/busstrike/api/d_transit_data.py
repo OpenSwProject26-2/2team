@@ -24,6 +24,9 @@ def discover_root() -> Path | None:
     return next((Path(p) for p in candidates if p and Path(p).exists()), None)
 
 
+WEEKDAY_MEAN = ("20261026", "20261027", "20261028", "20261029", "20261030")   # 관측 수요 기본값: 실험 주간 월~금 평균
+
+
 class TransitData:
     def __init__(self, root: Path | None = None):
         self.root = root or discover_root()
@@ -298,7 +301,9 @@ class TransitData:
         if district != "all" and district not in districts():
             raise DataError("INPUT_INVALID", "지원하지 않는 자치구입니다.")
         day = date.replace("-", "")
-        if day not in self.manifest.get("days", {}) or hour not in {"all", "morning", "morning_0730_estimate", *(f"{h:02d}" for h in range(24))}:
+        mean_days = [d for d in WEEKDAY_MEAN if d in self.manifest.get("days", {})] if day == "mean" else []
+        if (day != "mean" and day not in self.manifest.get("days", {})) or (day == "mean" and not mean_days) \
+                or hour not in {"all", "morning", "morning_0730_estimate", *(f"{h:02d}" for h in range(24))}:
             raise DataError("OUT_OF_SCOPE", "관측일 또는 시간대가 자료 범위 밖입니다.")
         route_kinds = {r["route_id"]: r["kind"] for r in snapshot.routes}
         disabled = set(disabled_modes)
@@ -324,12 +329,15 @@ class TransitData:
             return 0.5 if hour == "morning_0730_estimate" and source_hour == "07" else 1.0
         a_stops = {s["stop_id"]: s for s in snapshot.stops if s["kind"] == "metro"}
         stations = {r["OUT_STN_NUM"].zfill(4): r for r in self._csv("reference/subway_stations.csv")}
-        bus_file = f"share_k5/seoul/{day}/stop_route_hourly.csv"
-        metro_file = f"share_k5/seoul/{day}/subway_od_hourly.csv"
-        if not self._exists(bus_file) or not self._exists(metro_file):
-            raise DataError("DATA_INCOMPLETE", "선택 날짜의 버스·지하철 k5 집계가 없습니다.")
-        cached_base = self._real_base_cache.get(key)
-        if cached_base is None:
+        def one_day(day: str):
+            key = (snapshot.snapshot_id, day, hour)
+            bus_file = f"share_k5/seoul/{day}/stop_route_hourly.csv"
+            metro_file = f"share_k5/seoul/{day}/subway_od_hourly.csv"
+            if not self._exists(bus_file) or not self._exists(metro_file):
+                raise DataError("DATA_INCOMPLETE", "선택 날짜의 버스·지하철 k5 집계가 없습니다.")
+            cached_base = self._real_base_cache.get(key)
+            if cached_base is not None:
+                return cached_base
             route_board = defaultdict(lambda: [0, 0])
             metro = defaultdict(lambda: [0, 0])
             bus_unmatched = [0, 0]
@@ -373,8 +381,33 @@ class TransitData:
             if len(self._real_base_cache) >= 32:
                 self._real_base_cache.clear()
             self._real_base_cache[key] = (dict(route_board), dict(metro), list(bus_unmatched), list(outside_a), dict(unmatched))
+            return self._real_base_cache[key]
+        mean_key = (snapshot.snapshot_id, "mean", hour)
+        if day == "mean" and mean_key in self._real_base_cache:
+            route_board, metro, bus_unmatched, outside_a, unmatched = self._real_base_cache[mean_key]
+        elif day == "mean":
+            parts = [one_day(d) for d in mean_days]
+            n = len(parts)
+            route_board, metro = defaultdict(lambda: [0, 0]), defaultdict(lambda: [0, 0])
+            bus_unmatched, outside_a = [0, 0], [0, 0]
+            unmatched = defaultdict(float)
+            for rb, mt, bu, oa, um in parts:
+                for k, (b, a) in rb.items():
+                    route_board[k][0] += b / n
+                    route_board[k][1] += a / n
+                for k, (b, a) in mt.items():
+                    metro[k][0] += b / n
+                    metro[k][1] += a / n
+                for i in (0, 1):
+                    bus_unmatched[i] += bu[i] / n
+                    outside_a[i] += oa[i] / n
+                for k, v in um.items():
+                    unmatched[k] += v / n
+            route_board, metro, unmatched = dict(route_board), dict(metro), dict(unmatched)
+            self._real_base_cache[mean_key] = (route_board, metro, bus_unmatched, outside_a, unmatched)
         else:
-            route_board, metro, bus_unmatched, outside_a, unmatched = cached_base
+            route_board, metro, bus_unmatched, outside_a, unmatched = one_day(day)
+        key = (snapshot.snapshot_id, day, hour)
         district_key = (*key, district)
         district_cache = getattr(self, "_real_district_cache", None)
         if district_cache is None:
@@ -409,9 +442,9 @@ class TransitData:
             point = stop["coordinates"] if mode == "metro" else [float(stop["lon"]), float(stop["lat"])]
             name = stop["name"] if mode == "metro" else stop["BSST_NM"]
             return {"type": "Feature", "geometry": {"type": "Point", "coordinates": point},
-                    "properties": {"stop_id": sid, "name": name, "mode": mode, "board": board,
-                                   "alight": alight, "affected_board": affected,
-                                   "passenger_count": board}}
+                    "properties": {"stop_id": sid, "name": name, "mode": mode, "board": round(board, 1),
+                                   "alight": round(alight, 1), "affected_board": round(affected, 1),
+                                   "passenger_count": round(board, 1)}}
         bus_features = [feature(sid, reference["stops"][sid], *values[:2], "bus", values[2]) for sid, values in bus.items()]
         for item in bus_features:
             item["properties"]["board_by_a_route_kind"] = dict(bus_by_kind[item["properties"]["stop_id"]])
@@ -420,6 +453,7 @@ class TransitData:
         result = {"status": "available", "demand_kind": "observed_normal_and_strike_boarding_exposure",
                   "source": "share_k5/seoul stop_route_hourly.csv + subway_od_hourly.csv",
                   "date": day, "hour": hour, "district": district, "k": 5,
+                  "mean_days": mean_days or None,
                    "time_window": "07:30~09:00" if hour == "morning_0730_estimate" else "07:00~09:00" if hour == "morning" else hour,
                    "time_window_status": "hourly_half_hour_estimate" if hour == "morning_0730_estimate" else "hourly_observed",
                   "strike_route_ids": sorted(strike), "disabled_modes": sorted(disabled), "bus_features": bus_features,

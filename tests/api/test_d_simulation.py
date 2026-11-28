@@ -406,5 +406,104 @@ class ResultsManifestTests(unittest.TestCase):
                 store.selection({"region": ["dobong"], "fleet": ["14"], "plan": ["ours"]})
             self.assertEqual(bad.exception.code, "INPUT_INVALID")
 
+    def test_dashboard_layers_give_road_lines_and_absorb_demand(self):
+        """write_dashboard_layers.py 결과가 있으면 노선은 도로 좌표로, 수요는 흡수 조건별로 준다."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            base = _catalog_region(root)
+            man = json.loads((base / "manifest.json").read_text(encoding="utf-8"))
+            man["dashboard_layers"] = "dashboard_layers.json"
+            _put(base / "manifest.json", man)
+            _put(base / "dashboard_layers.json", {
+                "schema": "dashboard-layers/1", "region": "dobong", "network_snapshot_id": "net-road",
+                "route_geometry": {"s12": {"r01": {"lines": [[[127.04, 37.66], [127.045, 37.665], [127.05, 37.67]]],
+                                                   "closing": [[127.05, 37.67], [127.04, 37.66]], "gaps": 0}}},
+                "absorb_demand": {"stops": {"s1": [127.04, 37.66, "가"], "s2": [127.05, 37.67, "나"]},
+                                  "variants": {"affected": {"s1": 10, "s2": 4}, "precise_affected_maeul_gg": {"s1": 6}}},
+                "stations": [{"name": "도봉", "access": "s2", "egress": None}]})
+            store = SimulationStore(root / "results", root / "inputs")
+            q = {"region": ["dobong"], "fleet": ["14"], "variant": ["precise_affected_maeul_gg"], "plan": ["s12"],
+                 "period": ["exp"], "date": ["2026-10-26"]}
+            day = store.selection(q)
+            parts = [f["properties"]["part"] for f in day["route_lines"]["features"]]
+            self.assertEqual(parts, ["service", "closing"])
+            self.assertEqual(day["routes"][0]["geometry_status"], "bus_road_network")
+            self.assertEqual(day["routes"][0]["stops"][1]["station"], "도봉")
+            muni = store.selection({**q, "plan": ["muni"]})        # 좌표가 없는 안은 개략선 상태 그대로
+            self.assertEqual(muni["route_lines"]["features"], [])
+            self.assertEqual(muni["routes"][0]["geometry_status"], "stop_points_only_unverified_road")
+            demand = store.absorb_demand({"region": ["dobong"]})
+            self.assertEqual(demand["status"], "available")
+            s2 = next(f for f in demand["features"] if f["properties"]["stop_id"] == "s2")
+            self.assertEqual(s2["properties"]["precise_affected_maeul_gg"], 0)   # 경기·마을이 다 맡은 정류장
+            self.assertEqual(demand["totals"]["affected"], 14)
+            self.assertEqual(store.absorb_demand({"region": ["guro"]})["status"], "unavailable")
+
+    def test_mean_selection_averages_stop_outcomes_and_overlays_muni_and_bus_roads(self):
+        """하루를 고르지 않아도(월~금 평균) 정류장별 미충족 원이 나오고, 지자체안 점선·버스 도로를 함께 준다."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            base = _catalog_region(root)
+            man = json.loads((base / "manifest.json").read_text(encoding="utf-8"))
+            man["dashboard_layers"] = "dashboard_layers.json"
+            _put(base / "manifest.json", man)
+            roads = {"type": "Feature", "properties": {"layer": "bus_roads", "edges": 2},
+                     "geometry": {"type": "MultiLineString", "coordinates": [[[127.04, 37.66], [127.05, 37.67]]]}}
+            _put(base / "dashboard_layers.json", {
+                "schema": "dashboard-layers/1", "region": "dobong", "network_snapshot_id": "net-road",
+                "route_geometry": {"muni": {"r01": {"lines": [[[127.04, 37.66], [127.05, 37.67]]], "closing": None, "gaps": 0}}},
+                "absorb_demand": {"stops": {}, "variants": {}}, "stations": [], "bus_roads": roads})
+            idx = base / "s12" / "runs_exp"
+            runs = json.loads((idx / "runs.json").read_text(encoding="utf-8"))
+            runs["runs"].append({**runs["runs"][0], "date": "20261027", "bundle": "precise_affected_maeul_gg_20261027"})
+            _put(idx / "runs.json", runs)
+            src = idx / "ours" / "precise_affected_maeul_gg_20261026" / "f14"
+            day2 = idx / "ours" / "precise_affected_maeul_gg_20261027" / "f14"
+            for name in ("run/metrics.json", "verifier_report.json", "plan_m05.json"):
+                _put(day2 / name, json.loads((src / name).read_text(encoding="utf-8")))
+            rows = {src: ["s1,25200,unserved"] * 3 + ["s1,25200,served", "s2,25200,unserved"],
+                    day2: ["s1,25200,unserved"] * 2 + ["s2,25200,unserved"]}
+            for d, lines in rows.items():
+                (d / "run" / "passenger_outcomes.csv").write_text("origin,time_s,outcome\n" + "\n".join(lines) + "\n",
+                                                                  encoding="utf-8")
+            store = SimulationStore(root / "results", root / "inputs")
+            q = {"region": ["dobong"], "fleet": ["14"], "variant": ["precise_affected_maeul_gg"], "plan": ["s12"],
+                 "period": ["exp"], "date": ["mean"]}
+            mean = store.selection(q)
+            self.assertEqual(mean["mean_days"], ["2026-10-26", "2026-10-27"])
+            feats = {f["properties"]["stop_id"]: f["properties"] for f in mean["spatial_outcomes"]["features"]}
+            self.assertEqual(set(feats), {"s1"})                 # s2는 이틀 합 2명 → 숨김
+            self.assertEqual((feats["s1"]["total"], feats["s1"]["unserved"]), (3.0, 2.5))   # 하루 평균
+            self.assertEqual(feats["s1"]["hours"]["07"]["unserved"], 2.5)
+            self.assertEqual(mean["hourly"][0]["total"], 4.0)        # (5+3)/2
+            self.assertEqual(mean["baseline_lines"]["plan"], "muni")
+            self.assertEqual(len(mean["baseline_lines"]["features"]), 1)
+            self.assertEqual(store.selection({**q, "plan": ["muni"]})["baseline_lines"]["features"], [])  # 자기 자신은 안 겹침
+            got = store.bus_roads({"region": ["dobong"]})
+            self.assertEqual((got["status"], got["edges"]), ("available", 2))
+            self.assertEqual(store.bus_roads({"region": ["guro"]})["status"], "unavailable")
+
+    def test_lab_layers_serve_regions_without_results(self):
+        """결과가 없는 구도 lab 레이어로 흡수 수요·버스 도로·마을/경기/파업 노선을 준다."""
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            lay = root / "lab_all" / "seongdong" / "layers"
+            _put(lay / "demand.json", {"affected": {"s1": 10}, "precise_affected_maeul": {"s1": 7},
+                                       "precise_affected_gg": {"s1": 9}, "precise_affected_maeul_gg": {"s1": 6}})
+            _put(lay / "stops.json", {"s1": [127.03, 37.55, "왕십리"]})
+            _put(lay / "absorbing_routes.json", [
+                {"id": "m1", "name": "성동01", "mode": "maeul", "stops": ["s1"], "coords": [[127.03, 37.55], [127.04, 37.56]]},
+                {"id": "g1", "name": "1100", "mode": "gg", "stops": ["s1"], "coords": [[127.03, 37.55], [127.05, 37.57]]}])
+            _put(lay / "strike_routes.json", [{"id": "c1", "pattern": "p0", "name": "2014", "type": "간선",
+                                               "stops": ["s1"], "coords": [[127.0, 37.5], [127.1, 37.6]]}])
+            store = SimulationStore(root / "results", root / "inputs", root / "lab_all")
+            demand = store.absorb_demand({"region": ["seongdong"]})
+            self.assertEqual((demand["status"], demand["totals"]["precise_affected_maeul_gg"]), ("available", 6))
+            routes = store.transit_routes({"region": ["seongdong"]})
+            self.assertEqual(routes["counts"], {"village": 1, "gyeonggi": 1, "city": 1})
+            self.assertEqual(store.bus_roads({"region": ["seongdong"]})["status"], "unavailable")   # 파일 없음
+            self.assertEqual(store.transit_routes({"region": ["../x"]})["status"], "unavailable")
+
+
 if __name__ == "__main__":
     unittest.main()
