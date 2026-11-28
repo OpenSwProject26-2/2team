@@ -199,8 +199,11 @@ def reason_rows() -> dict[tuple, dict]:
 
 class SimulationStore:
     def __init__(
-        self, results_root: Path | None = None, inputs_root: Path | None = None
+        self, results_root: Path | None = None, inputs_root: Path | None = None,
+        lab_layers: Path | None = None,
     ):
+        self.lab_layers = lab_layers.resolve() if lab_layers else None   # <lab_all>/<구>/layers: 결과 없는 구도 lab 지도
+        self._lab_cache: dict[str, dict] = {}
         self.results_root = results_root.resolve() if results_root else None
         self.inputs_root = inputs_root.resolve() if inputs_root else None
         self.report = report_rows()
@@ -241,6 +244,104 @@ class SimulationStore:
                               {"id": "sp", "name": "최단경로 피더안", "method": "C 최단경로 피더 기준안", "baseline": True}],
                     "variants": list(VARIANTS), "source": "report_v4"}
         return None
+
+    def _lab(self, region: str) -> dict | None:
+        """노선 실험실 구별 레이어(lab_all/<구>/layers). 25개 구 모두 있어 결과 없는 구도 같은 지도를 그린다."""
+        if not self.lab_layers or not region.isidentifier():
+            return None
+        if region in self._lab_cache:
+            return self._lab_cache[region]
+        d = self.lab_layers / region / "layers"
+        if not (d / "demand.json").is_file():
+            self._lab_cache[region] = None
+            return None
+        def get(name):
+            f = d / f"{name}.json"
+            return _read(f) if f.is_file() else None
+        demand, stops = get("demand") or {}, get("stops") or {}
+        keep = ["affected", "affected_maeul", "affected_gg", "affected_maeul_gg",
+                "precise_affected_maeul", "precise_affected_gg", "precise_affected_maeul_gg"]
+        variants = {k: demand[k] for k in keep if k in demand}
+        used = set().union(*[set(v) for v in variants.values()]) if variants else set()
+        out = {"source": f"routegen lab layers ({d})", "lab_only": True,
+               "absorb_demand": {"unit": "하루 인원(실험 주간 월~금 평균)", "variants": variants,
+                                 "stops": {sid: stops[sid][:3] for sid in used if sid in stops},
+                                 "note": "precise_* = 마을·경기버스가 남는 정원만큼 태운 뒤 남는 수요(lab 정밀 흡수 기본 가정)"},
+               "stations": get("stations") or [], "bus_roads": get("bus_roads"),
+               "absorbing_routes": get("absorbing_routes") or [], "strike_routes": get("strike_routes") or []}
+        self._lab_cache[region] = out
+        return out
+
+    def _layers(self, region: str) -> dict | None:
+        """write_dashboard_layers.py가 만든 구별 보조 자료(노선 도로 좌표·흡수 조건별 수요). 없으면 lab 레이어, 그것도 없으면 None."""
+        man = self._catalog(region)
+        name = (man or {}).get("dashboard_layers")
+        if not name or not self.results_root:
+            return self._lab(region)
+        path = self.results_root / region / name
+        if not path.is_file():
+            return self._lab(region)
+        cache = getattr(self, "_layers_cache", None)
+        if cache is None:
+            cache = self._layers_cache = {}
+        stamp = path.stat().st_mtime
+        hit = cache.get(region)
+        if hit and hit[0] == stamp:
+            return hit[1]
+        data = _read(path)
+        if data.get("network_snapshot_id") and man.get("network_snapshot_id") and data["network_snapshot_id"] != man["network_snapshot_id"]:
+            data = None
+        cache[region] = (stamp, data)
+        return data
+
+    def absorb_demand(self, q: dict) -> dict:
+        """정류장별 파업 잔여 수요(흡수 없음·마을·경기·둘 다). 지도 원 크기를 운행 조건에 맞춰 바꾸는 데 쓴다."""
+        region = q.get("region", [""])[0]
+        layers = self._layers(region)
+        if not layers or not layers.get("absorb_demand", {}).get("variants"):
+            return {"status": "unavailable", "region": region,
+                    "message": "이 구의 흡수 조건별 정류장 수요(dashboard_layers.json)가 연결되지 않았습니다."}
+        ad = layers["absorb_demand"]
+        variants = ad["variants"]
+        features = []
+        for sid, (lon, lat, name) in ad["stops"].items():
+            values = {k: v.get(sid, 0) for k, v in variants.items()}
+            if not any(values.values()):
+                continue
+            features.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                             "properties": {"stop_id": sid, "name": name, **values}})
+        totals = {k: round(sum(v.values()), 1) for k, v in variants.items()}
+        return {"status": "available", "region": region, "unit": ad.get("unit"), "note": ad.get("note"),
+                "variants": sorted(variants), "totals": totals, "features": features,
+                "source": layers.get("source")}
+
+    def transit_routes(self, q: dict) -> dict:
+        """이 구를 지나는 마을버스·경기버스(흡수 노선)와 파업 시내버스 노선의 좌표(lab 레이어). 지도에 어디 지나는지 그린다."""
+        region = q.get("region", [""])[0]
+        lab = self._lab(region)
+        if not lab:
+            return {"status": "unavailable", "region": region, "message": "이 구의 lab 노선 레이어가 연결되지 않았습니다."}
+        def line(r, mode):
+            coords = [[round(x, 5), round(y, 5)] for x, y in r.get("coords") or []]
+            return {"type": "Feature", "geometry": {"type": "LineString", "coordinates": coords},
+                    "properties": {"mode": mode, "id": r.get("id"), "name": r.get("name"), "kind": r.get("type"),
+                                   "stops": len(r.get("stops") or [])}} if len(coords) >= 2 else None
+        feats = [line(r, "village" if r.get("mode") == "maeul" else "gyeonggi") for r in lab["absorbing_routes"]]
+        feats += [line(r, "city") for r in lab["strike_routes"]]
+        feats = [f for f in feats if f]
+        count = {m: len({f["properties"]["id"] for f in feats if f["properties"]["mode"] == m}) for m in ("village", "gyeonggi", "city")}
+        return {"status": "available", "region": region, "type": "FeatureCollection", "features": feats, "counts": count,
+                "note": "마을·경기 = 파업 승객을 남는 정원만큼 태우는 흡수 노선(lab 가정) · 시내 = 이 시나리오에서 파업하는 노선"}
+
+    def bus_roads(self, q: dict) -> dict:
+        """routegen lab의 버스 통행 가능 도로(OSM 도로 중 버스가 다닐 수 있는 구간)."""
+        region = q.get("region", [""])[0]
+        feat = (self._layers(region) or {}).get("bus_roads")
+        if not feat:
+            return {"status": "unavailable", "region": region,
+                    "message": "이 구의 버스 통행 가능 도로(dashboard_layers.json bus_roads)가 연결되지 않았습니다."}
+        return {"status": "available", "region": region, "type": "FeatureCollection", "features": [feat],
+                "edges": (feat.get("properties") or {}).get("edges")}
 
     def _regions(self) -> list[dict]:
         ids = list(REGIONS) + [r for r in self._catalog_regions() if r not in REGIONS]
@@ -427,6 +528,8 @@ class SimulationStore:
             if out["plan"].get("network_snapshot_id") != man.get("network_snapshot_id"):
                 raise DataError("DATA_VERSION_MISMATCH", "계획과 manifest의 교통망 ID가 다릅니다.")
         if date == "mean":
+            if not light:
+                self._mean_outcomes(base, man, fleet, variant, plan, period, out)
             return out
         index = base / entry["runs"][period] if entry.get("runs", {}).get(period) else None
         if not index or not index.is_file():
@@ -448,6 +551,43 @@ class SimulationStore:
             out["hourly"] = _hourly(outcomes)
             out["spatial_outcomes"] = _spatial_outcomes(outcomes)
         return out
+
+    def _mean_outcomes(self, base: Path, man: dict, fleet: int, variant: str, plan: str, period: str,
+                       out: dict) -> None:
+        """평일(월~금) 하루 평균: 승객별 결과가 있는 날짜마다 정류장·시간대별로 세어 날짜 수로 나눈다."""
+        days = []
+        for date in PERIODS[period]:
+            art = self._catalog_artifacts(base, man, fleet, variant, plan, period, date)
+            rec = art.get("run_record", {})
+            if "spatial_outcomes" in art and rec.get("sim_rc") in (0, None) and rec.get("stage_failed") is None:
+                days.append((date, art))
+        if not days:
+            return
+        n = len(days)
+        fields = ("total", "served", "unserved", "censored")
+        spatial: dict[str, dict] = {}
+        for _, art in days:
+            for sid, c in art["spatial_outcomes"].items():
+                e = spatial.setdefault(sid, {**{k: 0.0 for k in fields}, "hours": {}, "count_sum": 0})
+                e["count_sum"] += c["total"]
+                for k in fields:
+                    e[k] += c[k] / n
+                for h, hc in c.get("hours", {}).items():
+                    he = e["hours"].setdefault(h, {**{k: 0.0 for k in fields}, "count_sum": 0})
+                    he["count_sum"] += hc["total"]
+                    for k in fields:
+                        he[k] += hc[k] / n
+        hourly: dict[int, dict] = {}
+        for _, art in days:
+            for h in art.get("hourly") or []:
+                e = hourly.setdefault(h["hour"], {k: 0.0 for k in fields})
+                for k in fields:
+                    e[k] += h[k] / n
+        out["spatial_outcomes"] = spatial
+        out["hourly"] = [{"hour": h, **{k: round(v, 2) for k, v in c.items()},
+                          "rate_percent": 100 * c["served"] / c["total"] if c["total"] and not c["censored"] else None}
+                         for h, c in sorted(hourly.items())]
+        out["mean_days"] = [d for d, _ in days]
 
     def _runs_index(self, region: str, fleet: int, variant: str, plan: str, period: str) -> tuple[Path | None, str]:
         """(실행 색인 경로, 기록의 label)."""
@@ -688,10 +828,11 @@ class SimulationStore:
             "passed",
             "verification_unknown",
             "verification_failed",
+            "report_only",
         }:
             for sid, counts in art.get("spatial_outcomes", {}).items():
                 stop = stops.get(sid)
-                if stop and counts["total"] >= 5:
+                if stop and counts.get("count_sum", counts["total"]) >= 5:
                     spatial.append(
                         {
                             "type": "Feature",
@@ -702,11 +843,11 @@ class SimulationStore:
                             "properties": {
                                 "stop_id": sid,
                                 "name": stop["name"],
-                                **counts,
+                                **{k: round(v, 2) for k, v in counts.items() if k not in ("hours", "count_sum")},
                                 "hours": {
-                                    hour: values
+                                    hour: {k: round(v, 2) for k, v in values.items() if k != "count_sum"}
                                     for hour, values in counts.get("hours", {}).items()
-                                    if values["total"] >= 5
+                                    if values.get("count_sum", values["total"]) >= 5
                                 },
                                 "passenger_count": counts["unserved"],
                                 "demand_label": "M05 미충족",
@@ -749,8 +890,45 @@ class SimulationStore:
                             },
                         }
                     )
+        layers = self._layers(region)
+        road = ((layers or {}).get("route_geometry") or {}).get(plan) or {}
+        station_of = {}
+        for st in (layers or {}).get("stations", []):
+            for sid in (st.get("access"), st.get("egress")):
+                if sid:
+                    station_of[sid] = st.get("name")
+        route_lines = []
+        for route in routes:
+            for s_ in route["stops"]:
+                if s_["id"] in station_of:
+                    s_["station"] = station_of[s_["id"]]
+            g = road.get(route["route_id"])
+            if not g:
+                continue
+            route["geometry_status"] = "bus_road_network" if not g.get("gaps") else "bus_road_network_partial"
+            route["road_gaps"] = g.get("gaps", 0)
+            for line in g.get("lines", []):
+                route_lines.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": line},
+                                    "properties": {"route_id": route["route_id"], "part": "service", "vehicles": route.get("vehicles")}})
+            if g.get("closing"):
+                route_lines.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": g["closing"]},
+                                    "properties": {"route_id": route["route_id"], "part": "closing", "vehicles": route.get("vehicles")}})
         info = self._plan_info(region, plan)
+        base_id = self._baseline(region, plan)
+        base_info = self._plan_info(region, base_id) if base_id else {}
+        baseline_lines = []
+        if base_id and base_info.get("baseline"):
+            for rid, g in (((layers or {}).get("route_geometry") or {}).get(base_id) or {}).items():
+                for line in g.get("lines", []) + ([g["closing"]] if g.get("closing") else []):
+                    baseline_lines.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": line},
+                                           "properties": {"route_id": rid, "plan": base_id}})
         return {
+            "baseline_lines": {"type": "FeatureCollection", "features": baseline_lines,
+                               "plan": base_id if baseline_lines else None,
+                               "plan_name": (base_info.get("name") or base_id) if baseline_lines else None},
+            "mean_days": art.get("mean_days"),
+            "route_lines": {"type": "FeatureCollection", "features": route_lines,
+                            "source": "routegen lab segpaths + 버스 도로 최단경로(bus_only)" if route_lines else None},
             "selection": {
                 "region": region,
                 "fleet": fleet,
@@ -802,7 +980,8 @@ class SimulationStore:
             "plan_id": plan_doc.get("plan_id", art.get("selection", {}).get("plan_id")),
             "revision": plan_doc.get("revision"),
             "scenario_id": art.get("plan_m05", {}).get("scenario_id"),
-            "map_status": "정류장 좌표만 표시 · 도로 선형 미검증"
+            "map_status": ("버스 통행 도로 위 경로(routegen 도로망) · 순환 닫는 구간 포함"
+                           if route_lines else "정류장 좌표만 표시 · 도로 선형 미검증")
             if features
             else "C팀 정류장 좌표·노선 원본 미연결",
             "demand_map_status": "OD·정류장별 M05 수송 결과 미연결",

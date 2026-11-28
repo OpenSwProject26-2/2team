@@ -92,20 +92,25 @@ def rail_geometry_view(snapshot: MapSnapshot, geojson: dict) -> MapSnapshot:
             calls = [stops[sid]["coordinates"] for sid in route.get("representative_stop_ids", []) if sid in stops]
             distances = [_distance_to_lines(point, lines) for point in calls] if lines else []
             near = sum(distance <= 250 for distance in distances)
-            if len(calls) >= 3 and near == len(calls):
+            # A single outdated GTFS station coordinate must not discard an
+            # otherwise matching physical corridor. Expose the mismatch rather
+            # than claiming the whole service path is verified.
+            partial = len(calls) >= 20 and near < len(calls) and len(calls) - near <= 2 and near / len(calls) >= .95
+            if len(calls) >= 3 and (near == len(calls) or partial):
                 item.update(
                     coordinates=lines,
                     geometry_type="MultiLineString",
-                    geometry_status="rail_gis_verified_corridor",
+                    geometry_status="rail_gis_partial_corridor" if partial else "rail_gis_verified_corridor",
                     geometry_source="MOIS_KR_Subway/FeatureServer/2 (Esri Korea)",
                     source_version="GIS layer accessed at server start",
                     geometry_validation={
                         "gtfs_stops_checked": len(calls),
                         "stops_within_250m": near,
                         "max_stop_distance_m": round(max(distances), 1),
+                        "unmatched_stop_ids": [sid for sid in route.get("representative_stop_ids", []) if sid in stops and _distance_to_lines(stops[sid]["coordinates"], lines) > 250],
                         "branch_or_direction_verified": False,
                     },
-                    validation_warnings=["Physical rail corridor only; GTFS branch and direction not verified."],
+                    validation_warnings=([f"{len(calls)-near} GTFS station coordinate(s) exceed 250 m; physical corridor only."] if partial else []) + ["GTFS branch and direction not verified."],
                 )
                 attached += 1
             else:
@@ -150,16 +155,16 @@ def _ordered_stop_match(points: list[list[float]], calls: list[list[float]]) -> 
 
 
 def bus_geometry_view(snapshot: MapSnapshot, geojson: dict) -> MapSnapshot:
-    """Attach externally acquired bus paths only with explicit GTFS crosswalks.
+    """Attach bus paths only after matching the active A GTFS or reference snapshot.
 
     Each feature must carry the exact representative stop order and agency from
-    the A feed. Matching a displayed route number alone is never sufficient.
+    the active source. Matching a displayed route number alone is never sufficient.
     """
     if geojson.get("type") != "FeatureCollection" or not isinstance(geojson.get("features"), list):
         raise DataError("DATA_INCOMPLETE", "Bus geometry must be a GeoJSON FeatureCollection")
     expected_snapshot = geojson.get("metadata", {}).get("a_gtfs_snapshot_id")
     if expected_snapshot and not snapshot.snapshot_id.startswith(expected_snapshot):
-        raise DataError("DATA_VERSION_MISMATCH", "Bus path crosswalk uses a different A GTFS snapshot")
+        raise DataError("DATA_VERSION_MISMATCH", "Bus path crosswalk uses a different transit snapshot")
     stop_by_id = {stop["stop_id"]: stop for stop in snapshot.stops}
     by_route = {route["route_id"]: route.copy() for route in snapshot.routes}
     matched = 0
@@ -170,10 +175,26 @@ def bus_geometry_view(snapshot: MapSnapshot, geojson: dict) -> MapSnapshot:
         if route is None or route["kind"] not in {"city", "village", "gyeonggi", "unknown_bus"}:
             continue
         ids = route.get("representative_stop_ids") or []
-        points = feature.get("geometry", {}).get("coordinates")
+        geometry = feature.get("geometry", {})
+        points = geometry.get("coordinates")
+        partial = source in {"roadnet_partial_estimate", "roadnet_pattern_estimate"}
+        partial_runs = props.get("partial_stop_runs") if partial else None
+        pattern_indices = props.get("pattern_indices") if source == "roadnet_pattern_estimate" else None
+        partial_valid = (isinstance(partial_runs, list) and isinstance(points, list)
+                         and len(partial_runs) == len(points) and len(points) > 0
+                         and (source != "roadnet_pattern_estimate" or
+                              isinstance(pattern_indices, list) and len(pattern_indices) == len(points)
+                              and all(isinstance(index, int) and index >= 0 for index in pattern_indices))
+                         and all(isinstance(run, list) and len(run) >= 2
+                                 and (any(ids[start:start + len(run)] == run for start in range(len(ids) - len(run) + 1))
+                                      if source == "roadnet_partial_estimate" else
+                                      all(sid in (route.get("all_stop_ids") or []) for sid in run))
+                                 and all(sid in stop_by_id for sid in run)
+                                 and _ordered_stop_match(line, [stop_by_id[sid]["coordinates"] for sid in run])
+                                 for run, line in zip(partial_runs, points))) if partial else False
         if (
-            feature.get("geometry", {}).get("type") != "LineString"
-            or source not in {"official", "osm_route", "osrm_estimate"}
+            geometry.get("type") != ("MultiLineString" if partial else "LineString")
+            or source not in {"official", "osm_route", "osrm_estimate", "roadnet_estimate", "roadnet_partial_estimate", "roadnet_pattern_estimate"}
             or not props.get("source_route_id")
             or not props.get("source_namespace")
             or not props.get("source_version")
@@ -183,13 +204,13 @@ def bus_geometry_view(snapshot: MapSnapshot, geojson: dict) -> MapSnapshot:
             or len(ids) < 2
             or any(sid not in stop_by_id for sid in ids)
             or not isinstance(points, list)
-            or not _ordered_stop_match(points, [stop_by_id[sid]["coordinates"] for sid in ids])
+            or not (partial_valid if partial else _ordered_stop_match(points, [stop_by_id[sid]["coordinates"] for sid in ids]))
         ):
-            route["validation_warnings"] = ["External bus path failed GTFS route, agency, stop order or coordinate validation"]
+            route["validation_warnings"] = ["External bus path failed route, agency, stop order or coordinate validation"]
             continue
         route.update(
             coordinates=points,
-            geometry_type="LineString",
+            geometry_type=geometry["type"],
             geometry_status=source,
             geometry_source=props["source_namespace"],
             source_route_id=props["source_route_id"],
@@ -199,7 +220,9 @@ def bus_geometry_view(snapshot: MapSnapshot, geojson: dict) -> MapSnapshot:
             max_snap_distance_m=props.get("max_snap_distance_m"),
             max_leg_detour_ratio=props.get("max_leg_detour_ratio"),
             bus_access_verified=props.get("bus_access_verified", source == "official"),
-            validation_warnings=[] if source == "official" else ["Road path is not an official bus operating path"],
+            partial_stop_runs=partial_runs if partial else None,
+            pattern_indices=pattern_indices,
+            validation_warnings=[] if source == "official" else ["Only road-verified portions are shown; gaps are not connected" if partial else "Road path is not an official bus operating path"],
         )
         matched += 1
     digest = hashlib.sha256(json.dumps(geojson, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:8]

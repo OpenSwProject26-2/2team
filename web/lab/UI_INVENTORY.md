@@ -1,6 +1,6 @@
 # 충족률·형평성 곡선 패널 — 시작 전 확인(0절)
 
-2026-11-27, 브랜치 `feat/pipeline-core`(PR B, 아직 main에 머지 전이라 그 위에 이어 붙임).
+2026-11-27. 처음엔 파이프라인 브랜치(`feat/pipeline-core`) 위에 만들었고, 패널은 파이프라인 코드에 기대지 않아 main에서 따로 `feat/lab-pareto-panel`로 올렸다(두 PR 모두 main에 머지됨).
 
 ## 1. lab 화면 코드
 
