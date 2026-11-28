@@ -110,3 +110,52 @@ def compare_routes(params: dict[str, str], normal_dir: Path, normal_url: str,
                           if best_normal and best_strike else None),
         "shuttle_source": strike_manifest.get("shuttle_source"),
     }
+
+def _score(route: dict) -> tuple:
+    return (route["duration_seconds"] + route["transfers"] * 600 + route["walk_seconds"] * .5,
+            route["duration_seconds"])
+
+
+def _safe_route(params: dict[str, str], mode: str, directory: Path, endpoint: str,
+                normal_version: str | None, include_shuttle: str) -> dict:
+    request = {**params, "include_shuttle": include_shuttle}
+    try:
+        return route_for_mode(request, mode, directory, endpoint, normal_version)
+    except OTPError as error:
+        if error.code not in {"NO_PATH", "SHUTTLE_DATA_MISSING"}:
+            raise
+        return {"mode": mode, "routes": [], "count": 0, "code": error.code, "message": str(error)}
+
+
+def compare_three(params: dict[str, str], normal_dir: Path, normal_url: str,
+                  strike_dir: Path, strike_url: str) -> dict:
+    """같은 출발·도착·시각으로 평소 / 파업 셔틀 없음 / 파업+셔틀 세 결과를 돌려준다."""
+    params = {k: v for k, v in params.items() if k not in {"mode", "include_shuttle"}}
+    normal_manifest = require_mode("normal", normal_dir, normal_url)
+    strike_manifest = require_mode("strike", strike_dir, strike_url, normal_manifest["version"])
+    version = normal_manifest["version"]
+    results = {
+        "normal": _safe_route(params, "normal", normal_dir, normal_url, version, "false"),
+        "strike_no_shuttle": _safe_route(params, "strike", strike_dir, strike_url, version, "false"),
+    }
+    if strike_manifest.get("shuttle_route_ids"):
+        results["strike_shuttle"] = _safe_route(params, "strike", strike_dir, strike_url, version, "true")
+    else:
+        results["strike_shuttle"] = {"mode": "strike", "routes": [], "count": 0,
+                                     "code": "SHUTTLE_DATA_MISSING",
+                                     "message": "대체 셔틀 GTFS가 준비되지 않았습니다."}
+    best = {key: min(value["routes"], key=_score, default=None) for key, value in results.items()}
+    base = best["normal"]
+    delta = {key: (best[key]["duration_seconds"] - base["duration_seconds"]
+                   if base and best[key] else None)
+             for key in ("strike_no_shuttle", "strike_shuttle")}
+    gain = (best["strike_no_shuttle"]["duration_seconds"] - best["strike_shuttle"]["duration_seconds"]
+            if best["strike_no_shuttle"] and best["strike_shuttle"] else None)
+    affected = {"A:" + rid for rid in strike_manifest.get("excluded_route_ids", [])}
+    lost = [r for r in results["normal"]["routes"]
+            if any(leg.get("route_id") in affected for leg in r["legs"])]
+    return {"results": results, "best": best, "delta_seconds": delta, "shuttle_gain_seconds": gain,
+            "normal_version": version, "strike_version": strike_manifest["version"],
+            "affected_route_ids": strike_manifest.get("excluded_route_ids", []),
+            "unavailable_normal_routes": lost,
+            "shuttle_source": strike_manifest.get("shuttle_source")}
